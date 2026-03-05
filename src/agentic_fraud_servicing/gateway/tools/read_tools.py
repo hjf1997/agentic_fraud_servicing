@@ -31,6 +31,7 @@ def lookup_transactions(gateway: ToolGateway, ctx: AuthContext, case_id: str) ->
     """
     gateway.check_auth(ctx, "read")
     start = time.monotonic()
+    masked: list[dict] = []
     try:
         all_nodes = gateway.evidence_store.get_nodes_by_case(case_id)
         transactions = [n for n in all_nodes if n.get("node_type") == EvidenceNodeType.TRANSACTION]
@@ -45,7 +46,7 @@ def lookup_transactions(gateway: ToolGateway, ctx: AuthContext, case_id: str) ->
             ctx=ctx,
             action="lookup_transactions",
             input_summary=f'{{"case_id": "{case_id}"}}',
-            output_summary=f'{{"count": {len(masked) if "masked" in dir() else 0}}}',
+            output_summary=f'{{"count": {len(masked)}}}',
             duration_ms=duration_ms,
         )
 
@@ -72,6 +73,7 @@ def query_auth_logs(gateway: ToolGateway, ctx: AuthContext, case_id: str) -> lis
     """
     gateway.check_auth(ctx, "read")
     start = time.monotonic()
+    auth_events: list[dict] = []
     try:
         all_nodes = gateway.evidence_store.get_nodes_by_case(case_id)
         auth_events = [n for n in all_nodes if n.get("node_type") == EvidenceNodeType.AUTH_EVENT]
@@ -85,7 +87,7 @@ def query_auth_logs(gateway: ToolGateway, ctx: AuthContext, case_id: str) -> lis
             ctx=ctx,
             action="query_auth_logs",
             input_summary=f'{{"case_id": "{case_id}"}}',
-            output_summary=f'{{"count": {len(auth_events) if "auth_events" in dir() else 0}}}',
+            output_summary=f'{{"count": {len(auth_events)}}}',
             duration_ms=duration_ms,
         )
 
