@@ -10,9 +10,9 @@ control flow explicit and auditable.
 from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
-from agentic_fraud_servicing.copilot.question_planner import run_question_planner
+from agentic_fraud_servicing.copilot.question_planner import QuestionPlan, run_question_planner
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult, run_retrieval
-from agentic_fraud_servicing.copilot.triage_agent import run_triage
+from agentic_fraud_servicing.copilot.triage_agent import TriageResult, run_triage
 from agentic_fraud_servicing.gateway.tool_gateway import ToolGateway
 from agentic_fraud_servicing.models.case import CopilotSuggestion
 from agentic_fraud_servicing.models.enums import AllegationType
@@ -173,7 +173,7 @@ class CopilotOrchestrator:
         except ValueError:
             return None
 
-    def _update_hypothesis_scores(self, triage_result) -> None:
+    def _update_hypothesis_scores(self, triage_result: TriageResult) -> None:
         """Update hypothesis scores from a triage result."""
         if triage_result.allegation_type is not None:
             # Boost the detected category's score using a weighted update
@@ -223,7 +223,7 @@ class CopilotOrchestrator:
             risk_flags.append(f"Retrieval failed: {exc}")
             return None
 
-    async def _run_triage_safe(self, text: str, risk_flags: list[str]):
+    async def _run_triage_safe(self, text: str, risk_flags: list[str]) -> TriageResult | None:
         """Run triage agent with error handling."""
         try:
             return await run_triage(
@@ -254,7 +254,9 @@ class CopilotOrchestrator:
             risk_flags.append(f"Auth assessment failed: {exc}")
             return None
 
-    async def _run_question_planner_safe(self, case_summary: str, risk_flags: list[str]):
+    async def _run_question_planner_safe(
+        self, case_summary: str, risk_flags: list[str]
+    ) -> QuestionPlan | None:
         """Run question planner agent with error handling."""
         try:
             return await run_question_planner(
