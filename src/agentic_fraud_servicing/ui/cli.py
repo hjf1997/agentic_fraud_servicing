@@ -43,12 +43,12 @@ def _format_suggestion_text(suggestion) -> str:
             lines.append(f"  - {q}")
     if suggestion.risk_flags:
         lines.append("Risk Flags:")
-        for f in suggestion.risk_flags:
-            lines.append(f"  - {f}")
+        for flag in suggestion.risk_flags:
+            lines.append(f"  - {flag}")
     if suggestion.retrieved_facts:
         lines.append("Retrieved Facts:")
-        for f in suggestion.retrieved_facts:
-            lines.append(f"  - {f}")
+        for fact in suggestion.retrieved_facts:
+            lines.append(f"  - {fact}")
     if suggestion.safety_guidance:
         lines.append(f"Safety: {suggestion.safety_guidance}")
     return "\n".join(lines)
