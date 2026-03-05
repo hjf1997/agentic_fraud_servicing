@@ -213,10 +213,26 @@ class TestGetConnectedNodes:
 class TestErrorWrapping:
     """Tests for sqlite3 error wrapping as RuntimeError."""
 
-    def test_operate_on_closed_connection_raises(self, tmp_path):
-        """Operations on a closed connection should raise RuntimeError."""
+    def test_get_nodes_on_closed_raises(self, tmp_path):
+        """get_nodes_by_case on a closed connection should raise RuntimeError."""
         store = EvidenceStore(str(tmp_path / "test.db"))
         store.close()
 
         with pytest.raises(RuntimeError):
             store.get_nodes_by_case("CASE-001")
+
+    def test_get_edges_on_closed_raises(self, tmp_path):
+        """get_edges_by_case on a closed connection should raise RuntimeError."""
+        store = EvidenceStore(str(tmp_path / "test.db"))
+        store.close()
+
+        with pytest.raises(RuntimeError):
+            store.get_edges_by_case("CASE-001")
+
+    def test_get_connected_on_closed_raises(self, tmp_path):
+        """get_connected_nodes on a closed connection should raise RuntimeError."""
+        store = EvidenceStore(str(tmp_path / "test.db"))
+        store.close()
+
+        with pytest.raises(RuntimeError):
+            store.get_connected_nodes("NODE-001")

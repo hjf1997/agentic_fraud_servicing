@@ -143,10 +143,34 @@ class TestListCasesByStatus:
 class TestErrorWrapping:
     """Tests for sqlite3 error wrapping as RuntimeError."""
 
-    def test_operate_on_closed_connection_raises(self, tmp_path):
-        """Operations on a closed connection should raise RuntimeError."""
+    def test_get_case_on_closed_raises(self, tmp_path):
+        """get_case on a closed connection should raise RuntimeError."""
         store = CaseStore(str(tmp_path / "test.db"))
         store.close()
 
         with pytest.raises(RuntimeError):
             store.get_case("CASE-001")
+
+    def test_create_case_on_closed_raises(self, tmp_path):
+        """create_case on a closed connection should raise RuntimeError."""
+        store = CaseStore(str(tmp_path / "test.db"))
+        store.close()
+
+        with pytest.raises(RuntimeError):
+            store.create_case(_make_case())
+
+    def test_list_cases_on_closed_raises(self, tmp_path):
+        """list_cases_by_status on a closed connection should raise RuntimeError."""
+        store = CaseStore(str(tmp_path / "test.db"))
+        store.close()
+
+        with pytest.raises(RuntimeError):
+            store.list_cases_by_status(CaseStatus.OPEN)
+
+    def test_update_status_on_closed_raises(self, tmp_path):
+        """update_case_status on a closed connection should raise RuntimeError."""
+        store = CaseStore(str(tmp_path / "test.db"))
+        store.close()
+
+        with pytest.raises(RuntimeError):
+            store.update_case_status("CASE-001", CaseStatus.CLOSED)

@@ -185,8 +185,8 @@ class TestGetTracesByCase:
 class TestErrorWrapping:
     """Tests for sqlite3 error wrapping."""
 
-    def test_closed_connection_raises_runtime_error(self, store):
-        """Operations on a closed store should raise RuntimeError."""
+    def test_log_invocation_on_closed_raises(self, store):
+        """log_invocation on a closed store should raise RuntimeError."""
         store.close()
         with pytest.raises(RuntimeError):
             store.log_invocation(
@@ -199,3 +199,15 @@ class TestErrorWrapping:
                 duration_ms=10.0,
                 timestamp=_make_timestamp(),
             )
+
+    def test_get_traces_on_closed_raises(self, store):
+        """get_traces_by_case on a closed store should raise RuntimeError."""
+        store.close()
+        with pytest.raises(RuntimeError):
+            store.get_traces_by_case("case-001")
+
+    def test_get_trace_on_closed_raises(self, store):
+        """get_trace on a closed store should raise RuntimeError."""
+        store.close()
+        with pytest.raises(RuntimeError):
+            store.get_trace("t-001")
