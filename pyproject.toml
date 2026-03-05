@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic_fraud_servicing"
+version = "0.1.0"
+description = "Banking-grade multi-agent fraud servicing system for AMEX card disputes"
+requires-python = ">=3.13"
+dependencies = [
+    "openai-agents",
+    "boto3",
+    "pydantic>=2.0",
+    "httpx",
+    "gradio",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 99
+target-version = "py313"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "live: integration tests that call real LLM endpoints (deselect with '-m not live')",
+]
