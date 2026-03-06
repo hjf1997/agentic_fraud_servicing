@@ -7,7 +7,7 @@ risk. Uses OpenAI Agents SDK with structured output via MerchantAnalysis.
 
 import json
 
-from agents import Agent, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
@@ -85,7 +85,7 @@ class MerchantAnalysis(BaseModel):
 merchant_agent = Agent(
     name="merchant_evidence",
     instructions=MERCHANT_INSTRUCTIONS,
-    output_type=MerchantAnalysis,
+    output_type=AgentOutputSchema(MerchantAnalysis, strict_json_schema=False),
 )
 
 

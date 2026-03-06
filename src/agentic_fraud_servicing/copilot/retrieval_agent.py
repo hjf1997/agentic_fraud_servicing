@@ -5,7 +5,7 @@ using the three @function_tool wrappers from copilot/context.py. Returns a
 structured RetrievalResult summarizing what was found and any data gaps.
 """
 
-from agents import Agent, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
@@ -67,7 +67,7 @@ retrieval_agent = Agent(
     name="fast_retrieval",
     instructions=RETRIEVAL_INSTRUCTIONS,
     tools=[tool_lookup_transactions, tool_query_auth_logs, tool_fetch_customer_profile],
-    output_type=RetrievalResult,
+    output_type=AgentOutputSchema(RetrievalResult, strict_json_schema=False),
 )
 
 

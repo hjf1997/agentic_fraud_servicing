@@ -69,7 +69,7 @@ class TestRetrievalAgent:
 
     def test_agent_output_type(self):
         """Agent has RetrievalResult as output_type."""
-        assert retrieval_agent.output_type is RetrievalResult
+        assert retrieval_agent.output_type.output_type is RetrievalResult
 
     def test_agent_has_three_tools(self):
         """Agent has exactly 3 tools registered."""

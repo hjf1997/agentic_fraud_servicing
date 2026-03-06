@@ -100,7 +100,7 @@ class TestScamDetectorAgent:
 
     def test_agent_output_type(self):
         """Agent has ScamAnalysis as output_type."""
-        assert scam_detector_agent.output_type is ScamAnalysis
+        assert scam_detector_agent.output_type.output_type is ScamAnalysis
 
     def test_instructions_cover_contradictions(self):
         """Instructions cover contradiction detection between claims and evidence."""

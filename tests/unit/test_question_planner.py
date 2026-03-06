@@ -75,7 +75,7 @@ class TestQuestionAgent:
 
     def test_agent_output_type(self):
         """Agent has QuestionPlan as output_type."""
-        assert question_agent.output_type is QuestionPlan
+        assert question_agent.output_type.output_type is QuestionPlan
 
     def test_agent_instructions_content(self):
         """Agent instructions reference key question planning concepts."""

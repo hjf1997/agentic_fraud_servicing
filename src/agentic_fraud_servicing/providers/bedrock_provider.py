@@ -65,6 +65,8 @@ def _convert_input_to_bedrock_messages(
     # Accumulate assistant tool_use blocks so they can be merged into one message
     pending_tool_uses: list[dict[str, Any]] = []
     pending_assistant_text: str | None = None
+    # Accumulate tool results so consecutive results merge into one user message
+    pending_tool_results: list[dict[str, Any]] = []
 
     def _flush_assistant() -> None:
         nonlocal pending_tool_uses, pending_assistant_text
@@ -77,6 +79,12 @@ def _convert_input_to_bedrock_messages(
             pending_tool_uses = []
             pending_assistant_text = None
 
+    def _flush_tool_results() -> None:
+        nonlocal pending_tool_results
+        if pending_tool_results:
+            messages.append({"role": "user", "content": list(pending_tool_results)})
+            pending_tool_results = []
+
     for item in input_items:
         if not isinstance(item, dict):
             continue
@@ -84,7 +92,8 @@ def _convert_input_to_bedrock_messages(
         item_type = item.get("type")
 
         # --- EasyInputMessage / InputMessage ---
-        if item_type == "message":
+        # Also handle items with 'role' but no 'type' (SDK shorthand format)
+        if item_type == "message" or (item_type is None and "role" in item):
             role = item.get("role", "user")
             raw_content = item.get("content", "")
 
@@ -107,15 +116,18 @@ def _convert_input_to_bedrock_messages(
                 text = str(raw_content)
 
             if role == "assistant":
+                _flush_tool_results()
                 _flush_assistant()
                 pending_assistant_text = text
             else:
                 # user / system / developer -> treat as user for Bedrock
+                _flush_tool_results()
                 _flush_assistant()
                 messages.append({"role": "user", "content": [{"text": text}]})
 
         # --- ResponseFunctionToolCallParam (assistant requesting a tool call) ---
         elif item_type == "function_call":
+            _flush_tool_results()
             call_id = item.get("call_id", "")
             name = item.get("name", "")
             arguments = item.get("arguments", "{}")
@@ -135,12 +147,11 @@ def _convert_input_to_bedrock_messages(
 
         # --- FunctionCallOutput (tool result being sent back) ---
         elif item_type == "function_call_output":
-            # Flush any pending assistant content first
+            # Flush any pending assistant content first (tool results follow)
             _flush_assistant()
             call_id = item.get("call_id", "")
             output = item.get("output", "")
             if isinstance(output, list):
-                # Extract text from content list
                 text_parts = []
                 for part in output:
                     if isinstance(part, dict):
@@ -148,21 +159,18 @@ def _convert_input_to_bedrock_messages(
                     else:
                         text_parts.append(str(part))
                 output = "\n".join(text_parts)
-            messages.append(
+            # Accumulate tool results — they'll be merged into one user message
+            pending_tool_results.append(
                 {
-                    "role": "user",
-                    "content": [
-                        {
-                            "toolResult": {
-                                "toolUseId": call_id,
-                                "content": [{"text": str(output)}],
-                            }
-                        }
-                    ],
+                    "toolResult": {
+                        "toolUseId": call_id,
+                        "content": [{"text": str(output)}],
+                    }
                 }
             )
 
-    # Flush any remaining assistant content
+    # Flush any remaining content
+    _flush_tool_results()
     _flush_assistant()
     return messages
 
@@ -263,6 +271,37 @@ def _convert_bedrock_response_to_output(
     return output_items
 
 
+def _extract_json_from_output(output_items: list[Any]) -> list[Any]:
+    """Extract raw JSON from model output when structured output was requested.
+
+    Claude on Bedrock may wrap JSON in markdown code fences or include
+    preamble text. This strips everything except the JSON object/array.
+    """
+    import re
+
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    for i, item in enumerate(output_items):
+        if not isinstance(item, ResponseOutputMessage):
+            continue
+        for j, content in enumerate(item.content):
+            if not isinstance(content, ResponseOutputText):
+                continue
+            text = content.text.strip()
+            # Strip markdown JSON fences: ```json ... ``` or ``` ... ```
+            fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+            if fence_match:
+                text = fence_match.group(1).strip()
+            # If text still doesn't look like JSON, try to find { or [
+            if not text.startswith(("{", "[")):
+                json_start = re.search(r"[{\[]", text)
+                if json_start:
+                    # Find the matching JSON by taking from first { or [
+                    text = text[json_start.start() :]
+            item.content[j] = ResponseOutputText(type="output_text", text=text, annotations=[])
+    return output_items
+
+
 # ---------------------------------------------------------------------------
 # BedrockModel — implements the SDK's Model interface
 # ---------------------------------------------------------------------------
@@ -308,9 +347,19 @@ class BedrockModel(Model):
         # Build Bedrock request kwargs
         kwargs: dict[str, Any] = {"modelId": self._model_id}
 
-        # System prompt
-        if system_instructions:
-            kwargs["system"] = [{"text": system_instructions}]
+        # System prompt — append JSON output instruction when structured output
+        # is requested, since Bedrock/Claude doesn't natively enforce JSON mode
+        # like OpenAI does.
+        sys_text = system_instructions or ""
+        if output_schema is not None and hasattr(output_schema, "_output_schema"):
+            schema_json = json.dumps(output_schema._output_schema, indent=2)
+            sys_text += (
+                "\n\nIMPORTANT: You MUST respond with ONLY a valid JSON object "
+                "matching this schema — no markdown, no explanation, no code "
+                f"fences, just raw JSON:\n{schema_json}"
+            )
+        if sys_text:
+            kwargs["system"] = [{"text": sys_text}]
 
         # Messages
         messages = _convert_input_to_bedrock_messages(input)
@@ -331,8 +380,10 @@ class BedrockModel(Model):
                 request_type="get_response",
             ) from exc
 
-        # Convert response
+        # Convert response — extract JSON from markdown fences if needed
         output_items = _convert_bedrock_response_to_output(bedrock_response)
+        if output_schema is not None:
+            output_items = _extract_json_from_output(output_items)
 
         # Extract usage
         usage_data = bedrock_response.get("usage", {})
@@ -384,10 +435,18 @@ class BedrockModelProvider(ModelProvider):
     """
 
     def __init__(self, settings: Settings) -> None:
-        session = boto3.Session(
-            profile_name=settings.aws_profile,
-            region_name=settings.aws_region,
-        )
+        # Only pass profile_name if the profile actually exists in AWS config.
+        # When credentials come from environment variables (e.g. bearer tokens,
+        # IAM roles), specifying a non-existent profile causes a failure.
+        session_kwargs: dict[str, str] = {"region_name": settings.aws_region}
+        if settings.aws_profile:
+            try:
+                test_session = boto3.Session(profile_name=settings.aws_profile)
+                test_session.get_credentials()
+                session_kwargs["profile_name"] = settings.aws_profile
+            except Exception:
+                pass  # Fall back to env-based credentials
+        session = boto3.Session(**session_kwargs)
         self._client = session.client("bedrock-runtime")
         self._default_model_id = settings.aws_bedrock_model_id
 

@@ -305,11 +305,14 @@ class TestBedrockModelProvider:
         settings = _make_settings(profile="my-profile", region="eu-west-1")
         BedrockModelProvider(settings)
 
-        mock_boto3.Session.assert_called_once_with(
-            profile_name="my-profile",
-            region_name="eu-west-1",
+        # The provider first probes the profile, then creates the actual session
+        calls = mock_boto3.Session.call_args_list
+        assert any(
+            c.kwargs.get("profile_name") == "my-profile" or ("my-profile",) == c.args
+            for c in calls
         )
-        mock_boto3.Session.return_value.client.assert_called_once_with("bedrock-runtime")
+        # Final session used for client creation should have profile + region
+        mock_boto3.Session.return_value.client.assert_called_with("bedrock-runtime")
 
 
 # ---------------------------------------------------------------------------

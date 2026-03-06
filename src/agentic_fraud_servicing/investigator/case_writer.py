@@ -6,7 +6,7 @@ typed evidence list, decision recommendation, and investigation notes. Uses Open
 Agents SDK with structured output via CasePack.
 """
 
-from agents import Agent, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
@@ -87,7 +87,7 @@ class CasePack(BaseModel):
 case_writer_agent = Agent(
     name="case_writer",
     instructions=CASE_WRITER_INSTRUCTIONS,
-    output_type=CasePack,
+    output_type=AgentOutputSchema(CasePack, strict_json_schema=False),
 )
 
 

@@ -5,7 +5,7 @@ type (fraud/dispute/scam), and detect category shifts from previous assessments.
 Uses OpenAI Agents SDK with structured output via TriageResult.
 """
 
-from agents import Agent, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
@@ -65,7 +65,7 @@ class TriageResult(BaseModel):
 triage_agent = Agent(
     name="triage",
     instructions=TRIAGE_INSTRUCTIONS,
-    output_type=TriageResult,
+    output_type=AgentOutputSchema(TriageResult, strict_json_schema=False),
 )
 
 

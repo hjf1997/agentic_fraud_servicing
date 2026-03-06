@@ -8,7 +8,7 @@ with structured output via ScamAnalysis.
 
 import json
 
-from agents import Agent, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
@@ -92,7 +92,7 @@ class ScamAnalysis(BaseModel):
 scam_detector_agent = Agent(
     name="scam_detector",
     instructions=SCAM_DETECTOR_INSTRUCTIONS,
-    output_type=ScamAnalysis,
+    output_type=AgentOutputSchema(ScamAnalysis, strict_json_schema=False),
 )
 
 

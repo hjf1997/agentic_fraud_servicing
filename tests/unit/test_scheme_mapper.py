@@ -99,7 +99,7 @@ class TestSchemeMapperAgent:
 
     def test_agent_output_type(self):
         """Agent has SchemeMappingResult as output_type."""
-        assert scheme_mapper_agent.output_type is SchemeMappingResult
+        assert scheme_mapper_agent.output_type.output_type is SchemeMappingResult
 
     def test_instructions_reference_amex(self):
         """Instructions reference AMEX reason codes."""

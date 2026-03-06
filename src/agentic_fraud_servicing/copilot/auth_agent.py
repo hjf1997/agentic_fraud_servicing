@@ -7,7 +7,7 @@ appropriate. Uses OpenAI Agents SDK with structured output via AuthAssessment.
 
 import json
 
-from agents import Agent, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
@@ -71,7 +71,7 @@ class AuthAssessment(BaseModel):
 auth_agent = Agent(
     name="auth_assessor",
     instructions=AUTH_INSTRUCTIONS,
-    output_type=AuthAssessment,
+    output_type=AgentOutputSchema(AuthAssessment, strict_json_schema=False),
 )
 
 

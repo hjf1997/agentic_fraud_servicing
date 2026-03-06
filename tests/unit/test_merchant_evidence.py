@@ -101,7 +101,7 @@ class TestMerchantAgent:
 
     def test_agent_output_type(self):
         """Agent has MerchantAnalysis as output_type."""
-        assert merchant_agent.output_type is MerchantAnalysis
+        assert merchant_agent.output_type.output_type is MerchantAnalysis
 
     def test_instructions_cover_normalization(self):
         """Instructions reference merchant name normalization."""

@@ -161,7 +161,7 @@ class TestCaseWriterAgent:
 
     def test_agent_output_type(self):
         """Agent has CasePack as output_type."""
-        assert case_writer_agent.output_type is CasePack
+        assert case_writer_agent.output_type.output_type is CasePack
 
     def test_instructions_cover_narrative(self):
         """Instructions cover case narrative generation."""

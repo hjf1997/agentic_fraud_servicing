@@ -74,7 +74,7 @@ class TestTriageAgent:
 
     def test_agent_output_type(self):
         """Agent has TriageResult as output_type."""
-        assert triage_agent.output_type is TriageResult
+        assert triage_agent.output_type.output_type is TriageResult
 
     def test_agent_instructions(self):
         """Agent instructions reference key triage concepts."""

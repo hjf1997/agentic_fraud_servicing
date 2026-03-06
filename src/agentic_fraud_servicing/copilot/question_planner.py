@@ -5,7 +5,7 @@ and suggests 1-3 targeted questions for the CCP to ask the cardmember. Uses Open
 Agents SDK with structured output via QuestionPlan.
 """
 
-from agents import Agent, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
@@ -64,7 +64,7 @@ class QuestionPlan(BaseModel):
 question_agent = Agent(
     name="question_planner",
     instructions=QUESTION_INSTRUCTIONS,
-    output_type=QuestionPlan,
+    output_type=AgentOutputSchema(QuestionPlan, strict_json_schema=False),
 )
 
 

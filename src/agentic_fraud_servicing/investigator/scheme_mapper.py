@@ -6,7 +6,7 @@ the matched reason code. Uses OpenAI Agents SDK with structured output via
 SchemeMappingResult.
 """
 
-from agents import Agent, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
@@ -89,7 +89,7 @@ class SchemeMappingResult(BaseModel):
 scheme_mapper_agent = Agent(
     name="scheme_mapper",
     instructions=SCHEME_MAPPER_INSTRUCTIONS,
-    output_type=SchemeMappingResult,
+    output_type=AgentOutputSchema(SchemeMappingResult, strict_json_schema=False),
 )
 
 

@@ -73,7 +73,7 @@ class TestAuthAgent:
 
     def test_agent_output_type(self):
         """Agent has AuthAssessment as output_type."""
-        assert auth_agent.output_type is AuthAssessment
+        assert auth_agent.output_type.output_type is AuthAssessment
 
     def test_agent_instructions(self):
         """Agent instructions reference key auth assessment concepts."""
