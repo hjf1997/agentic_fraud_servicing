@@ -28,6 +28,7 @@ from agentic_fraud_servicing.config import get_settings
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event
 from agentic_fraud_servicing.investigator.orchestrator import InvestigatorOrchestrator
+from agentic_fraud_servicing.models.case import CopilotSuggestion
 from agentic_fraud_servicing.providers.base import get_model_provider
 from agentic_fraud_servicing.ui.helpers import create_gateway
 from scripts.simulation_data import (
@@ -88,7 +89,7 @@ def _make_event(call_id: str, turn: int, speaker: str, text: str) -> dict:
     }
 
 
-def _format_copilot_context(suggestion) -> str:
+def _format_copilot_context(suggestion: CopilotSuggestion) -> str:
     """Format a CopilotSuggestion as a readable text block for the CCP agent."""
     lines = []
     scores = suggestion.hypothesis_scores
@@ -117,7 +118,7 @@ def _print_turn(turn: int, speaker: str, text: str) -> None:
     print(f"\n{BOLD}[Turn {turn}]{RESET} {color}{speaker}:{RESET} {text}")
 
 
-def _print_copilot_brief(suggestion) -> None:
+def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
     """Print a brief copilot summary after each turn."""
     scores = suggestion.hypothesis_scores
     top = max(scores, key=scores.get)  # type: ignore[arg-type]
