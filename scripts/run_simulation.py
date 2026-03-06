@@ -14,8 +14,15 @@ Requires valid AWS credentials in .env (LLM_PROVIDER=bedrock).
 
 import asyncio
 import json
+import os
 import sys
 import uuid
+
+# Ensure project root is on sys.path so 'scripts' package is importable
+# when running directly via: python scripts/run_simulation.py
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from agentic_fraud_servicing.config import get_settings
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
