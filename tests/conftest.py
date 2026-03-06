@@ -4,6 +4,7 @@ Provides reusable fixtures for both unit and integration tests:
 mock_model_provider, sample_transcript_events, sample_case, gateway_factory.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -69,6 +70,7 @@ def sample_case() -> Case:
         account_id="acct-67890",
         allegation_type=AllegationType.FRAUD,
         status=CaseStatus.OPEN,
+        created_at=datetime.now(timezone.utc),
     )
 
 
