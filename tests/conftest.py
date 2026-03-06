@@ -4,11 +4,14 @@ Provides reusable fixtures for both unit and integration tests:
 mock_model_provider, sample_transcript_events, sample_case, gateway_factory.
 """
 
+from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from agentic_fraud_servicing.gateway.tool_gateway import ToolGateway
 from agentic_fraud_servicing.models.case import Case
 from agentic_fraud_servicing.models.enums import AllegationType, CaseStatus, SpeakerType
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
@@ -75,14 +78,14 @@ def sample_case() -> Case:
 
 
 @pytest.fixture()
-def gateway_factory():
+def gateway_factory() -> Callable[[Path], ToolGateway]:
     """Factory fixture that creates a ToolGateway with real SQLite stores.
 
     Returns a callable: ``make_gateway(tmp_path)`` -> ToolGateway.
     Each call creates fresh stores under the given directory.
     """
 
-    def _make_gateway(tmp_path):
+    def _make_gateway(tmp_path: Path) -> ToolGateway:
         return create_gateway(tmp_path)
 
     return _make_gateway
