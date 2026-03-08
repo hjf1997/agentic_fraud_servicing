@@ -121,6 +121,40 @@ class TestScamDetectorAgent:
         assert "phishing" in SCAM_DETECTOR_INSTRUCTIONS.lower()
         assert "tech support" in SCAM_DETECTOR_INSTRUCTIONS.lower()
 
+    def test_instructions_contain_four_categories(self):
+        """Instructions include INVESTIGATION_CATEGORIES_REFERENCE content."""
+        assert "THIRD_PARTY_FRAUD" in SCAM_DETECTOR_INSTRUCTIONS
+        assert "FIRST_PARTY_FRAUD" in SCAM_DETECTOR_INSTRUCTIONS
+        assert "SCAM" in SCAM_DETECTOR_INSTRUCTIONS
+        assert "DISPUTE" in SCAM_DETECTOR_INSTRUCTIONS
+
+    def test_instructions_distinguish_scam_vs_first_party_fraud(self):
+        """Instructions explicitly distinguish SCAM from FIRST_PARTY_FRAUD."""
+        lower = SCAM_DETECTOR_INSTRUCTIONS.lower()
+        # External manipulator is the key distinguishing factor
+        assert "external manipulator" in lower
+        # SCAM = contradictions WITH external manipulator
+        assert "with evidence of an external manipulator" in lower
+        # FIRST_PARTY_FRAUD = contradictions WITHOUT external manipulator
+        # (may be line-wrapped in the prompt text)
+        normalized = " ".join(lower.split())
+        assert "without evidence of an external manipulator" in normalized
+
+    def test_instructions_document_first_party_fraud_signals(self):
+        """Instructions document specific first-party fraud detection signals."""
+        lower = SCAM_DETECTOR_INSTRUCTIONS.lower()
+        assert "chip+pin contradiction" in lower
+        assert "delivery proof contradiction" in lower
+        assert "merchant familiarity" in lower
+        assert "story shifts" in lower
+        assert "first_party_fraud" in SCAM_DETECTOR_INSTRUCTIONS
+
+    def test_instructions_two_axis_assessment(self):
+        """Instructions describe the two-axis assessment framework."""
+        lower = SCAM_DETECTOR_INSTRUCTIONS.lower()
+        assert "contradiction level" in lower
+        assert "external manipulator present" in lower
+
 
 class TestRunScamDetection:
     """Tests for the run_scam_detection async function."""
