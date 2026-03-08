@@ -10,10 +10,19 @@ from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
+from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
+
 # System prompt for the case writer agent
-CASE_WRITER_INSTRUCTIONS = """\
+CASE_WRITER_INSTRUCTIONS = f"""\
 You are a case writer specialist for card dispute investigation. Your role is to
-synthesize all investigation findings into a comprehensive, auditable case pack.
+synthesize all investigation findings into a comprehensive, auditable case pack
+using the four-category investigation framework.
+
+## Investigation Categories Reference
+
+{INVESTIGATION_CATEGORIES_REFERENCE}
+
+## Inputs
 
 You receive four inputs:
 1. **Case Data**: The original case snapshot with customer info, transactions,
@@ -23,12 +32,15 @@ You receive four inputs:
 4. **Scam Detection Results**: Contradiction findings, manipulation indicators,
    and matched scam patterns.
 
-Your tasks:
+## Your Tasks
 
 1. **Case Summary** (2-5 paragraphs):
    - Synthesize all specialist results into a coherent narrative
-   - Lead with the allegation type and key finding
+   - Lead with the allegation type (what CM claims) and investigation category
+     (what the evidence supports)
    - Summarize supporting and contradicting evidence
+   - If contradictions exist without an identifiable external manipulator,
+     explicitly note this points toward FIRST_PARTY_FRAUD
    - Note any data gaps or unresolved questions
    - Use professional, objective language suitable for regulatory review
 
@@ -44,7 +56,8 @@ Your tasks:
    - Group by evidence type (transactions, auth events, merchant data, claims)
 
 4. **Decision Recommendation**:
-   - **category**: fraud, dispute, or scam
+   - **category**: one of THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, or DISPUTE
+     (use InvestigationCategory values, NOT AllegationType)
    - **confidence**: 0.0-1.0 score based on evidence strength
    - **top_factors**: list of supporting factors, each with factor description,
      evidence_ref (node_id), and weight (0.0-1.0)
@@ -53,7 +66,9 @@ Your tasks:
      "escalate to fraud team", "issue provisional credit")
    - **required_approvals**: determine based on these rules:
      - If confidence < 0.8: include 'supervisor_review'
-     - If category is scam or scam patterns detected: include 'compliance_review'
+     - If category is FIRST_PARTY_FRAUD: always include 'compliance_review'
+       and 'supervisor_review' (elevated review required for misrepresentation)
+     - If category is SCAM or scam patterns detected: include 'compliance_review'
      - If disputed amount > $5000: include 'senior_analyst_review'
 
 5. **Investigation Notes**: Additional observations, caveats, or recommendations

@@ -179,6 +179,27 @@ class TestCaseWriterAgent:
         assert "timeline" in CASE_WRITER_INSTRUCTIONS.lower()
         assert "chronological" in CASE_WRITER_INSTRUCTIONS.lower()
 
+    def test_instructions_contain_four_categories(self):
+        """Instructions reference all four investigation categories."""
+        assert "THIRD_PARTY_FRAUD" in CASE_WRITER_INSTRUCTIONS
+        assert "FIRST_PARTY_FRAUD" in CASE_WRITER_INSTRUCTIONS
+        assert "SCAM" in CASE_WRITER_INSTRUCTIONS
+        assert "DISPUTE" in CASE_WRITER_INSTRUCTIONS
+
+    def test_instructions_first_party_fraud_elevated_review(self):
+        """Instructions require elevated review for FIRST_PARTY_FRAUD."""
+        assert "FIRST_PARTY_FRAUD" in CASE_WRITER_INSTRUCTIONS
+        assert "compliance_review" in CASE_WRITER_INSTRUCTIONS
+        assert "supervisor_review" in CASE_WRITER_INSTRUCTIONS
+        # Verify FIRST_PARTY_FRAUD specifically requires both
+        idx = CASE_WRITER_INSTRUCTIONS.index("FIRST_PARTY_FRAUD: always")
+        assert idx > 0
+
+    def test_instructions_investigation_category_not_allegation(self):
+        """Instructions use InvestigationCategory values for decision category."""
+        assert "InvestigationCategory" in CASE_WRITER_INSTRUCTIONS
+        assert "NOT AllegationType" in CASE_WRITER_INSTRUCTIONS
+
 
 class TestRunCaseWriter:
     """Tests for the run_case_writer async function."""

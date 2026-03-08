@@ -119,6 +119,23 @@ class TestSchemeMapperAgent:
         assert "4837" in SCHEME_MAPPER_INSTRUCTIONS
         assert "4853" in SCHEME_MAPPER_INSTRUCTIONS
 
+    def test_instructions_contain_four_categories(self):
+        """Instructions reference all four investigation categories."""
+        assert "THIRD_PARTY_FRAUD" in SCHEME_MAPPER_INSTRUCTIONS
+        assert "FIRST_PARTY_FRAUD" in SCHEME_MAPPER_INSTRUCTIONS
+        assert "SCAM" in SCHEME_MAPPER_INSTRUCTIONS
+        assert "DISPUTE" in SCHEME_MAPPER_INSTRUCTIONS
+
+    def test_instructions_first_party_fraud_denied(self):
+        """Instructions note FIRST_PARTY_FRAUD is typically denied."""
+        assert "DENIED" in SCHEME_MAPPER_INSTRUCTIONS
+        assert "no valid" in SCHEME_MAPPER_INSTRUCTIONS.lower()
+
+    def test_instructions_scam_limited_recovery(self):
+        """Instructions note scam cases have limited recovery options."""
+        assert "limited" in SCHEME_MAPPER_INSTRUCTIONS.lower()
+        assert "recovery" in SCHEME_MAPPER_INSTRUCTIONS.lower()
+
 
 class TestRunSchemeMapping:
     """Tests for the run_scheme_mapping async function."""
