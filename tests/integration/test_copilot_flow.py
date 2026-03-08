@@ -187,8 +187,8 @@ class TestRunningStateAccumulation:
         await orch.process_event(sample_transcript_events[0])
         await orch.process_event(sample_transcript_events[1])
 
-        # The triage mock returns FRAUD with confidence 0.85
-        assert orch.hypothesis_scores["FRAUD"] > 0.0
+        # The triage mock returns FRAUD — maps to THIRD_PARTY_FRAUD hypothesis key
+        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] > 0.0
 
     @pytest.mark.usefixtures("_mock_specialists")
     async def test_impersonation_risk_set_from_auth(

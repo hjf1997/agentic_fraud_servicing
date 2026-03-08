@@ -115,7 +115,12 @@ class TestCopilotOrchestratorInit:
         orch = _make_orchestrator()
         assert orch.case_id is None
         assert orch.call_id is None
-        assert orch.hypothesis_scores == {"FRAUD": 0.0, "DISPUTE": 0.0, "SCAM": 0.0}
+        assert orch.hypothesis_scores == {
+            "THIRD_PARTY_FRAUD": 0.0,
+            "FIRST_PARTY_FRAUD": 0.0,
+            "SCAM": 0.0,
+            "DISPUTE": 0.0,
+        }
         assert orch.impersonation_risk == 0.0
         assert orch.missing_fields == list(_INITIAL_MISSING_FIELDS)
         assert orch.evidence_collected == []
@@ -211,9 +216,10 @@ class TestProcessEvent:
         orch = _make_orchestrator()
         await orch.process_event(_make_event())
 
-        # FRAUD score should increase (0.0 * 0.4 + 0.9 * 0.6 = 0.54)
-        assert orch.hypothesis_scores["FRAUD"] == pytest.approx(0.54, abs=0.01)
+        # AllegationType.FRAUD maps to THIRD_PARTY_FRAUD (0.0 * 0.4 + 0.9 * 0.6 = 0.54)
+        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] == pytest.approx(0.54, abs=0.01)
         # Other scores should stay at 0 (0.0 * 0.7 = 0.0)
+        assert orch.hypothesis_scores["FIRST_PARTY_FRAUD"] == 0.0
         assert orch.hypothesis_scores["DISPUTE"] == 0.0
         assert orch.hypothesis_scores["SCAM"] == 0.0
 
@@ -256,6 +262,124 @@ class TestProcessEvent:
 
         assert len(result.suggested_questions) == 2
         assert "What was the transaction amount?" in result.suggested_questions
+
+
+class TestHypothesisScoreMapping:
+    """Tests for 4-category hypothesis score mapping and first-party fraud detection."""
+
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_category_shift_boosts_first_party_fraud(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval
+    ):
+        """category_shift_detected=True adds 0.15 to FIRST_PARTY_FRAUD."""
+        triage = _mock_triage_result(allegation_type=AllegationType.FRAUD, confidence=0.8)
+        triage.category_shift_detected = True
+        mock_triage.return_value = triage
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event())
+
+        # FIRST_PARTY_FRAUD gets decay (0.0 * 0.7 = 0.0) then +0.15 boost
+        assert orch.hypothesis_scores["FIRST_PARTY_FRAUD"] == pytest.approx(0.15, abs=0.01)
+
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_scam_allegation_boosts_scam_score(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval
+    ):
+        """AllegationType.SCAM from triage boosts SCAM hypothesis key."""
+        mock_triage.return_value = _mock_triage_result(
+            allegation_type=AllegationType.SCAM, confidence=0.7
+        )
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event())
+
+        assert orch.hypothesis_scores["SCAM"] == pytest.approx(0.42, abs=0.01)
+        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.0
+
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_dispute_allegation_boosts_dispute_score(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval
+    ):
+        """AllegationType.DISPUTE from triage boosts DISPUTE hypothesis key."""
+        mock_triage.return_value = _mock_triage_result(
+            allegation_type=AllegationType.DISPUTE, confidence=0.85
+        )
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event())
+
+        assert orch.hypothesis_scores["DISPUTE"] == pytest.approx(0.51, abs=0.01)
+
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_suggestion_contains_all_four_hypothesis_keys(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval
+    ):
+        """CopilotSuggestion.hypothesis_scores has all 4 category keys."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+
+        orch = _make_orchestrator()
+        result = await orch.process_event(_make_event())
+
+        assert set(result.hypothesis_scores.keys()) == {
+            "THIRD_PARTY_FRAUD",
+            "FIRST_PARTY_FRAUD",
+            "SCAM",
+            "DISPUTE",
+        }
+
+    def test_current_allegation_type_maps_third_party_fraud(self):
+        """THIRD_PARTY_FRAUD top score maps to AllegationType.FRAUD."""
+        orch = _make_orchestrator()
+        orch.hypothesis_scores["THIRD_PARTY_FRAUD"] = 0.8
+        assert orch._current_allegation_type() == AllegationType.FRAUD
+
+    def test_current_allegation_type_maps_first_party_fraud(self):
+        """FIRST_PARTY_FRAUD top score maps to AllegationType.FRAUD."""
+        orch = _make_orchestrator()
+        orch.hypothesis_scores["FIRST_PARTY_FRAUD"] = 0.9
+        assert orch._current_allegation_type() == AllegationType.FRAUD
+
+    def test_current_allegation_type_maps_scam(self):
+        """SCAM top score maps to AllegationType.SCAM."""
+        orch = _make_orchestrator()
+        orch.hypothesis_scores["SCAM"] = 0.7
+        assert orch._current_allegation_type() == AllegationType.SCAM
+
+    def test_current_allegation_type_maps_dispute(self):
+        """DISPUTE top score maps to AllegationType.DISPUTE."""
+        orch = _make_orchestrator()
+        orch.hypothesis_scores["DISPUTE"] = 0.6
+        assert orch._current_allegation_type() == AllegationType.DISPUTE
+
+    def test_current_allegation_type_returns_none_when_all_zero(self):
+        """Returns None when all hypothesis scores are zero."""
+        orch = _make_orchestrator()
+        assert orch._current_allegation_type() is None
 
 
 class TestMissingFieldsUpdate:

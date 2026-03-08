@@ -49,7 +49,7 @@ class CopilotOrchestrator:
         model_provider: LLM provider for all specialist agents.
         case_id: Set from the first transcript event.
         call_id: Set from the first transcript event.
-        hypothesis_scores: Running fraud/dispute/scam scores.
+        hypothesis_scores: Running 4-category investigation hypothesis scores.
         impersonation_risk: Current impersonation risk (0.0-1.0).
         missing_fields: Fields still needed from the caller.
         evidence_collected: Evidence references gathered so far.
@@ -62,9 +62,10 @@ class CopilotOrchestrator:
         self.case_id: str | None = None
         self.call_id: str | None = None
         self.hypothesis_scores: dict[str, float] = {
-            "FRAUD": 0.0,
-            "DISPUTE": 0.0,
+            "THIRD_PARTY_FRAUD": 0.0,
+            "FIRST_PARTY_FRAUD": 0.0,
             "SCAM": 0.0,
+            "DISPUTE": 0.0,
         }
         self.impersonation_risk: float = 0.0
         self.missing_fields: list[str] = list(_INITIAL_MISSING_FIELDS)
@@ -163,21 +164,46 @@ class CopilotOrchestrator:
 
     # -- Private helper methods --
 
+    # Map 4-category hypothesis keys back to 3-value AllegationType for triage
+    _HYPOTHESIS_TO_ALLEGATION: dict[str, AllegationType] = {
+        "THIRD_PARTY_FRAUD": AllegationType.FRAUD,
+        "FIRST_PARTY_FRAUD": AllegationType.FRAUD,
+        "SCAM": AllegationType.SCAM,
+        "DISPUTE": AllegationType.DISPUTE,
+    }
+
+    # Map triage's 3-value AllegationType to 4-category hypothesis key
+    _ALLEGATION_TO_HYPOTHESIS: dict[AllegationType, str] = {
+        AllegationType.FRAUD: "THIRD_PARTY_FRAUD",
+        AllegationType.SCAM: "SCAM",
+        AllegationType.DISPUTE: "DISPUTE",
+    }
+
     def _current_allegation_type(self) -> AllegationType | None:
-        """Derive the current leading allegation type from hypothesis scores."""
+        """Derive the current leading allegation type from hypothesis scores.
+
+        Maps from the 4-category hypothesis keys back to the 3-value
+        AllegationType that the triage agent expects as previous_type.
+        Both THIRD_PARTY_FRAUD and FIRST_PARTY_FRAUD map to AllegationType.FRAUD.
+        """
         if all(v == 0.0 for v in self.hypothesis_scores.values()):
             return None
         top_key = max(self.hypothesis_scores, key=self.hypothesis_scores.get)  # type: ignore[arg-type]
-        try:
-            return AllegationType(top_key.lower())
-        except ValueError:
-            return None
+        return self._HYPOTHESIS_TO_ALLEGATION.get(top_key)
 
     def _update_hypothesis_scores(self, triage_result: TriageResult) -> None:
-        """Update hypothesis scores from a triage result."""
+        """Update hypothesis scores from a triage result.
+
+        Maps triage's AllegationType (3 values) to the 4-category hypothesis
+        keys via _ALLEGATION_TO_HYPOTHESIS. If the triage detects a category
+        shift (story inconsistency), adds a small boost to FIRST_PARTY_FRAUD
+        since shifts often indicate the CM is misrepresenting.
+        """
         if triage_result.allegation_type is not None:
-            # Boost the detected category's score using a weighted update
-            detected = triage_result.allegation_type.value.upper()
+            # Map 3-value AllegationType to 4-category hypothesis key
+            detected = self._ALLEGATION_TO_HYPOTHESIS.get(triage_result.allegation_type)
+            if detected is None:
+                return
             confidence = triage_result.confidence
             for key in self.hypothesis_scores:
                 if key == detected:
@@ -188,6 +214,13 @@ class CopilotOrchestrator:
                 else:
                     # Decay other scores
                     self.hypothesis_scores[key] *= 0.7
+
+        # Category shifts suggest the CM may be misrepresenting — boost
+        # first-party fraud hypothesis as a simple heuristic
+        if triage_result.category_shift_detected:
+            self.hypothesis_scores["FIRST_PARTY_FRAUD"] = min(
+                1.0, self.hypothesis_scores["FIRST_PARTY_FRAUD"] + 0.15
+            )
 
     def _update_missing_fields(self, text: str) -> None:
         """Remove missing fields addressed by keywords in the transcript text."""
