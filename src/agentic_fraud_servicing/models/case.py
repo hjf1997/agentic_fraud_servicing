@@ -10,7 +10,11 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from agentic_fraud_servicing.models.enums import AllegationType, CaseStatus
+from agentic_fraud_servicing.models.enums import (
+    AllegationType,
+    CaseStatus,
+    InvestigationCategory,
+)
 
 
 class TransactionRef(BaseModel):
@@ -51,7 +55,7 @@ class DecisionFactor(BaseModel):
 class DecisionRecommendation(BaseModel):
     """Recommendation produced by the post-call investigator."""
 
-    category: AllegationType
+    category: InvestigationCategory
     confidence: float
     top_factors: list[DecisionFactor] = []
     uncertainties: list[str] = []

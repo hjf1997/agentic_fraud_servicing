@@ -10,12 +10,14 @@ from agentic_fraud_servicing.models.case import (
     TransactionRef,
 )
 from agentic_fraud_servicing.models.enums import (
+    INVESTIGATION_CATEGORIES_REFERENCE,
     AllegationType,
     AuthMethod,
     CaseStatus,
     EvidenceEdgeType,
     EvidenceNodeType,
     EvidenceSourceType,
+    InvestigationCategory,
     RiskLevel,
     SpeakerType,
     TransactionChannel,
@@ -49,6 +51,8 @@ __all__ = [
     "EvidenceEdgeType",
     "EvidenceNodeType",
     "EvidenceSourceType",
+    "INVESTIGATION_CATEGORIES_REFERENCE",
+    "InvestigationCategory",
     "RiskLevel",
     "SpeakerType",
     "TransactionChannel",

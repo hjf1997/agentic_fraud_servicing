@@ -1,12 +1,14 @@
 """Tests for shared enums in models/enums.py."""
 
 from agentic_fraud_servicing.models.enums import (
+    INVESTIGATION_CATEGORIES_REFERENCE,
     AllegationType,
     AuthMethod,
     CaseStatus,
     EvidenceEdgeType,
     EvidenceNodeType,
     EvidenceSourceType,
+    InvestigationCategory,
     RiskLevel,
     SpeakerType,
     TransactionChannel,
@@ -38,6 +40,55 @@ class TestAllegationType:
 
     def test_string_serialization(self):
         assert AllegationType.FRAUD == "FRAUD"
+
+
+class TestInvestigationCategory:
+    def test_members(self):
+        assert set(InvestigationCategory) == {
+            InvestigationCategory.THIRD_PARTY_FRAUD,
+            InvestigationCategory.FIRST_PARTY_FRAUD,
+            InvestigationCategory.SCAM,
+            InvestigationCategory.DISPUTE,
+        }
+        assert len(InvestigationCategory) == 4
+
+    def test_string_serialization(self):
+        assert InvestigationCategory.THIRD_PARTY_FRAUD == "THIRD_PARTY_FRAUD"
+        assert InvestigationCategory.FIRST_PARTY_FRAUD == "FIRST_PARTY_FRAUD"
+        assert InvestigationCategory.SCAM.value == "SCAM"
+        assert InvestigationCategory.DISPUTE.value == "DISPUTE"
+
+    def test_str_mixin(self):
+        for member in InvestigationCategory:
+            assert isinstance(member, str)
+
+
+class TestInvestigationCategoriesReference:
+    def test_is_string(self):
+        assert isinstance(INVESTIGATION_CATEGORIES_REFERENCE, str)
+
+    def test_length(self):
+        assert len(INVESTIGATION_CATEGORIES_REFERENCE) > 500
+
+    def test_contains_all_category_names(self):
+        for cat in InvestigationCategory:
+            assert cat.value in INVESTIGATION_CATEGORIES_REFERENCE
+
+    def test_contains_key_phrases(self):
+        """Each category definition includes authorization, fraud actor, etc."""
+        for phrase in [
+            "Authorization: NO",
+            "Authorization: YES",
+            "Fraud actor:",
+            "CM role:",
+            "Evidence focus:",
+            "Investigation question:",
+            "Typical scenarios:",
+        ]:
+            assert phrase in INVESTIGATION_CATEGORIES_REFERENCE
+
+    def test_contains_first_party_fraud_cross_cutting_note(self):
+        assert "NEVER self-report" in INVESTIGATION_CATEGORIES_REFERENCE
 
 
 class TestRiskLevel:
@@ -149,10 +200,11 @@ class TestTransactionChannel:
 
 
 def test_all_enums_importable():
-    """Verify all 9 enum classes are importable from the module."""
+    """Verify all 10 enum classes are importable from the module."""
     all_enums = [
         SpeakerType,
         AllegationType,
+        InvestigationCategory,
         RiskLevel,
         CaseStatus,
         EvidenceEdgeType,
@@ -161,6 +213,6 @@ def test_all_enums_importable():
         AuthMethod,
         TransactionChannel,
     ]
-    assert len(all_enums) == 9
+    assert len(all_enums) == 10
     for enum_cls in all_enums:
         assert issubclass(enum_cls, str)

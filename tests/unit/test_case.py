@@ -14,7 +14,11 @@ from agentic_fraud_servicing.models.case import (
     TimelineEvent,
     TransactionRef,
 )
-from agentic_fraud_servicing.models.enums import AllegationType, CaseStatus
+from agentic_fraud_servicing.models.enums import (
+    AllegationType,
+    CaseStatus,
+    InvestigationCategory,
+)
 
 NOW = datetime(2026, 3, 6, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -80,25 +84,31 @@ class TestDecisionRecommendation:
             DecisionFactor(factor="New device", evidence_ref="node-2", weight=0.6),
         ]
         rec = DecisionRecommendation(
-            category=AllegationType.FRAUD,
+            category=InvestigationCategory.THIRD_PARTY_FRAUD,
             confidence=0.85,
             top_factors=factors,
             uncertainties=["Merchant response pending"],
             suggested_actions=["Block card", "Notify customer"],
             required_approvals=["senior_analyst"],
         )
-        assert rec.category == AllegationType.FRAUD
+        assert rec.category == InvestigationCategory.THIRD_PARTY_FRAUD
         assert rec.confidence == 0.85
         assert len(rec.top_factors) == 2
         assert rec.top_factors[0].weight == 0.8
         assert rec.uncertainties == ["Merchant response pending"]
 
     def test_defaults(self) -> None:
-        rec = DecisionRecommendation(category=AllegationType.DISPUTE, confidence=0.5)
+        rec = DecisionRecommendation(category=InvestigationCategory.DISPUTE, confidence=0.5)
         assert rec.top_factors == []
         assert rec.uncertainties == []
         assert rec.suggested_actions == []
         assert rec.required_approvals == []
+
+    def test_all_categories(self) -> None:
+        """All 4 InvestigationCategory values are accepted."""
+        for cat in InvestigationCategory:
+            rec = DecisionRecommendation(category=cat, confidence=0.7)
+            assert rec.category == cat
 
 
 class TestCase:
@@ -136,7 +146,9 @@ class TestCase:
             merchant_name="Store X",
             transaction_date=NOW,
         )
-        rec = DecisionRecommendation(category=AllegationType.FRAUD, confidence=0.9)
+        rec = DecisionRecommendation(
+            category=InvestigationCategory.THIRD_PARTY_FRAUD, confidence=0.9
+        )
         case = self._make_case(
             allegation_type=AllegationType.FRAUD,
             allegation_confidence=0.9,
