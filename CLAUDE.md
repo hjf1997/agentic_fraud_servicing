@@ -8,12 +8,13 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 Banking-grade multi-agent fraud servicing system for AMEX card disputes. Provides
 two capabilities: (1) Realtime Copilot — interprets live transcript streams during
-calls, tracks fraud/dispute/scam hypotheses, suggests next-best questions, and
-assesses impersonation risk; (2) Post-Call Investigator — builds evidence graphs,
-maps scheme reason codes, detects scam patterns and contradictions, and generates
-auditable case packs with decision recommendations. Uses OpenAI Agents SDK for
-hub-and-spoke orchestration with a provider abstraction layer supporting Claude
-via AWS Bedrock (dev) and OpenAI (enterprise).
+calls, tracks four investigation hypotheses (third-party fraud, first-party fraud,
+scam, dispute), suggests next-best questions, and assesses impersonation risk;
+(2) Post-Call Investigator — builds evidence graphs, maps scheme reason codes,
+detects scam and first-party fraud patterns, and generates auditable case packs
+with decision recommendations. Uses OpenAI Agents SDK for hub-and-spoke
+orchestration with a provider abstraction layer supporting Claude via AWS Bedrock
+(dev) and OpenAI (enterprise).
 
 ---
 
@@ -56,13 +57,27 @@ via AWS Bedrock (dev) and OpenAI (enterprise).
 - Serialization: use `.model_dump()` for dict conversion, `.model_dump_json()` for JSON — never `json.dumps()` on Pydantic models
 - Evidence nodes must have a `source_type` distinguishing FACT vs ALLEGATION — never mix verified system data with customer claims
 
+### Investigation Category Framework
+
+The system uses two separate classification systems:
+- **`AllegationType`** (3 values: FRAUD, DISPUTE, SCAM) — what the cardmember claims. Used by triage during the call. A CM will never self-report first-party fraud.
+- **`InvestigationCategory`** (4 values: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE) — what the system concludes after investigation. Used in `DecisionRecommendation.category`, `hypothesis_scores`, and all agent prompts.
+
+The four investigation categories:
+1. **Third-Party Fraud**: Unauthorized transaction by external criminal. CM is victim. Key evidence: auth logs, device mismatch.
+2. **Scam**: Authorized transaction, but CM was deceived by external scammer. Key evidence: social-engineering patterns.
+3. **First-Party Fraud**: CM authorized and is now misrepresenting (friendly fraud). Key evidence: contradictions with no external manipulator.
+4. **Dispute**: Authorized transaction, merchant performance issue. Key evidence: merchant records, delivery proof.
+
+When a CM alleges FRAUD, the copilot splits the hypothesis between THIRD_PARTY_FRAUD and FIRST_PARTY_FRAUD. All agent prompts must reference the `INVESTIGATION_CATEGORIES_REFERENCE` constant for consistent definitions.
+
 ### LLM Provider Abstraction
 
 - All LLM calls go through the provider interface in `providers/base.py`
 - Never call `boto3` or `openai` directly outside the provider implementations
 - Provider selection is determined by `LLM_PROVIDER` env var (`openai` or `bedrock`)
 - Bedrock provider uses `boto3.client("bedrock-runtime").converse()` — not `invoke_model()`
-- Bedrock model ID: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`, region: `us-east-1`
+B
 - Agent orchestration always uses OpenAI Agents SDK patterns (tool registration, agent-as-tool) regardless of LLM backend
 
 ### Agent-as-Tool Pattern
