@@ -191,6 +191,18 @@ class TestRunningStateAccumulation:
         assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] > 0.0
 
     @pytest.mark.usefixtures("_mock_specialists")
+    async def test_suggestion_has_all_four_hypothesis_keys(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """CopilotSuggestion hypothesis_scores must contain all 4 category keys."""
+        gateway = gateway_factory(tmp_path)
+        orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+        result = await orch.process_event(sample_transcript_events[0])
+        expected_keys = {"THIRD_PARTY_FRAUD", "FIRST_PARTY_FRAUD", "SCAM", "DISPUTE"}
+        assert set(result.hypothesis_scores.keys()) == expected_keys
+
+    @pytest.mark.usefixtures("_mock_specialists")
     async def test_impersonation_risk_set_from_auth(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):

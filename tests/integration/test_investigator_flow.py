@@ -31,6 +31,7 @@ from agentic_fraud_servicing.investigator.scheme_mapper import (
 from agentic_fraud_servicing.models.enums import (
     CaseStatus,
     EvidenceSourceType,
+    InvestigationCategory,
 )
 from agentic_fraud_servicing.models.evidence import (
     ClaimStatement,
@@ -106,7 +107,7 @@ _CASE_PACK = CasePack(
         }
     ],
     decision_recommendation={
-        "category": "fraud",
+        "category": "THIRD_PARTY_FRAUD",
         "confidence": 0.85,
         "top_factors": [{"factor": "unauthorized charge", "weight": 0.9}],
         "uncertainties": ["delivery status unknown"],
@@ -228,6 +229,22 @@ class TestInvestigateReturns:
         orch = InvestigatorOrchestrator(seeded_gateway, mock_model_provider)
         with pytest.raises(RuntimeError, match="Case not found"):
             await orch.investigate("nonexistent-case")
+
+
+class TestDecisionCategory:
+    """Verify decision recommendation uses InvestigationCategory values."""
+
+    @pytest.mark.usefixtures("_mock_specialists")
+    async def test_case_pack_uses_investigation_category(
+        self, seeded_gateway, sample_case, mock_model_provider
+    ):
+        """CasePack decision_recommendation.category should be a valid InvestigationCategory."""
+        orch = InvestigatorOrchestrator(seeded_gateway, mock_model_provider)
+        result = await orch.investigate(sample_case.case_id)
+
+        category = result.decision_recommendation["category"]
+        valid_categories = {c.value for c in InvestigationCategory}
+        assert category in valid_categories
 
 
 class TestCaseStatusUpdate:
