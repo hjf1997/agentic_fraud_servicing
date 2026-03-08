@@ -118,6 +118,24 @@ class TestMerchantAgent:
         assert "risk score" in MERCHANT_INSTRUCTIONS.lower()
         assert "category" in MERCHANT_INSTRUCTIONS.lower()
 
+    def test_instructions_contain_four_categories(self):
+        """Instructions reference all 4 investigation categories."""
+        assert "THIRD_PARTY_FRAUD" in MERCHANT_INSTRUCTIONS
+        assert "FIRST_PARTY_FRAUD" in MERCHANT_INSTRUCTIONS
+        assert "SCAM" in MERCHANT_INSTRUCTIONS
+        assert "DISPUTE" in MERCHANT_INSTRUCTIONS
+
+    def test_instructions_merchant_category_context(self):
+        """Instructions contextualize merchant analysis for each category."""
+        # Third-party fraud: merchant uninvolved
+        assert "uninvolved" in MERCHANT_INSTRUCTIONS.lower()
+        # First-party fraud: merchant is legitimate
+        assert "legitimate" in MERCHANT_INSTRUCTIONS.lower()
+        # Scam: merchant may be fake
+        assert "fake" in MERCHANT_INSTRUCTIONS.lower()
+        # Dispute: merchant performance
+        assert "delivery proof" in MERCHANT_INSTRUCTIONS.lower()
+
 
 class TestRunMerchantAnalysis:
     """Tests for the run_merchant_analysis async function."""

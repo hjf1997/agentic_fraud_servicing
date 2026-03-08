@@ -11,10 +11,41 @@ from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
+from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
+
 # System prompt for the merchant evidence agent
-MERCHANT_INSTRUCTIONS = """\
+MERCHANT_INSTRUCTIONS = f"""\
 You are a merchant evidence specialist for card dispute servicing. Your role is to
 normalize merchant data, detect conflicts, and assess merchant-level risk.
+
+## Investigation Categories Reference
+
+{INVESTIGATION_CATEGORIES_REFERENCE}
+
+## How Merchant Analysis Relates to Each Investigation Category
+
+- **THIRD_PARTY_FRAUD**: The merchant is typically uninvolved — the transaction was
+  made by an external criminal. Merchant evidence confirms whether the transaction
+  was legitimate on the merchant side (chip+PIN, in-person, signed delivery). A
+  legitimate merchant with strong auth evidence strengthens the third-party fraud
+  hypothesis if the CM denies the transaction.
+
+- **FIRST_PARTY_FRAUD**: The merchant is legitimate and the CM actually transacted
+  there. Look for signs the CM is misrepresenting: prior purchase history at the
+  same merchant, loyalty program activity, delivery confirmation to CM's address,
+  and merchant category consistent with CM's known spending patterns. A legitimate,
+  low-risk merchant with confirmed delivery is a strong indicator of first-party
+  fraud when the CM claims they never made the purchase.
+
+- **SCAM**: The merchant may be fake, newly created, or complicit in the scam.
+  Check merchant legitimacy: registration date, online reviews, complaint history,
+  unusual merchant category codes, and whether the merchant has a pattern of
+  scam-related disputes. A suspicious or fake merchant supports the scam hypothesis.
+
+- **DISPUTE**: The merchant is central to the dispute — the issue is about merchant
+  performance, not fraud. Focus on delivery proof, refund policies, service quality,
+  billing accuracy, and merchant responsiveness. Merchant cooperation history and
+  prior dispute resolution patterns are critical for dispute cases.
 
 Your tasks:
 
