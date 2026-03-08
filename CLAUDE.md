@@ -63,13 +63,19 @@ The system uses two separate classification systems:
 - **`AllegationType`** (3 values: FRAUD, DISPUTE, SCAM) — what the cardmember claims. Used by triage during the call. A CM will never self-report first-party fraud.
 - **`InvestigationCategory`** (4 values: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE) — what the system concludes after investigation. Used in `DecisionRecommendation.category`, `hypothesis_scores`, and all agent prompts.
 
-The four investigation categories:
-1. **Third-Party Fraud**: Unauthorized transaction by external criminal. CM is victim. Key evidence: auth logs, device mismatch.
-2. **Scam**: Authorized transaction, but CM was deceived by external scammer. Key evidence: social-engineering patterns.
-3. **First-Party Fraud**: CM authorized and is now misrepresenting (friendly fraud). Key evidence: contradictions with no external manipulator.
-4. **Dispute**: Authorized transaction, merchant performance issue. Key evidence: merchant records, delivery proof.
+The four investigation categories (full definitions):
 
-When a CM alleges FRAUD, the copilot splits the hypothesis between THIRD_PARTY_FRAUD and FIRST_PARTY_FRAUD. All agent prompts must reference the `INVESTIGATION_CATEGORIES_REFERENCE` constant for consistent definitions.
+1. **Third-Party Fraud** (Unauthorized Fraud): A transaction made without the cardmember's knowledge or permission, where a third party gains access to the account or card credentials. Authorization: NO. Fraud actor: external criminal. CM role: victim. Evidence focus: authentication logs, device/IP data, card possession. Investigation question: "Did the cardmember actually authorize the transaction?"
+
+2. **Scam** (Authorized Social-Engineering Fraud): A transaction authorized by the cardmember, but the authorization was obtained through deception or manipulation by an external fraudster. Authorization: YES. Fraud actor: external scammer. CM role: victim of manipulation. Evidence focus: narrative consistency, social-engineering patterns. Investigation question: "Did the cardmember authorize the payment because they were deceived?"
+
+3. **First-Party Fraud** (Customer Misrepresentation / Friendly Fraud): The legitimate cardmember intentionally provides false information or misrepresents a transaction to obtain a refund or avoid liability. Authorization: YES. Fraud actor: cardmember. CM role: perpetrator. Evidence focus: contradictions between claims and evidence, transaction history, behavioral patterns. Investigation question: "Is the cardmember intentionally misrepresenting the facts?" A CM will NEVER self-report this — it is always an investigation finding.
+
+4. **Dispute** (Authorized Transaction with Merchant Issue): A transaction authorized by the cardmember where the complaint is about the merchant's performance or billing, not about fraud. Authorization: YES. Fraud actor: none. CM role: legitimate complainant. Evidence focus: merchant records, delivery proof, refund policy. Investigation question: "Did the merchant fail to deliver what was promised?"
+
+**First-party fraud is cross-cutting**: ANY allegation type can turn out to be first-party fraud. A CM claiming FRAUD may have actually made the purchase. A CM claiming DISPUTE may have received the goods. A CM claiming SCAM may not have been scammed at all. The copilot tracks all 4 hypothesis scores from the start regardless of the CM's allegation type. Evidence of contradictions without an external manipulator always increases the first-party fraud hypothesis.
+
+All agent prompts must reference the `INVESTIGATION_CATEGORIES_REFERENCE` constant for consistent definitions across the entire system.
 
 ### LLM Provider Abstraction
 
