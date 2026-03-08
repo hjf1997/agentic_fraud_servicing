@@ -1,20 +1,24 @@
-"""Full end-to-end simulation: scam-disguised-as-fraud scenario with live Bedrock LLM.
+"""Full end-to-end simulation runner with live Bedrock LLM.
 
-Orchestrates a realistic AMEX fraud dispute call where a scammed cardmember
-(John Smith) tries to frame a legitimate purchase as unauthorized fraud. The
-system uses real AWS Bedrock LLM calls for everything: CCP/CM conversation
-generation, copilot specialist agents, and investigator specialist agents.
-Only the backend evidence data is simulated.
+Supports multiple simulation scenarios via the --scenario flag. Each scenario
+provides its own evidence data, cardmember agent, and system events. The runner
+handles the shared simulation loop: CCP/CM conversation, copilot processing,
+investigator analysis, and verification.
 
 Usage:
-    python scripts/run_simulation.py
+    python scripts/run_simulation.py --scenario scam_techvault
+    python scripts/run_simulation.py --scenario doordash_fraud
+    python scripts/run_simulation.py --list
 
 Requires valid AWS credentials in .env (LLM_PROVIDER=bedrock).
 """
 
+import argparse
 import asyncio
+import io
 import json
 import os
+import re
 import sys
 import uuid
 
@@ -24,18 +28,32 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from agentic_fraud_servicing.config import get_settings
-from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
-from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event
-from agentic_fraud_servicing.investigator.orchestrator import InvestigatorOrchestrator
-from agentic_fraud_servicing.models.case import CopilotSuggestion
-from agentic_fraud_servicing.providers.base import get_model_provider
-from agentic_fraud_servicing.ui.helpers import create_gateway
-from scripts.simulation_data import (
-    create_initial_case,
+# Suppress "OPENAI_API_KEY is not set, skipping trace export" noise from the
+# Agents SDK when using Bedrock provider instead of OpenAI.
+os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
+
+# Import scenario modules to trigger registration
+from agents import Agent  # noqa: E402
+
+import scripts.scenario_doordash_dashpass  # noqa: E402, F401
+import scripts.scenario_doordash_fraud  # noqa: E402, F401
+import scripts.scenario_highrisk_merchant  # noqa: E402, F401
+import scripts.scenario_scam_techvault  # noqa: E402, F401
+from agentic_fraud_servicing.config import get_settings  # noqa: E402
+from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator  # noqa: E402
+from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event  # noqa: E402
+from agentic_fraud_servicing.investigator.orchestrator import (
+    InvestigatorOrchestrator,  # noqa: E402
+)
+from agentic_fraud_servicing.models.case import CopilotSuggestion  # noqa: E402
+from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
+from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
+from scripts.simulation_data import (  # noqa: E402
+    Scenario,
     generate_ccp_turn,
     generate_cm_turn,
-    seed_evidence,
+    get_scenario,
+    list_scenarios,
 )
 
 # ---------------------------------------------------------------------------
@@ -50,25 +68,28 @@ RED = "\033[31m"
 DIM = "\033[2m"
 RESET = "\033[0m"
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
-CASE_ID = "case-sim-e2e-001"
-CALL_ID = "call-sim-e2e-001"
-DB_DIR = "data/simulation"
-MAX_TURNS = 14
 
-# System events injected at specific turns
-SYSTEM_EVENT_AUTH = (
-    "SYSTEM: Identity verification complete. Caller confirmed as John Smith, "
-    "AMEX card ending in 0005. Account in good standing, no prior disputes."
-)
-SYSTEM_EVENT_EVIDENCE = (
-    "SYSTEM: Transaction details retrieved — $2,847.99 at TechVault Electronics, "
-    "7 days ago. Authentication: chip+PIN on enrolled device (dev-js-enrolled-001). "
-    "Delivery: signed for at cardholder address 6 days ago (tracking TRACK-TV-78901)."
-)
+class TeeWriter(io.TextIOBase):
+    """Duplicates writes to both the terminal and a plain-text log file.
+
+    ANSI escape codes are stripped from the file copy so the log is readable
+    in any text editor.
+    """
+
+    def __init__(self, terminal: io.TextIOBase, log_file: io.TextIOBase) -> None:
+        self._terminal = terminal
+        self._log_file = log_file
+
+    def write(self, s: str) -> int:
+        self._terminal.write(s)
+        self._log_file.write(_ANSI_RE.sub("", s))
+        return len(s)
+
+    def flush(self) -> None:
+        self._terminal.flush()
+        self._log_file.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -119,14 +140,27 @@ def _print_turn(turn: int, speaker: str, text: str) -> None:
 
 
 def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
-    """Print a brief copilot summary after each turn."""
+    """Print full copilot suggestions after each turn."""
     scores = suggestion.hypothesis_scores
-    top = max(scores, key=scores.get)  # type: ignore[arg-type]
     print(
-        f"  {DIM}Copilot: {top}={scores[top]:.2f} | "
-        f"Impersonation={suggestion.impersonation_risk:.2f} | "
-        f"Questions={len(suggestion.suggested_questions)}{RESET}"
+        f"  {DIM}Copilot Scores: "
+        f"FRAUD={scores.get('FRAUD', 0):.2f} | "
+        f"DISPUTE={scores.get('DISPUTE', 0):.2f} | "
+        f"SCAM={scores.get('SCAM', 0):.2f} | "
+        f"Impersonation={suggestion.impersonation_risk:.2f}{RESET}"
     )
+    if suggestion.suggested_questions:
+        print(f"  {CYAN}Suggested Questions:{RESET}")
+        for q in suggestion.suggested_questions[:3]:
+            print(f"    - {q}")
+    if suggestion.risk_flags:
+        print(f"  {RED}Risk Flags:{RESET}")
+        for flag in suggestion.risk_flags[:5]:
+            print(f"    ! {flag}")
+    if suggestion.running_summary:
+        print(f"  {DIM}Summary: {suggestion.running_summary}{RESET}")
+    if suggestion.safety_guidance:
+        print(f"  {YELLOW}Safety: {suggestion.safety_guidance}{RESET}")
 
 
 def _print_header(text: str) -> None:
@@ -141,17 +175,16 @@ def _print_header(text: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def main() -> None:
-    """Run the full end-to-end simulation."""
+async def run_scenario(scenario: Scenario) -> None:
+    """Run a full end-to-end simulation for the given scenario."""
 
     # -- Banner --
     print(f"\n{BOLD}{CYAN}{'=' * 60}{RESET}")
     print(f"{BOLD}{CYAN}  AMEX Fraud Servicing — Full E2E Simulation{RESET}")
     print(f"{BOLD}{CYAN}  (Live Bedrock LLM){RESET}")
     print(f"{BOLD}{CYAN}{'=' * 60}{RESET}")
-    print(f"\n{DIM}Scenario: John Smith, scammed into a $2,847.99 purchase at")
-    print("TechVault Electronics, calls AMEX claiming unauthorized fraud.")
-    print(f"System has chip+PIN auth, signed delivery, and legitimate merchant.{RESET}")
+    print(f"\n{BOLD}Scenario: {scenario.title}{RESET}")
+    print(f"{DIM}{scenario.description}{RESET}")
 
     # -- Setup --
     try:
@@ -174,21 +207,28 @@ async def main() -> None:
         print(f"{RED}Check AWS credentials and Bedrock model configuration.{RESET}")
         sys.exit(1)
 
-    gateway = create_gateway(DB_DIR)
-    print(f"\n{DIM}Gateway created with SQLite stores in {DB_DIR}/{RESET}")
+    db_dir = f"data/simulation/{scenario.name}"
+    gateway = create_gateway(db_dir)
+    print(f"\n{DIM}Gateway created with SQLite stores in {db_dir}/{RESET}")
+
+    # Create CM agent for this scenario
+    scenario_cm_agent = Agent(name="cm_simulator", instructions=scenario.cm_system_prompt)
 
     # ===================================================================
     # Phase 1: Seed Evidence
     # ===================================================================
     _print_header("Phase 1: Seeding Evidence Store")
 
-    seed_evidence(gateway, CASE_ID)
-    case = create_initial_case(gateway, CASE_ID, CALL_ID)
+    scenario.seed_evidence_fn(gateway, scenario.case_id)
+    case = scenario.create_case_fn(gateway, scenario.case_id, scenario.call_id)
 
-    nodes = gateway.evidence_store.get_nodes_by_case(CASE_ID)
-    edges = gateway.evidence_store.get_edges_by_case(CASE_ID)
+    nodes = gateway.evidence_store.get_nodes_by_case(scenario.case_id)
+    edges = gateway.evidence_store.get_edges_by_case(scenario.case_id)
     print(f"  Seeded {len(nodes)} evidence nodes, {len(edges)} edges")
-    print(f"  Case {CASE_ID}: status={case.status.value}, allegation={case.allegation_type.value}")
+    print(
+        f"  Case {scenario.case_id}: status={case.status.value}, "
+        f"allegation={case.allegation_type.value}"
+    )
 
     # ===================================================================
     # Phase 2: Copilot — Live Call Simulation
@@ -215,18 +255,17 @@ async def main() -> None:
     conversation_history.append(("CCP", ccp_text))
     _print_turn(turn, "CCP", ccp_text)
 
-    raw_event = _make_event(CALL_ID, turn, "CCP", ccp_text)
+    raw_event = _make_event(scenario.call_id, turn, "CCP", ccp_text)
     event = parse_transcript_event(raw_event)
     last_suggestion = await copilot.process_event(event)
-    _print_copilot_brief(last_suggestion)
 
     # -- Conversation loop --
-    while turn < MAX_TURNS:
+    while turn < scenario.max_turns:
         # CM turn
         turn += 1
         history_text = "\n".join(f"{spk}: {txt}" for spk, txt in conversation_history)
         try:
-            cm_text = await generate_cm_turn(history_text, model_provider)
+            cm_text = await generate_cm_turn(scenario_cm_agent, history_text, model_provider)
         except Exception as exc:
             print(f"\n{RED}CM generation failed on turn {turn}: {exc}{RESET}")
             break
@@ -234,7 +273,7 @@ async def main() -> None:
         conversation_history.append(("CARDMEMBER", cm_text))
         _print_turn(turn, "CARDMEMBER", cm_text)
 
-        raw_event = _make_event(CALL_ID, turn, "CARDMEMBER", cm_text)
+        raw_event = _make_event(scenario.call_id, turn, "CARDMEMBER", cm_text)
         event = parse_transcript_event(raw_event)
         last_suggestion = await copilot.process_event(event)
         _print_copilot_brief(last_suggestion)
@@ -242,24 +281,26 @@ async def main() -> None:
         # Inject SYSTEM events at key points
         if turn == 4:
             turn += 1
-            conversation_history.append(("SYSTEM", SYSTEM_EVENT_AUTH))
-            _print_turn(turn, "SYSTEM", SYSTEM_EVENT_AUTH)
-            raw_event = _make_event(CALL_ID, turn, "SYSTEM", SYSTEM_EVENT_AUTH)
+            conversation_history.append(("SYSTEM", scenario.system_event_auth))
+            _print_turn(turn, "SYSTEM", scenario.system_event_auth)
+            raw_event = _make_event(scenario.call_id, turn, "SYSTEM", scenario.system_event_auth)
             event = parse_transcript_event(raw_event)
             last_suggestion = await copilot.process_event(event)
             _print_copilot_brief(last_suggestion)
 
         if turn == 10:
             turn += 1
-            conversation_history.append(("SYSTEM", SYSTEM_EVENT_EVIDENCE))
-            _print_turn(turn, "SYSTEM", SYSTEM_EVENT_EVIDENCE)
-            raw_event = _make_event(CALL_ID, turn, "SYSTEM", SYSTEM_EVENT_EVIDENCE)
+            conversation_history.append(("SYSTEM", scenario.system_event_evidence))
+            _print_turn(turn, "SYSTEM", scenario.system_event_evidence)
+            raw_event = _make_event(
+                scenario.call_id, turn, "SYSTEM", scenario.system_event_evidence
+            )
             event = parse_transcript_event(raw_event)
             last_suggestion = await copilot.process_event(event)
             _print_copilot_brief(last_suggestion)
 
         # Check if we have enough turns left for a CCP response
-        if turn >= MAX_TURNS:
+        if turn >= scenario.max_turns:
             break
 
         # CCP turn (with copilot context)
@@ -275,10 +316,9 @@ async def main() -> None:
         conversation_history.append(("CCP", ccp_text))
         _print_turn(turn, "CCP", ccp_text)
 
-        raw_event = _make_event(CALL_ID, turn, "CCP", ccp_text)
+        raw_event = _make_event(scenario.call_id, turn, "CCP", ccp_text)
         event = parse_transcript_event(raw_event)
         last_suggestion = await copilot.process_event(event)
-        _print_copilot_brief(last_suggestion)
 
     # -- Final copilot state --
     print(f"\n{BOLD}Final Copilot State:{RESET}")
@@ -295,7 +335,7 @@ async def main() -> None:
 
     investigator = InvestigatorOrchestrator(gateway, model_provider)
     try:
-        case_pack = await investigator.investigate(CASE_ID)
+        case_pack = await investigator.investigate(scenario.case_id)
     except Exception as exc:
         print(f"\n{RED}Investigation failed: {exc}{RESET}")
         print(f"{DIM}Continuing to verification phase...{RESET}")
@@ -303,7 +343,7 @@ async def main() -> None:
 
     if case_pack is not None:
         print(f"\n{BOLD}Case Summary:{RESET}")
-        print(f"  {case_pack.case_summary[:500]}")
+        print(f"  {case_pack.case_summary}")
 
         print(f"\n{BOLD}Timeline ({len(case_pack.timeline)} events):{RESET}")
         for entry in case_pack.timeline[:10]:
@@ -333,28 +373,23 @@ async def main() -> None:
     # ===================================================================
     _print_header("Phase 4: Post-Simulation Verification")
 
-    # Check case status
-    final_case = gateway.case_store.get_case(CASE_ID)
+    final_case = gateway.case_store.get_case(scenario.case_id)
     if final_case:
         print(f"  Case status: {final_case.status.value}")
     else:
         print(f"  {RED}Case not found in store!{RESET}")
 
-    # Count evidence nodes and edges
-    final_nodes = gateway.evidence_store.get_nodes_by_case(CASE_ID)
-    final_edges = gateway.evidence_store.get_edges_by_case(CASE_ID)
+    final_nodes = gateway.evidence_store.get_nodes_by_case(scenario.case_id)
+    final_edges = gateway.evidence_store.get_edges_by_case(scenario.case_id)
     print(f"  Evidence nodes: {len(final_nodes)} (started with {len(nodes)})")
     print(f"  Evidence edges: {len(final_edges)} (started with {len(edges)})")
 
-    # Check for InvestigatorNote
     inv_notes = [n for n in final_nodes if n.get("node_type") == "INVESTIGATOR_NOTE"]
     print(f"  InvestigatorNote nodes: {len(inv_notes)}")
 
-    # Count trace records
-    traces = gateway.trace_store.get_traces_by_case(CASE_ID)
+    traces = gateway.trace_store.get_traces_by_case(scenario.case_id)
     print(f"  Trace records: {len(traces)}")
 
-    # Summary
     print(f"\n{BOLD}{GREEN}Simulation complete.{RESET}")
     all_ok = final_case is not None and len(final_nodes) > len(nodes) and len(traces) > 0
     if all_ok:
@@ -363,5 +398,46 @@ async def main() -> None:
         print(f"{YELLOW}Some verification checks may have issues — review output above.{RESET}")
 
 
+def main() -> None:
+    """Parse CLI args and run the selected scenario."""
+    parser = argparse.ArgumentParser(description="AMEX Fraud Servicing — E2E Simulation Runner")
+    parser.add_argument(
+        "--scenario",
+        "-s",
+        default="scam_techvault",
+        help=f"Scenario to run. Available: {', '.join(list_scenarios())}",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List available scenarios and exit.",
+    )
+    args = parser.parse_args()
+
+    if args.list:
+        print("Available scenarios:")
+        for name in list_scenarios():
+            s = get_scenario(name)
+            print(f"  {name:25s} — {s.title}")
+        return
+
+    scenario = get_scenario(args.scenario)
+
+    # Save output to scenario-specific file
+    output_dir = f"data/simulation/{scenario.name}"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "simulation_output.txt")
+
+    with open(output_path, "w") as log_file:
+        original_stdout = sys.stdout
+        sys.stdout = TeeWriter(original_stdout, log_file)
+        try:
+            asyncio.run(run_scenario(scenario))
+        finally:
+            sys.stdout = original_stdout
+
+    print(f"\nOutput saved to {output_path}")
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
