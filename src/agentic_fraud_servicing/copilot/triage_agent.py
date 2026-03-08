@@ -9,13 +9,24 @@ from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
-from agentic_fraud_servicing.models.enums import AllegationType
+from agentic_fraud_servicing.models.enums import (
+    INVESTIGATION_CATEGORIES_REFERENCE,
+    AllegationType,
+)
 
 # System prompt for the triage agent
-TRIAGE_INSTRUCTIONS = """\
+TRIAGE_INSTRUCTIONS = f"""\
 You are a triage specialist for AMEX card dispute servicing. Your role is to
 analyze transcript segments from calls between cardmembers and contact center
 professionals (CCPs).
+
+{INVESTIGATION_CATEGORIES_REFERENCE}
+
+IMPORTANT: Your output uses AllegationType (FRAUD, DISPUTE, SCAM) — what the
+cardmember claims. This is distinct from InvestigationCategory (THIRD_PARTY_FRAUD,
+FIRST_PARTY_FRAUD, SCAM, DISPUTE) — what the system concludes after investigation.
+You classify the CM's stated allegation; the orchestrator maps it to investigation
+hypotheses.
 
 Your tasks:
 1. **Extract claims**: Identify specific claim statements the cardmember makes
@@ -34,6 +45,10 @@ Your tasks:
      "they pretended to be from my bank", "I was tricked".
 3. **Detect category shifts**: If a previous classification was provided,
    determine whether the new transcript evidence suggests a different category.
+   Also set category_shift_detected=True if the CM's story contains
+   contradictions or inconsistencies that suggest the CM may be misrepresenting
+   facts — this signals the orchestrator to increase the FIRST_PARTY_FRAUD
+   hypothesis.
 4. **Identify key phrases**: Extract the specific phrases from the transcript
    that support your classification.
 

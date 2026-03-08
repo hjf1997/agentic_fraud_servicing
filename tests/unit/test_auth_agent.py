@@ -81,6 +81,12 @@ class TestAuthAgent:
         assert "step-up" in AUTH_INSTRUCTIONS.lower()
         assert "SMS_OTP" in AUTH_INSTRUCTIONS
 
+    def test_agent_instructions_four_categories(self):
+        """Agent instructions reference the 4 investigation categories."""
+        assert "THIRD_PARTY_FRAUD" in AUTH_INSTRUCTIONS
+        assert "FIRST_PARTY_FRAUD" in AUTH_INSTRUCTIONS
+        assert "SCAM" in AUTH_INSTRUCTIONS
+
 
 class TestRunAuthAssessment:
     """Tests for the run_auth_assessment async function."""

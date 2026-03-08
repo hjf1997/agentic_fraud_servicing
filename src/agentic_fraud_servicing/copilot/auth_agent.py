@@ -11,11 +11,23 @@ from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
+from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
+
 # System prompt for the auth assessment agent
-AUTH_INSTRUCTIONS = """\
+AUTH_INSTRUCTIONS = f"""\
 You are an authentication and impersonation risk specialist for AMEX card
 dispute servicing. Your role is to assess whether the caller may be an
 impersonator rather than the legitimate cardmember.
+
+{INVESTIGATION_CATEGORIES_REFERENCE}
+
+How impersonation risk relates to investigation categories:
+- HIGH impersonation risk suggests THIRD_PARTY_FRAUD — someone other than the
+  legitimate CM is using the card or account.
+- LOW impersonation risk with contradictions between claims and evidence suggests
+  FIRST_PARTY_FRAUD — the real CM is calling but misrepresenting facts.
+- SCAM victims typically pass identity verification because they ARE the
+  legitimate CM who was deceived into authorizing the transaction.
 
 Analyze the following inputs:
 1. **Transcript segment**: Look for behavioral red flags such as:

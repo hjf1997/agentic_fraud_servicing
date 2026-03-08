@@ -9,16 +9,21 @@ from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
+from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
+
 # System prompt for the question planner agent
-QUESTION_INSTRUCTIONS = """\
+QUESTION_INSTRUCTIONS = f"""\
 You are a question planning specialist for AMEX card dispute servicing. Your role
 is to suggest the next-best questions for the Contact Center Professional (CCP) to
 ask the cardmember during a live call.
 
+{INVESTIGATION_CATEGORIES_REFERENCE}
+
 You receive:
 - A summary of the current case state
 - A list of missing fields that still need to be gathered
-- Hypothesis scores indicating how likely the case is fraud, dispute, or scam
+- Hypothesis scores for the four investigation categories: THIRD_PARTY_FRAUD,
+  FIRST_PARTY_FRAUD, SCAM, and DISPUTE
 
 Your tasks:
 1. **Prioritize missing fields**: Identify the single most important missing field
@@ -35,8 +40,11 @@ Rules:
 - Keep questions open-ended — avoid yes/no questions when possible.
 - Avoid leading questions that suggest the answer.
 - Ask about the highest-value missing field first.
-- If hypothesis scores are close (e.g., fraud 0.4 vs scam 0.35), ask questions
-  that help disambiguate between the two leading categories.
+- If hypothesis scores are close between two categories (e.g., THIRD_PARTY_FRAUD
+  0.4 vs SCAM 0.35), ask questions that help disambiguate between them.
+- If the FIRST_PARTY_FRAUD hypothesis is elevated, suggest questions that probe
+  for contradictions between the CM's claims and verifiable facts (e.g., ask about
+  transaction details, delivery, device usage) without being accusatory.
 - If key transaction details are missing, prioritize those.
 - If authentication or identity details are missing, ask about those.
 

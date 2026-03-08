@@ -82,6 +82,13 @@ class TestTriageAgent:
         assert "DISPUTE" in TRIAGE_INSTRUCTIONS
         assert "SCAM" in TRIAGE_INSTRUCTIONS
 
+    def test_agent_instructions_four_categories(self):
+        """Agent instructions reference the 4 investigation categories."""
+        assert "THIRD_PARTY_FRAUD" in TRIAGE_INSTRUCTIONS
+        assert "FIRST_PARTY_FRAUD" in TRIAGE_INSTRUCTIONS
+        assert "InvestigationCategory" in TRIAGE_INSTRUCTIONS
+        assert "AllegationType" in TRIAGE_INSTRUCTIONS
+
 
 class TestRunTriage:
     """Tests for the run_triage async function."""

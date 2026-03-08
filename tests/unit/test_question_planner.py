@@ -84,6 +84,12 @@ class TestQuestionAgent:
         assert "open-ended" in QUESTION_INSTRUCTIONS
         assert "missing field" in QUESTION_INSTRUCTIONS
 
+    def test_agent_instructions_four_categories(self):
+        """Agent instructions reference the 4 investigation categories."""
+        assert "THIRD_PARTY_FRAUD" in QUESTION_INSTRUCTIONS
+        assert "FIRST_PARTY_FRAUD" in QUESTION_INSTRUCTIONS
+        assert "DISPUTE" in QUESTION_INSTRUCTIONS
+
 
 class TestRunQuestionPlanner:
     """Tests for the run_question_planner async function."""
