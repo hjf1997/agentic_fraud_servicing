@@ -45,7 +45,7 @@ class TestCasePack:
                 }
             ],
             decision_recommendation={
-                "category": "fraud",
+                "category": "THIRD_PARTY_FRAUD",
                 "confidence": 0.85,
                 "top_factors": [
                     {"factor": "chip+PIN mismatch", "evidence_ref": "n-001", "weight": 0.9}
@@ -59,7 +59,7 @@ class TestCasePack:
         assert "unauthorized" in pack.case_summary
         assert len(pack.timeline) == 1
         assert len(pack.evidence_list) == 1
-        assert pack.decision_recommendation["category"] == "fraud"
+        assert pack.decision_recommendation["category"] == "THIRD_PARTY_FRAUD"
         assert len(pack.investigation_notes) == 1
 
     def test_round_trip_json(self):
@@ -82,7 +82,7 @@ class TestCasePack:
                     "summary": "Claim text",
                 }
             ],
-            decision_recommendation={"category": "dispute", "confidence": 0.7},
+            decision_recommendation={"category": "DISPUTE", "confidence": 0.7},
             investigation_notes=["Note 1"],
         )
         json_str = original.model_dump_json()
@@ -93,7 +93,7 @@ class TestCasePack:
         """decision_recommendation contains all 6 expected sub-fields."""
         pack = CasePack(
             decision_recommendation={
-                "category": "scam",
+                "category": "SCAM",
                 "confidence": 0.65,
                 "top_factors": [{"factor": "contradiction", "evidence_ref": "n-1", "weight": 0.8}],
                 "uncertainties": ["missing merchant data"],
@@ -231,7 +231,7 @@ class TestRunCaseWriter:
                 },
             ],
             decision_recommendation={
-                "category": "fraud",
+                "category": "THIRD_PARTY_FRAUD",
                 "confidence": 0.9,
                 "top_factors": [
                     {"factor": "chip mismatch", "evidence_ref": "n-001", "weight": 0.9}
@@ -263,7 +263,7 @@ class TestRunCaseWriter:
 
         assert isinstance(result, CasePack)
         assert "Fraud confirmed" in result.case_summary
-        assert result.decision_recommendation["category"] == "fraud"
+        assert result.decision_recommendation["category"] == "THIRD_PARTY_FRAUD"
 
     async def test_passes_model_provider(self, mock_provider):
         """run_case_writer passes model_provider in RunConfig."""

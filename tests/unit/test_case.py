@@ -214,20 +214,30 @@ class TestCopilotSuggestion:
             retrieved_facts=["Last auth: chip at POS"],
             running_summary="Customer reports unauthorized purchase",
             safety_guidance="Do not share PAN",
-            hypothesis_scores={"fraud": 0.7, "dispute": 0.2, "scam": 0.1},
+            hypothesis_scores={
+                "THIRD_PARTY_FRAUD": 0.7,
+                "FIRST_PARTY_FRAUD": 0.0,
+                "SCAM": 0.1,
+                "DISPUTE": 0.2,
+            },
             impersonation_risk=0.15,
         )
         assert len(suggestion.suggested_questions) == 1
-        assert suggestion.hypothesis_scores["fraud"] == 0.7
+        assert suggestion.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.7
         assert suggestion.impersonation_risk == 0.15
 
     def test_model_dump_roundtrip(self) -> None:
         suggestion = CopilotSuggestion(
             call_id="call-002",
             timestamp_ms=3000,
-            hypothesis_scores={"fraud": 0.8},
+            hypothesis_scores={
+                "THIRD_PARTY_FRAUD": 0.8,
+                "FIRST_PARTY_FRAUD": 0.0,
+                "SCAM": 0.0,
+                "DISPUTE": 0.0,
+            },
         )
         data = suggestion.model_dump()
         restored = CopilotSuggestion(**data)
         assert restored.call_id == suggestion.call_id
-        assert restored.hypothesis_scores == {"fraud": 0.8}
+        assert restored.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.8
