@@ -115,9 +115,11 @@ def _format_copilot_context(suggestion: CopilotSuggestion) -> str:
     lines = []
     scores = suggestion.hypothesis_scores
     lines.append(
-        f"Hypothesis scores: FRAUD={scores.get('FRAUD', 0):.2f}, "
-        f"DISPUTE={scores.get('DISPUTE', 0):.2f}, "
-        f"SCAM={scores.get('SCAM', 0):.2f}"
+        f"Hypothesis scores: "
+        f"THIRD_PARTY_FRAUD={scores.get('THIRD_PARTY_FRAUD', 0):.2f}, "
+        f"FIRST_PARTY_FRAUD={scores.get('FIRST_PARTY_FRAUD', 0):.2f}, "
+        f"SCAM={scores.get('SCAM', 0):.2f}, "
+        f"DISPUTE={scores.get('DISPUTE', 0):.2f}"
     )
     lines.append(f"Impersonation risk: {suggestion.impersonation_risk:.2f}")
     if suggestion.risk_flags:
@@ -144,9 +146,10 @@ def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
     scores = suggestion.hypothesis_scores
     print(
         f"  {DIM}Copilot Scores: "
-        f"FRAUD={scores.get('FRAUD', 0):.2f} | "
-        f"DISPUTE={scores.get('DISPUTE', 0):.2f} | "
+        f"3P_FRAUD={scores.get('THIRD_PARTY_FRAUD', 0):.2f} | "
+        f"1P_FRAUD={scores.get('FIRST_PARTY_FRAUD', 0):.2f} | "
         f"SCAM={scores.get('SCAM', 0):.2f} | "
+        f"DISPUTE={scores.get('DISPUTE', 0):.2f} | "
         f"Impersonation={suggestion.impersonation_risk:.2f}{RESET}"
     )
     if suggestion.suggested_questions:
