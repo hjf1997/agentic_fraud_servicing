@@ -9,7 +9,6 @@ import json
 import os
 import sqlite3
 
-from agentic_fraud_servicing.storage.case_store import CaseStore
 from agentic_fraud_servicing.storage.evidence_store import EvidenceStore
 from agentic_fraud_servicing.storage.trace_store import TraceStore
 
@@ -39,7 +38,7 @@ def discover_scenarios(base_dir: str = "data/simulation") -> list[str]:
 def load_case(db_dir: str) -> dict | None:
     """Load the first case from cases.db as a dict.
 
-    Opens CaseStore, queries for all cases via raw SQL (since CaseStore only
+    Queries the cases table directly via sqlite3 (since CaseStore only
     exposes status-filtered queries), returns the first result as a dict.
 
     Args:
@@ -52,19 +51,17 @@ def load_case(db_dir: str) -> dict | None:
     if not os.path.isfile(db_path):
         return None
 
-    store = CaseStore(db_path)
+    # CaseStore doesn't have a "list all" method, so query SQLite directly
+    # rather than accessing a private _conn attribute on the store class.
     try:
-        # CaseStore doesn't have a "list all" method, so query directly
-        row = store._conn.execute(
-            "SELECT data FROM cases ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
+        conn = sqlite3.connect(db_path)
+        row = conn.execute("SELECT data FROM cases ORDER BY created_at DESC LIMIT 1").fetchone()
+        conn.close()
         if row is None:
             return None
         return json.loads(row[0])
     except (sqlite3.Error, json.JSONDecodeError):
         return None
-    finally:
-        store.close()
 
 
 def load_transcript_turns(db_dir: str, case_id: str) -> list[dict]:
