@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import uuid
+from datetime import datetime, timezone
 
 # Ensure project root is on sys.path so 'scripts' package is importable
 # when running directly via: python scripts/run_simulation.py
@@ -166,6 +167,27 @@ def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
         print(f"  {YELLOW}Safety: {suggestion.safety_guidance}{RESET}")
 
 
+def _persist_trace(
+    gateway, case_id: str, agent_id: str, action: str, input_data: str, output_data: str
+) -> None:
+    """Persist a data record to the trace store for dashboard consumption.
+
+    Generates a unique trace_id and timestamps automatically. Duration is 0.0
+    since these are data records, not timed operations.
+    """
+    gateway.trace_store.log_invocation(
+        trace_id=str(uuid.uuid4()),
+        case_id=case_id,
+        agent_id=agent_id,
+        action=action,
+        input_data=input_data,
+        output_data=output_data,
+        duration_ms=0.0,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        status="success",
+    )
+
+
 def _print_header(text: str) -> None:
     """Print a section header."""
     print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
@@ -262,6 +284,24 @@ async def run_scenario(scenario: Scenario) -> None:
     event = parse_transcript_event(raw_event)
     last_suggestion = await copilot.process_event(event)
 
+    # Persist turn 1 transcript and copilot suggestion
+    _persist_trace(
+        gateway,
+        scenario.case_id,
+        "transcript",
+        "conversation_turn",
+        json.dumps({"turn": turn, "speaker": "CCP"}),
+        json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
+    )
+    _persist_trace(
+        gateway,
+        scenario.case_id,
+        "copilot_suggestion",
+        "suggestion",
+        json.dumps({"turn": turn}),
+        last_suggestion.model_dump_json(),
+    )
+
     # -- Conversation loop --
     while turn < scenario.max_turns:
         # CM turn
@@ -281,6 +321,24 @@ async def run_scenario(scenario: Scenario) -> None:
         last_suggestion = await copilot.process_event(event)
         _print_copilot_brief(last_suggestion)
 
+        # Persist CM turn transcript and copilot suggestion
+        _persist_trace(
+            gateway,
+            scenario.case_id,
+            "transcript",
+            "conversation_turn",
+            json.dumps({"turn": turn, "speaker": "CARDMEMBER"}),
+            json.dumps({"turn": turn, "speaker": "CARDMEMBER", "text": cm_text}),
+        )
+        _persist_trace(
+            gateway,
+            scenario.case_id,
+            "copilot_suggestion",
+            "suggestion",
+            json.dumps({"turn": turn}),
+            last_suggestion.model_dump_json(),
+        )
+
         # Inject SYSTEM events at key points
         if turn == 4:
             turn += 1
@@ -290,6 +348,30 @@ async def run_scenario(scenario: Scenario) -> None:
             event = parse_transcript_event(raw_event)
             last_suggestion = await copilot.process_event(event)
             _print_copilot_brief(last_suggestion)
+
+            # Persist SYSTEM auth event and copilot suggestion
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "transcript",
+                "conversation_turn",
+                json.dumps({"turn": turn, "speaker": "SYSTEM"}),
+                json.dumps(
+                    {
+                        "turn": turn,
+                        "speaker": "SYSTEM",
+                        "text": scenario.system_event_auth,
+                    }
+                ),
+            )
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "copilot_suggestion",
+                "suggestion",
+                json.dumps({"turn": turn}),
+                last_suggestion.model_dump_json(),
+            )
 
         if turn == 10:
             turn += 1
@@ -301,6 +383,30 @@ async def run_scenario(scenario: Scenario) -> None:
             event = parse_transcript_event(raw_event)
             last_suggestion = await copilot.process_event(event)
             _print_copilot_brief(last_suggestion)
+
+            # Persist SYSTEM evidence event and copilot suggestion
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "transcript",
+                "conversation_turn",
+                json.dumps({"turn": turn, "speaker": "SYSTEM"}),
+                json.dumps(
+                    {
+                        "turn": turn,
+                        "speaker": "SYSTEM",
+                        "text": scenario.system_event_evidence,
+                    }
+                ),
+            )
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "copilot_suggestion",
+                "suggestion",
+                json.dumps({"turn": turn}),
+                last_suggestion.model_dump_json(),
+            )
 
         # Check if we have enough turns left for a CCP response
         if turn >= scenario.max_turns:
@@ -323,6 +429,24 @@ async def run_scenario(scenario: Scenario) -> None:
         event = parse_transcript_event(raw_event)
         last_suggestion = await copilot.process_event(event)
 
+        # Persist CCP turn transcript and copilot suggestion
+        _persist_trace(
+            gateway,
+            scenario.case_id,
+            "transcript",
+            "conversation_turn",
+            json.dumps({"turn": turn, "speaker": "CCP"}),
+            json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
+        )
+        _persist_trace(
+            gateway,
+            scenario.case_id,
+            "copilot_suggestion",
+            "suggestion",
+            json.dumps({"turn": turn}),
+            last_suggestion.model_dump_json(),
+        )
+
     # -- Final copilot state --
     print(f"\n{BOLD}Final Copilot State:{RESET}")
     print(f"  Hypothesis scores: {json.dumps(copilot.hypothesis_scores, indent=2)}")
@@ -330,6 +454,23 @@ async def run_scenario(scenario: Scenario) -> None:
     print(f"  Missing fields: {copilot.missing_fields}")
     print(f"  Evidence collected: {copilot.evidence_collected}")
     print(f"  Transcript events processed: {len(copilot.transcript_history)}")
+
+    # Persist final copilot state for dashboard
+    _persist_trace(
+        gateway,
+        scenario.case_id,
+        "copilot_final",
+        "final_state",
+        "{}",
+        json.dumps(
+            {
+                "hypothesis_scores": copilot.hypothesis_scores,
+                "impersonation_risk": copilot.impersonation_risk,
+                "missing_fields": copilot.missing_fields,
+                "evidence_collected": copilot.evidence_collected,
+            }
+        ),
+    )
 
     # ===================================================================
     # Phase 3: Investigator — Post-Call Analysis
@@ -370,6 +511,16 @@ async def run_scenario(scenario: Scenario) -> None:
             print(f"\n{BOLD}Investigation Notes:{RESET}")
             for note in case_pack.investigation_notes[:5]:
                 print(f"  - {note}")
+
+        # Persist CasePack for dashboard
+        _persist_trace(
+            gateway,
+            scenario.case_id,
+            "investigator",
+            "case_pack",
+            "{}",
+            case_pack.model_dump_json(),
+        )
 
     # ===================================================================
     # Phase 4: Post-Simulation Verification
