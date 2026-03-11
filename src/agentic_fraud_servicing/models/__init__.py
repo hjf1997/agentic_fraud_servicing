@@ -9,11 +9,16 @@ from agentic_fraud_servicing.models.case import (
     TimelineEvent,
     TransactionRef,
 )
+from agentic_fraud_servicing.models.claims import (
+    ClaimExtraction,
+    ClaimExtractionResult,
+)
 from agentic_fraud_servicing.models.enums import (
     INVESTIGATION_CATEGORIES_REFERENCE,
     AllegationType,
     AuthMethod,
     CaseStatus,
+    ClaimType,
     EvidenceEdgeType,
     EvidenceNodeType,
     EvidenceSourceType,
@@ -48,6 +53,7 @@ __all__ = [
     "AllegationType",
     "AuthMethod",
     "CaseStatus",
+    "ClaimType",
     "EvidenceEdgeType",
     "EvidenceNodeType",
     "EvidenceSourceType",
@@ -56,6 +62,9 @@ __all__ = [
     "RiskLevel",
     "SpeakerType",
     "TransactionChannel",
+    # claims
+    "ClaimExtraction",
+    "ClaimExtractionResult",
     # transcript
     "RedactionInfo",
     "TranscriptEvent",

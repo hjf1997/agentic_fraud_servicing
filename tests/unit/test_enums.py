@@ -5,6 +5,7 @@ from agentic_fraud_servicing.models.enums import (
     AllegationType,
     AuthMethod,
     CaseStatus,
+    ClaimType,
     EvidenceEdgeType,
     EvidenceNodeType,
     EvidenceSourceType,
@@ -200,11 +201,12 @@ class TestTransactionChannel:
 
 
 def test_all_enums_importable():
-    """Verify all 10 enum classes are importable from the module."""
+    """Verify all 11 enum classes are importable from the module."""
     all_enums = [
         SpeakerType,
         AllegationType,
         InvestigationCategory,
+        ClaimType,
         RiskLevel,
         CaseStatus,
         EvidenceEdgeType,
@@ -213,6 +215,6 @@ def test_all_enums_importable():
         AuthMethod,
         TransactionChannel,
     ]
-    assert len(all_enums) == 10
+    assert len(all_enums) == 11
     for enum_cls in all_enums:
         assert issubclass(enum_cls, str)
