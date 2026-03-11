@@ -7,14 +7,13 @@ degradation on specialist failure, and running state accumulation.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from agentic_fraud_servicing.copilot.orchestrator import (
     _INITIAL_MISSING_FIELDS,
     CopilotOrchestrator,
 )
 from agentic_fraud_servicing.models.case import CopilotSuggestion
-from agentic_fraud_servicing.models.enums import AllegationType, SpeakerType
+from agentic_fraud_servicing.models.claims import ClaimExtraction, ClaimExtractionResult
+from agentic_fraud_servicing.models.enums import ClaimType, SpeakerType
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
 # -- Fixtures --
@@ -37,20 +36,18 @@ def _make_event(
     )
 
 
-def _mock_triage_result(
-    allegation_type=AllegationType.FRAUD,
-    confidence=0.8,
-    claims=None,
-    key_phrases=None,
-):
-    """Create a mock TriageResult."""
-    result = MagicMock()
-    result.allegation_type = allegation_type
-    result.confidence = confidence
-    result.claims = claims or ["unauthorized purchase"]
-    result.category_shift_detected = False
-    result.key_phrases = key_phrases or ["didn't make this purchase"]
-    return result
+def _mock_triage_result(claims=None):
+    """Create a mock ClaimExtractionResult with claims."""
+    if claims is None:
+        claims = [
+            ClaimExtraction(
+                claim_type=ClaimType.TRANSACTION_DISPUTE,
+                claim_description="CM says they did not make this purchase",
+                entities={"merchant_name": "TechVault"},
+                confidence=0.9,
+            )
+        ]
+    return ClaimExtractionResult(claims=claims)
 
 
 def _mock_auth_result(
@@ -90,6 +87,26 @@ def _mock_retrieval_result(transactions=None, auth_events=None, customer_profile
     return result
 
 
+def _mock_hypothesis_result(scores=None):
+    """Create a mock HypothesisAssessment."""
+    result = MagicMock()
+    result.scores = scores or {
+        "THIRD_PARTY_FRAUD": 0.5,
+        "FIRST_PARTY_FRAUD": 0.2,
+        "SCAM": 0.1,
+        "DISPUTE": 0.2,
+    }
+    result.reasoning = {
+        "THIRD_PARTY_FRAUD": "Likely unauthorized",
+        "FIRST_PARTY_FRAUD": "Low indicators",
+        "SCAM": "No scam pattern",
+        "DISPUTE": "Low indicators",
+    }
+    result.contradictions = []
+    result.assessment_summary = "Likely third-party fraud"
+    return result
+
+
 def _make_orchestrator() -> CopilotOrchestrator:
     """Create a CopilotOrchestrator with mock gateway and provider."""
     gateway = MagicMock()
@@ -97,11 +114,12 @@ def _make_orchestrator() -> CopilotOrchestrator:
     return CopilotOrchestrator(gateway=gateway, model_provider=model_provider)
 
 
-# Patch paths for the 4 specialist run_* functions
+# Patch paths for the 5 specialist run_* functions
 _TRIAGE_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_triage"
 _AUTH_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_auth_assessment"
 _QUESTION_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_question_planner"
 _RETRIEVAL_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_retrieval"
+_HYPOTHESIS_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_hypothesis"
 
 
 # -- Test Classes --
@@ -125,6 +143,7 @@ class TestCopilotOrchestratorInit:
         assert orch.missing_fields == list(_INITIAL_MISSING_FIELDS)
         assert orch.evidence_collected == []
         assert orch.transcript_history == []
+        assert orch.accumulated_claims == []
 
     def test_stores_gateway_and_provider(self):
         """Gateway and model_provider are stored as attributes."""
@@ -138,18 +157,20 @@ class TestCopilotOrchestratorInit:
 class TestProcessEvent:
     """Tests for the process_event method."""
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_returns_copilot_suggestion(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """process_event returns a CopilotSuggestion instance."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
@@ -158,18 +179,20 @@ class TestProcessEvent:
         assert result.call_id == "call-001"
         assert result.timestamp_ms == 1000
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_sets_case_id_from_first_event(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """case_id and call_id are set from the first event."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         await orch.process_event(_make_event(call_id="call-42"))
@@ -177,18 +200,20 @@ class TestProcessEvent:
         assert orch.case_id == "case-call-42"
         assert orch.call_id == "call-42"
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_accumulates_transcript_history(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """transcript_history grows with each event."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         await orch.process_event(_make_event(event_id="evt-1"))
@@ -198,43 +223,20 @@ class TestProcessEvent:
         assert orch.transcript_history[0].event_id == "evt-1"
         assert orch.transcript_history[1].event_id == "evt-2"
 
-    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
-    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
-    @patch(_AUTH_PATCH, new_callable=AsyncMock)
-    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_updates_hypothesis_scores(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
-    ):
-        """hypothesis_scores update from triage results."""
-        mock_triage.return_value = _mock_triage_result(
-            allegation_type=AllegationType.FRAUD, confidence=0.9
-        )
-        mock_auth.return_value = _mock_auth_result()
-        mock_question.return_value = _mock_question_result()
-        mock_retrieval.return_value = _mock_retrieval_result()
-
-        orch = _make_orchestrator()
-        await orch.process_event(_make_event())
-
-        # AllegationType.FRAUD maps to THIRD_PARTY_FRAUD (0.0 * 0.4 + 0.9 * 0.6 = 0.54)
-        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] == pytest.approx(0.54, abs=0.01)
-        # Other scores should stay at 0 (0.0 * 0.7 = 0.0)
-        assert orch.hypothesis_scores["FIRST_PARTY_FRAUD"] == 0.0
-        assert orch.hypothesis_scores["DISPUTE"] == 0.0
-        assert orch.hypothesis_scores["SCAM"] == 0.0
-
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_updates_impersonation_risk(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """impersonation_risk updates from auth assessment."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result(impersonation_risk=0.75)
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
@@ -242,12 +244,13 @@ class TestProcessEvent:
         assert orch.impersonation_risk == 0.75
         assert result.impersonation_risk == 0.75
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_includes_suggested_questions(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """CopilotSuggestion includes questions from the planner."""
         mock_triage.return_value = _mock_triage_result()
@@ -256,6 +259,7 @@ class TestProcessEvent:
             questions=["What was the transaction amount?", "Where was the charge?"]
         )
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
@@ -264,83 +268,133 @@ class TestProcessEvent:
         assert "What was the transaction amount?" in result.suggested_questions
 
 
-class TestHypothesisScoreMapping:
-    """Tests for 4-category hypothesis score mapping and first-party fraud detection."""
+class TestAccumulatedClaims:
+    """Tests for accumulated claims growing across events."""
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_category_shift_boosts_first_party_fraud(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+    async def test_accumulated_claims_grow(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
-        """category_shift_detected=True adds 0.15 to FIRST_PARTY_FRAUD."""
-        triage = _mock_triage_result(allegation_type=AllegationType.FRAUD, confidence=0.8)
-        triage.category_shift_detected = True
-        mock_triage.return_value = triage
-        mock_auth.return_value = _mock_auth_result()
-        mock_question.return_value = _mock_question_result()
-        mock_retrieval.return_value = _mock_retrieval_result()
-
-        orch = _make_orchestrator()
-        await orch.process_event(_make_event())
-
-        # FIRST_PARTY_FRAUD gets decay (0.0 * 0.7 = 0.0) then +0.15 boost
-        assert orch.hypothesis_scores["FIRST_PARTY_FRAUD"] == pytest.approx(0.15, abs=0.01)
-
-    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
-    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
-    @patch(_AUTH_PATCH, new_callable=AsyncMock)
-    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_scam_allegation_boosts_scam_score(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
-    ):
-        """AllegationType.SCAM from triage boosts SCAM hypothesis key."""
-        mock_triage.return_value = _mock_triage_result(
-            allegation_type=AllegationType.SCAM, confidence=0.7
+        """accumulated_claims grows with each process_event call."""
+        claim1 = ClaimExtraction(
+            claim_type=ClaimType.TRANSACTION_DISPUTE,
+            claim_description="Unauthorized purchase",
+            entities={"amount": "$500"},
+            confidence=0.9,
         )
+        claim2 = ClaimExtraction(
+            claim_type=ClaimType.CARD_POSSESSION,
+            claim_description="Card never left wallet",
+            entities={},
+            confidence=0.8,
+        )
+        mock_triage.side_effect = [
+            ClaimExtractionResult(claims=[claim1]),
+            ClaimExtractionResult(claims=[claim2]),
+        ]
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
-        await orch.process_event(_make_event())
+        await orch.process_event(_make_event(event_id="evt-1"))
+        assert len(orch.accumulated_claims) == 1
+        assert orch.accumulated_claims[0].claim_type == ClaimType.TRANSACTION_DISPUTE
 
-        assert orch.hypothesis_scores["SCAM"] == pytest.approx(0.42, abs=0.01)
-        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.0
+        await orch.process_event(_make_event(event_id="evt-2"))
+        assert len(orch.accumulated_claims) == 2
+        assert orch.accumulated_claims[1].claim_type == ClaimType.CARD_POSSESSION
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_dispute_allegation_boosts_dispute_score(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+    async def test_empty_triage_does_not_add_claims(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
-        """AllegationType.DISPUTE from triage boosts DISPUTE hypothesis key."""
-        mock_triage.return_value = _mock_triage_result(
-            allegation_type=AllegationType.DISPUTE, confidence=0.85
-        )
+        """No claims added when triage returns empty list."""
+        mock_triage.return_value = ClaimExtractionResult(claims=[])
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         await orch.process_event(_make_event())
+        assert len(orch.accumulated_claims) == 0
 
-        assert orch.hypothesis_scores["DISPUTE"] == pytest.approx(0.51, abs=0.01)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_running_summary_built_from_claims(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
+    ):
+        """running_summary in CopilotSuggestion reflects accumulated claims."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
+        orch = _make_orchestrator()
+        result = await orch.process_event(_make_event())
+
+        assert "Claims:" in result.running_summary
+        assert "TRANSACTION_DISPUTE" in result.running_summary
+
+
+class TestHypothesisScoring:
+    """Tests for hypothesis agent integration."""
+
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_scores_come_from_hypothesis_agent(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
+    ):
+        """hypothesis_scores are set from hypothesis agent output."""
+        custom_scores = {
+            "THIRD_PARTY_FRAUD": 0.1,
+            "FIRST_PARTY_FRAUD": 0.7,
+            "SCAM": 0.1,
+            "DISPUTE": 0.1,
+        }
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result(scores=custom_scores)
+
+        orch = _make_orchestrator()
+        result = await orch.process_event(_make_event())
+
+        assert orch.hypothesis_scores == custom_scores
+        assert result.hypothesis_scores == custom_scores
+
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_suggestion_contains_all_four_hypothesis_keys(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """CopilotSuggestion.hypothesis_scores has all 4 category keys."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
@@ -352,51 +406,81 @@ class TestHypothesisScoreMapping:
             "DISPUTE",
         }
 
-    def test_current_allegation_type_maps_third_party_fraud(self):
-        """THIRD_PARTY_FRAUD top score maps to AllegationType.FRAUD."""
-        orch = _make_orchestrator()
-        orch.hypothesis_scores["THIRD_PARTY_FRAUD"] = 0.8
-        assert orch._current_allegation_type() == AllegationType.FRAUD
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_hypothesis_called_with_accumulated_context(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
+    ):
+        """Hypothesis agent receives claims, auth, evidence, scores, and conversation."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
-    def test_current_allegation_type_maps_first_party_fraud(self):
-        """FIRST_PARTY_FRAUD top score maps to AllegationType.FRAUD."""
         orch = _make_orchestrator()
-        orch.hypothesis_scores["FIRST_PARTY_FRAUD"] = 0.9
-        assert orch._current_allegation_type() == AllegationType.FRAUD
+        await orch.process_event(_make_event())
 
-    def test_current_allegation_type_maps_scam(self):
-        """SCAM top score maps to AllegationType.SCAM."""
-        orch = _make_orchestrator()
-        orch.hypothesis_scores["SCAM"] = 0.7
-        assert orch._current_allegation_type() == AllegationType.SCAM
+        mock_hypothesis.assert_awaited_once()
+        call_kwargs = mock_hypothesis.call_args.kwargs
+        assert "TRANSACTION_DISPUTE" in call_kwargs["claims_summary"]
+        assert "Impersonation risk" in call_kwargs["auth_summary"]
+        assert "Transactions" in call_kwargs["evidence_summary"]
+        assert "THIRD_PARTY_FRAUD" in str(call_kwargs["current_scores"])
+        assert "CARDMEMBER" in call_kwargs["conversation_summary"]
 
-    def test_current_allegation_type_maps_dispute(self):
-        """DISPUTE top score maps to AllegationType.DISPUTE."""
-        orch = _make_orchestrator()
-        orch.hypothesis_scores["DISPUTE"] = 0.6
-        assert orch._current_allegation_type() == AllegationType.DISPUTE
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_hypothesis_failure_leaves_scores_unchanged(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
+    ):
+        """When hypothesis agent fails, scores carry over from previous state."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.side_effect = RuntimeError("LLM timeout")
 
-    def test_current_allegation_type_returns_none_when_all_zero(self):
-        """Returns None when all hypothesis scores are zero."""
         orch = _make_orchestrator()
-        assert orch._current_allegation_type() is None
+        # Pre-set some scores to verify they remain unchanged
+        orch.hypothesis_scores = {
+            "THIRD_PARTY_FRAUD": 0.6,
+            "FIRST_PARTY_FRAUD": 0.1,
+            "SCAM": 0.2,
+            "DISPUTE": 0.1,
+        }
+
+        result = await orch.process_event(_make_event())
+
+        # Scores should be unchanged
+        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.6
+        assert result.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.6
+        assert any("Hypothesis scoring failed" in f for f in result.risk_flags)
 
 
 class TestMissingFieldsUpdate:
     """Tests for missing fields keyword-based removal."""
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_removes_field_on_keyword_match(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """Missing fields are removed when keywords appear in text."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         # Text mentions "amount" and "merchant" — should resolve those fields
@@ -412,18 +496,20 @@ class TestMissingFieldsUpdate:
 class TestGracefulDegradation:
     """Tests for specialist failure handling."""
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_triage_failure_continues(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """If triage fails, orchestrator continues and records error."""
         mock_triage.side_effect = RuntimeError("LLM timeout")
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
@@ -433,18 +519,20 @@ class TestGracefulDegradation:
         # Questions should still be present from the question planner
         assert len(result.suggested_questions) > 0
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_all_specialists_fail(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """If all specialists fail, result still returned with error flags."""
         mock_triage.side_effect = RuntimeError("triage error")
         mock_auth.side_effect = RuntimeError("auth error")
         mock_question.side_effect = RuntimeError("question error")
         mock_retrieval.side_effect = RuntimeError("retrieval error")
+        mock_hypothesis.side_effect = RuntimeError("hypothesis error")
 
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
@@ -454,17 +542,19 @@ class TestGracefulDegradation:
         assert any("Auth assessment failed" in f for f in result.risk_flags)
         assert any("Question planner failed" in f for f in result.risk_flags)
         assert any("Retrieval failed" in f for f in result.risk_flags)
+        assert any("Hypothesis scoring failed" in f for f in result.risk_flags)
 
 
 class TestStepUpAuth:
     """Tests for step-up auth risk flag propagation."""
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_step_up_auth_in_risk_flags(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """Step-up recommendation appears in risk_flags."""
         mock_triage.return_value = _mock_triage_result()
@@ -475,6 +565,7 @@ class TestStepUpAuth:
         )
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
@@ -485,18 +576,20 @@ class TestStepUpAuth:
 class TestSafetyGuidance:
     """Tests for safety guidance generation."""
 
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_safety_guidance_includes_pan_warning(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
         """Safety guidance always includes PAN/CVV warning."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
 
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
