@@ -442,6 +442,7 @@ async def run_scenario(scenario: Scenario) -> None:
     print(f"  Missing fields: {copilot.missing_fields}")
     print(f"  Evidence collected: {copilot.evidence_collected}")
     print(f"  Transcript events processed: {len(copilot.transcript_history)}")
+    print(f"  Claims extracted: {len(copilot.accumulated_claims)}")
 
     # Persist final copilot state for dashboard
     _persist_trace(
@@ -456,6 +457,7 @@ async def run_scenario(scenario: Scenario) -> None:
                 "impersonation_risk": copilot.impersonation_risk,
                 "missing_fields": copilot.missing_fields,
                 "evidence_collected": copilot.evidence_collected,
+                "claims_extracted": len(copilot.accumulated_claims),
             }
         ),
     )
