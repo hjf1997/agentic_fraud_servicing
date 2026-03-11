@@ -1,68 +1,19 @@
-"""Tests for the triage specialist agent module."""
+"""Tests for the triage specialist agent module (claim extraction)."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
 
 from agentic_fraud_servicing.copilot.triage_agent import (
     TRIAGE_INSTRUCTIONS,
-    TriageResult,
     run_triage,
     triage_agent,
 )
-from agentic_fraud_servicing.models.enums import AllegationType
-
-
-class TestTriageResult:
-    """Tests for the TriageResult Pydantic model."""
-
-    def test_defaults(self):
-        """TriageResult with all defaults has correct empty/zero values."""
-        result = TriageResult()
-        assert result.claims == []
-        assert result.allegation_type is None
-        assert result.confidence == 0.0
-        assert result.category_shift_detected is False
-        assert result.key_phrases == []
-
-    def test_all_fields(self):
-        """TriageResult accepts all fields with correct types."""
-        result = TriageResult(
-            claims=["I didn't make this purchase", "Someone used my card"],
-            allegation_type=AllegationType.FRAUD,
-            confidence=0.92,
-            category_shift_detected=True,
-            key_phrases=["didn't make", "someone used"],
-        )
-        assert len(result.claims) == 2
-        assert result.allegation_type == AllegationType.FRAUD
-        assert result.confidence == 0.92
-        assert result.category_shift_detected is True
-        assert len(result.key_phrases) == 2
-
-    def test_confidence_validation_too_high(self):
-        """Confidence above 1.0 raises ValidationError."""
-        with pytest.raises(ValidationError):
-            TriageResult(confidence=1.5)
-
-    def test_confidence_validation_too_low(self):
-        """Confidence below 0.0 raises ValidationError."""
-        with pytest.raises(ValidationError):
-            TriageResult(confidence=-0.1)
-
-    def test_round_trip_json(self):
-        """TriageResult survives JSON round-trip serialization."""
-        original = TriageResult(
-            claims=["charge was unauthorized"],
-            allegation_type=AllegationType.SCAM,
-            confidence=0.75,
-            category_shift_detected=False,
-            key_phrases=["unauthorized"],
-        )
-        json_str = original.model_dump_json()
-        restored = TriageResult.model_validate_json(json_str)
-        assert restored == original
+from agentic_fraud_servicing.models.claims import (
+    ClaimExtraction,
+    ClaimExtractionResult,
+)
+from agentic_fraud_servicing.models.enums import ClaimType
 
 
 class TestTriageAgent:
@@ -73,21 +24,44 @@ class TestTriageAgent:
         assert triage_agent.name == "triage"
 
     def test_agent_output_type(self):
-        """Agent has TriageResult as output_type."""
-        assert triage_agent.output_type.output_type is TriageResult
+        """Agent has ClaimExtractionResult as output_type."""
+        assert triage_agent.output_type.output_type is ClaimExtractionResult
 
-    def test_agent_instructions(self):
-        """Agent instructions reference key triage concepts."""
-        assert "FRAUD" in TRIAGE_INSTRUCTIONS
-        assert "DISPUTE" in TRIAGE_INSTRUCTIONS
-        assert "SCAM" in TRIAGE_INSTRUCTIONS
+    def test_instructions_contain_all_17_claim_types(self):
+        """Instructions reference all 17 ClaimType enum values."""
+        for ct in ClaimType:
+            assert ct.value in TRIAGE_INSTRUCTIONS, f"Missing {ct.value}"
 
-    def test_agent_instructions_four_categories(self):
-        """Agent instructions reference the 4 investigation categories."""
+    def test_instructions_contain_entity_guidance(self):
+        """Instructions include entity extraction guidance for claim types."""
+        # Spot-check a few entity fields from different claim types
+        assert "merchant_name" in TRIAGE_INSTRUCTIONS
+        assert "amount" in TRIAGE_INSTRUCTIONS
+        assert "tracking_number" in TRIAGE_INSTRUCTIONS
+        assert "cancellation_date" in TRIAGE_INSTRUCTIONS
+
+    def test_instructions_emphasize_claimed_not_conclusions(self):
+        """Instructions tell the agent to describe what CM claimed."""
+        lower = TRIAGE_INSTRUCTIONS.lower()
+        assert "claimed" in lower or "what the cardmember claimed" in lower
+
+    def test_instructions_do_not_contain_allegation_type_output(self):
+        """Instructions do not reference AllegationType as an output field."""
+        # The word AllegationType may appear in INVESTIGATION_CATEGORIES_REFERENCE
+        # but should not appear as an output instruction
+        assert "allegation_type:" not in TRIAGE_INSTRUCTIONS
+        assert "category_shift_detected" not in TRIAGE_INSTRUCTIONS
+
+    def test_instructions_contain_investigation_categories_reference(self):
+        """Instructions include the 4-category reference for context."""
         assert "THIRD_PARTY_FRAUD" in TRIAGE_INSTRUCTIONS
         assert "FIRST_PARTY_FRAUD" in TRIAGE_INSTRUCTIONS
-        assert "InvestigationCategory" in TRIAGE_INSTRUCTIONS
-        assert "AllegationType" in TRIAGE_INSTRUCTIONS
+
+    def test_instructions_contain_example_phrases(self):
+        """Instructions contain natural language example phrases."""
+        assert "I didn't make this charge" in TRIAGE_INSTRUCTIONS
+        assert "Package never arrived" in TRIAGE_INSTRUCTIONS
+        assert "charged me twice" in TRIAGE_INSTRUCTIONS
 
 
 class TestRunTriage:
@@ -99,82 +73,103 @@ class TestRunTriage:
         return MagicMock()
 
     @pytest.fixture
-    def sample_triage_result(self):
-        """Create a sample TriageResult for mocking."""
-        return TriageResult(
-            claims=["I was charged twice for the same item"],
-            allegation_type=AllegationType.DISPUTE,
-            confidence=0.85,
-            category_shift_detected=False,
-            key_phrases=["charged twice"],
+    def sample_result(self):
+        """Create a sample ClaimExtractionResult for mocking."""
+        return ClaimExtractionResult(
+            claims=[
+                ClaimExtraction(
+                    claim_type=ClaimType.TRANSACTION_DISPUTE,
+                    claim_description="CM says they did not make a $499 charge",
+                    entities={"amount": 499.0, "merchant_name": "Electronics Store"},
+                    confidence=0.9,
+                    context="I didn't make this purchase at Electronics Store",
+                ),
+            ]
         )
 
-    async def test_run_triage_returns_result(self, mock_provider, sample_triage_result):
-        """run_triage returns TriageResult from Runner.run."""
+    async def test_returns_claim_extraction_result(self, mock_provider, sample_result):
+        """run_triage returns ClaimExtractionResult from Runner.run."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = sample_triage_result
+        mock_run_result.final_output = sample_result
 
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
-            result = await run_triage("I was charged twice", None, mock_provider)
+            result = await run_triage("I didn't make this purchase", mock_provider)
 
-        assert isinstance(result, TriageResult)
-        assert result.allegation_type == AllegationType.DISPUTE
-        assert result.confidence == 0.85
+        assert isinstance(result, ClaimExtractionResult)
+        assert len(result.claims) == 1
+        assert result.claims[0].claim_type == ClaimType.TRANSACTION_DISPUTE
 
-    async def test_run_triage_passes_model_provider(self, mock_provider):
+    async def test_passes_model_provider(self, mock_provider):
         """run_triage passes model_provider in RunConfig."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = TriageResult()
+        mock_run_result.final_output = ClaimExtractionResult()
 
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
-            await run_triage("test text", None, mock_provider)
+            await run_triage("test text", mock_provider)
 
-        # Verify Runner.run was called with the correct agent and RunConfig
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs["run_config"].model_provider is mock_provider
 
-    async def test_run_triage_includes_previous_type(self, mock_provider):
-        """run_triage includes previous classification in user message."""
+    async def test_conversation_history_included(self, mock_provider):
+        """run_triage builds message from conversation_history when provided."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = TriageResult()
+        mock_run_result.final_output = ClaimExtractionResult()
+
+        history = [
+            ("CCP", "How can I help you today?"),
+            ("CARDMEMBER", "I didn't make this charge"),
+        ]
 
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
-            await run_triage("some text", AllegationType.FRAUD, mock_provider)
+            await run_triage(
+                "I didn't make this charge",
+                mock_provider,
+                conversation_history=history,
+            )
 
-        # The input should mention the previous classification
         call_args = mock_run.call_args
         user_input = call_args.kwargs.get("input") or call_args.args[1]
-        assert "FRAUD" in user_input
+        assert "Conversation history:" in user_input
+        assert "[LATEST TURN]" in user_input
+        assert "CARDMEMBER: I didn't make this charge" in user_input
 
-    async def test_run_triage_no_previous_type(self, mock_provider):
-        """run_triage handles None previous_type with 'classify from scratch' message."""
+    async def test_falls_back_to_transcript_text(self, mock_provider):
+        """run_triage uses transcript_text when no conversation_history."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = TriageResult()
+        mock_run_result.final_output = ClaimExtractionResult()
 
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
-            await run_triage("some text", None, mock_provider)
+            await run_triage("some transcript text", mock_provider)
 
         call_args = mock_run.call_args
         user_input = call_args.kwargs.get("input") or call_args.args[1]
-        assert "from scratch" in user_input
+        assert "Transcript segment:" in user_input
+        assert "some transcript text" in user_input
 
-    async def test_run_triage_wraps_exceptions(self, mock_provider):
+    async def test_no_previous_type_parameter(self):
+        """run_triage does not accept previous_type parameter."""
+        import inspect
+
+        sig = inspect.signature(run_triage)
+        assert "previous_type" not in sig.parameters
+
+    async def test_wraps_exceptions(self, mock_provider):
         """run_triage wraps SDK exceptions in RuntimeError."""
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
@@ -182,4 +177,4 @@ class TestRunTriage:
             side_effect=ValueError("LLM call failed"),
         ):
             with pytest.raises(RuntimeError, match="Triage agent failed"):
-                await run_triage("bad input", None, mock_provider)
+                await run_triage("bad input", mock_provider)
