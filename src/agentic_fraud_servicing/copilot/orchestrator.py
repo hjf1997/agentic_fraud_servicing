@@ -108,8 +108,9 @@ class CopilotOrchestrator:
         auth_events = retrieval.auth_events if retrieval else []
         customer_profile = retrieval.customer_profile if retrieval else None
 
-        # 3. Run triage agent
-        triage_result = await self._run_triage_safe(event.text, risk_flags)
+        # 3. Run triage agent with full conversation history
+        conversation_history = [(e.speaker.value, e.text) for e in self.transcript_history]
+        triage_result = await self._run_triage_safe(event.text, risk_flags, conversation_history)
         if triage_result is not None:
             self._update_hypothesis_scores(triage_result)
             claims_str = ", ".join(triage_result.claims) if triage_result.claims else "none"
@@ -256,13 +257,19 @@ class CopilotOrchestrator:
             risk_flags.append(f"Retrieval failed: {exc}")
             return None
 
-    async def _run_triage_safe(self, text: str, risk_flags: list[str]) -> TriageResult | None:
+    async def _run_triage_safe(
+        self,
+        text: str,
+        risk_flags: list[str],
+        conversation_history: list[tuple[str, str]] | None = None,
+    ) -> TriageResult | None:
         """Run triage agent with error handling."""
         try:
             return await run_triage(
                 transcript_text=text,
                 previous_type=self._current_allegation_type(),
                 model_provider=self.model_provider,
+                conversation_history=conversation_history,
             )
         except Exception as exc:
             risk_flags.append(f"Triage failed: {exc}")

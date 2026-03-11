@@ -28,9 +28,14 @@ FIRST_PARTY_FRAUD, SCAM, DISPUTE) — what the system concludes after investigat
 You classify the CM's stated allegation; the orchestrator maps it to investigation
 hypotheses.
 
+You receive:
+- The full conversation history so far (all CCP, CARDMEMBER, and SYSTEM turns)
+- The latest turn is marked with [LATEST TURN] so you know what just happened
+
 Your tasks:
 1. **Extract claims**: Identify specific claim statements the cardmember makes
    about disputed transactions, unauthorized charges, or scam encounters.
+   Consider the FULL conversation context, not just the latest turn.
 2. **Classify allegation type**: Determine the category based on AMEX definitions:
    - FRAUD: Unauthorized transactions the cardmember did not make or authorize.
      Indicators: "I didn't make this purchase", "someone used my card",
@@ -88,13 +93,18 @@ async def run_triage(
     transcript_text: str,
     previous_type: AllegationType | None,
     model_provider: ModelProvider,
+    conversation_history: list[tuple[str, str]] | None = None,
 ) -> TriageResult:
     """Run the triage agent on a transcript segment.
 
     Args:
-        transcript_text: The transcript text to analyze.
+        transcript_text: The current turn's transcript text.
         previous_type: Previous allegation classification, if any.
         model_provider: LLM model provider for inference.
+        conversation_history: Full conversation so far as list of
+            (speaker, text) tuples. If provided, the agent receives the
+            full context with the latest turn highlighted. If None,
+            falls back to single-turn mode with transcript_text only.
 
     Returns:
         TriageResult with extracted claims and classification.
@@ -102,8 +112,17 @@ async def run_triage(
     Raises:
         RuntimeError: If the agent SDK call fails.
     """
-    # Build user message with context about previous classification
-    parts = [f"Transcript segment:\n{transcript_text}"]
+    # Build user message with full conversation context
+    if conversation_history:
+        history_lines = []
+        for i, (speaker, text) in enumerate(conversation_history):
+            is_latest = i == len(conversation_history) - 1
+            prefix = "[LATEST TURN] " if is_latest else ""
+            history_lines.append(f"{prefix}{speaker}: {text}")
+        parts = ["Conversation history:\n" + "\n".join(history_lines)]
+    else:
+        parts = [f"Transcript segment:\n{transcript_text}"]
+
     if previous_type is not None:
         parts.append(
             f"\nPrevious classification: {previous_type.value}. "
