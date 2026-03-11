@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment
+from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult
@@ -70,17 +71,35 @@ _RETRIEVAL_RESULT = RetrievalResult(
     data_gaps=["No delivery proof available"],
 )
 
+_HYPOTHESIS_RESULT = HypothesisAssessment(
+    scores={
+        "THIRD_PARTY_FRAUD": 0.60,
+        "FIRST_PARTY_FRAUD": 0.10,
+        "SCAM": 0.15,
+        "DISPUTE": 0.15,
+    },
+    reasoning={
+        "THIRD_PARTY_FRAUD": "CM claims unauthorized charge, no contradictions yet.",
+        "FIRST_PARTY_FRAUD": "Low — no signs of misrepresentation so far.",
+        "SCAM": "No social engineering indicators detected.",
+        "DISPUTE": "Could be a merchant issue but CM frames as unauthorized.",
+    },
+    contradictions=[],
+    assessment_summary="Likely third-party fraud based on initial claim analysis.",
+)
 
-# -- Patch targets for the 4 specialist run_* functions --
+
+# -- Patch targets for the 5 specialist run_* functions --
 _PATCH_TRIAGE = "agentic_fraud_servicing.copilot.orchestrator.run_triage"
 _PATCH_AUTH = "agentic_fraud_servicing.copilot.orchestrator.run_auth_assessment"
 _PATCH_QUESTION = "agentic_fraud_servicing.copilot.orchestrator.run_question_planner"
 _PATCH_RETRIEVAL = "agentic_fraud_servicing.copilot.orchestrator.run_retrieval"
+_PATCH_HYPOTHESIS = "agentic_fraud_servicing.copilot.orchestrator.run_hypothesis"
 
 
 @pytest.fixture()
 def _mock_specialists():
-    """Patch all 4 specialist run_* functions with canned results."""
+    """Patch all 5 specialist run_* functions with canned results."""
     with (
         patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
         patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
@@ -88,12 +107,16 @@ def _mock_specialists():
         patch(
             _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
         ) as m_retrieval,
+        patch(
+            _PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
+        ) as m_hypothesis,
     ):
         yield {
             "triage": m_triage,
             "auth": m_auth,
             "question": m_question,
             "retrieval": m_retrieval,
+            "hypothesis": m_hypothesis,
         }
 
 
@@ -156,6 +179,20 @@ class TestCopilotSuggestionOutput:
         result = await orch.process_event(sample_transcript_events[0])
         assert "PAN" in result.safety_guidance or "CVV" in result.safety_guidance
 
+    @pytest.mark.usefixtures("_mock_specialists")
+    async def test_hypothesis_scores_from_hypothesis_agent(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """Hypothesis scores in suggestion should come from the hypothesis agent mock."""
+        gateway = gateway_factory(tmp_path)
+        orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+        result = await orch.process_event(sample_transcript_events[0])
+        assert result.hypothesis_scores["THIRD_PARTY_FRAUD"] == pytest.approx(0.60)
+        assert result.hypothesis_scores["FIRST_PARTY_FRAUD"] == pytest.approx(0.10)
+        assert result.hypothesis_scores["SCAM"] == pytest.approx(0.15)
+        assert result.hypothesis_scores["DISPUTE"] == pytest.approx(0.15)
+
 
 class TestRunningStateAccumulation:
     """Verify that orchestrator state accumulates across multiple events."""
@@ -185,22 +222,17 @@ class TestRunningStateAccumulation:
             assert len(orch.transcript_history) == i + 1
 
     @pytest.mark.usefixtures("_mock_specialists")
-    async def test_hypothesis_scores_present_after_triage(
+    async def test_hypothesis_scores_match_hypothesis_agent(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """Hypothesis scores dict should have all 4 keys after triage runs.
-
-        Note: With ClaimExtractionResult (no allegation_type), the formulaic
-        scoring is a no-op. Scores remain 0.0 until the hypothesis agent
-        (task 14.3/14.4) replaces the formulaic approach.
-        """
+        """Hypothesis scores should match the hypothesis agent output (not formulaic)."""
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
 
         await orch.process_event(sample_transcript_events[0])
 
-        expected_keys = {"THIRD_PARTY_FRAUD", "FIRST_PARTY_FRAUD", "SCAM", "DISPUTE"}
-        assert set(orch.hypothesis_scores.keys()) == expected_keys
+        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] == pytest.approx(0.60)
+        assert orch.hypothesis_scores["FIRST_PARTY_FRAUD"] == pytest.approx(0.10)
 
     @pytest.mark.usefixtures("_mock_specialists")
     async def test_suggestion_has_all_four_hypothesis_keys(
@@ -213,6 +245,21 @@ class TestRunningStateAccumulation:
         result = await orch.process_event(sample_transcript_events[0])
         expected_keys = {"THIRD_PARTY_FRAUD", "FIRST_PARTY_FRAUD", "SCAM", "DISPUTE"}
         assert set(result.hypothesis_scores.keys()) == expected_keys
+
+    @pytest.mark.usefixtures("_mock_specialists")
+    async def test_accumulated_claims_grow(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """Accumulated claims should grow with each processed event."""
+        gateway = gateway_factory(tmp_path)
+        orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+        await orch.process_event(sample_transcript_events[0])
+        claims_after_first = len(orch.accumulated_claims)
+        assert claims_after_first == 2  # _TRIAGE_RESULT has 2 claims
+
+        await orch.process_event(sample_transcript_events[1])
+        assert len(orch.accumulated_claims) == claims_after_first + 2
 
     @pytest.mark.usefixtures("_mock_specialists")
     async def test_impersonation_risk_set_from_auth(

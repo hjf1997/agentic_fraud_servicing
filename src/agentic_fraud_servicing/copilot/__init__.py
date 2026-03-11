@@ -11,6 +11,11 @@ from agentic_fraud_servicing.copilot.context import (
     tool_lookup_transactions,
     tool_query_auth_logs,
 )
+from agentic_fraud_servicing.copilot.hypothesis_agent import (
+    HypothesisAssessment,
+    hypothesis_agent,
+    run_hypothesis,
+)
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
 from agentic_fraud_servicing.copilot.question_planner import (
     QuestionPlan,
@@ -23,7 +28,7 @@ from agentic_fraud_servicing.copilot.retrieval_agent import (
     run_retrieval,
 )
 from agentic_fraud_servicing.copilot.triage_agent import (
-    TriageResult,
+    ClaimExtractionResult,
     run_triage,
     triage_agent,
 )
@@ -35,7 +40,7 @@ __all__ = [
     "tool_query_auth_logs",
     "tool_fetch_customer_profile",
     # triage_agent
-    "TriageResult",
+    "ClaimExtractionResult",
     "triage_agent",
     "run_triage",
     # auth_agent
@@ -50,6 +55,10 @@ __all__ = [
     "RetrievalResult",
     "retrieval_agent",
     "run_retrieval",
+    # hypothesis_agent
+    "HypothesisAssessment",
+    "hypothesis_agent",
+    "run_hypothesis",
     # orchestrator
     "CopilotOrchestrator",
 ]

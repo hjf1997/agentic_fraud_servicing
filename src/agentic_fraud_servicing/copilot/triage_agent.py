@@ -12,10 +12,6 @@ from agents.run_config import RunConfig
 from agentic_fraud_servicing.models.claims import ClaimExtractionResult
 from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
 
-# Backward-compatible alias — the orchestrator (task 14.4) still imports this.
-# Remove once copilot/orchestrator.py is updated to use ClaimExtractionResult.
-TriageResult = ClaimExtractionResult
-
 # System prompt for the triage agent — focused exclusively on claim extraction
 TRIAGE_INSTRUCTIONS = f"""\
 You are a claim extraction specialist for AMEX card dispute servicing. Your ONLY
