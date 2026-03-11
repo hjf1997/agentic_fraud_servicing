@@ -12,9 +12,10 @@ from agents import ModelProvider
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan, run_question_planner
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult, run_retrieval
-from agentic_fraud_servicing.copilot.triage_agent import TriageResult, run_triage
+from agentic_fraud_servicing.copilot.triage_agent import run_triage
 from agentic_fraud_servicing.gateway.tool_gateway import ToolGateway
 from agentic_fraud_servicing.models.case import CopilotSuggestion
+from agentic_fraud_servicing.models.claims import ClaimExtractionResult
 from agentic_fraud_servicing.models.enums import AllegationType
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
@@ -113,14 +114,18 @@ class CopilotOrchestrator:
         triage_result = await self._run_triage_safe(event.text, risk_flags, conversation_history)
         if triage_result is not None:
             self._update_hypothesis_scores(triage_result)
-            claims_str = ", ".join(triage_result.claims) if triage_result.claims else "none"
-            atype = triage_result.allegation_type
-            cat = atype.value if atype else "undetermined"
-            running_summary = (
-                f"Claims: {claims_str}. "
-                f"Category: {cat} "
-                f"(confidence: {triage_result.confidence:.2f})."
-            )
+            # Build summary from extracted claims
+            if triage_result.claims:
+                parts = []
+                for c in triage_result.claims:
+                    if isinstance(c, str):
+                        parts.append(c)
+                    else:
+                        parts.append(c.claim_description)
+                claims_str = "; ".join(parts)
+            else:
+                claims_str = "none"
+            running_summary = f"Claims: {claims_str}."
 
         # 4. Run auth assessment agent
         auth_result = await self._run_auth_safe(
@@ -192,20 +197,24 @@ class CopilotOrchestrator:
         top_key = max(self.hypothesis_scores, key=self.hypothesis_scores.get)  # type: ignore[arg-type]
         return self._HYPOTHESIS_TO_ALLEGATION.get(top_key)
 
-    def _update_hypothesis_scores(self, triage_result: TriageResult) -> None:
+    def _update_hypothesis_scores(self, triage_result: ClaimExtractionResult) -> None:
         """Update hypothesis scores from a triage result.
 
         Maps triage's AllegationType (3 values) to the 4-category hypothesis
         keys via _ALLEGATION_TO_HYPOTHESIS. If the triage detects a category
         shift (story inconsistency), adds a small boost to FIRST_PARTY_FRAUD
         since shifts often indicate the CM is misrepresenting.
+
+        Note: This method will be replaced by the hypothesis agent in task 14.4.
+        Guard against ClaimExtractionResult (no allegation_type) during transition.
         """
-        if triage_result.allegation_type is not None:
+        allegation_type = getattr(triage_result, "allegation_type", None)
+        if allegation_type is not None:
             # Map 3-value AllegationType to 4-category hypothesis key
-            detected = self._ALLEGATION_TO_HYPOTHESIS.get(triage_result.allegation_type)
+            detected = self._ALLEGATION_TO_HYPOTHESIS.get(allegation_type)
             if detected is None:
                 return
-            confidence = triage_result.confidence
+            confidence = getattr(triage_result, "confidence", 0.5)
             for key in self.hypothesis_scores:
                 if key == detected:
                     # Weighted moving average toward the new confidence
@@ -218,7 +227,7 @@ class CopilotOrchestrator:
 
         # Category shifts suggest the CM may be misrepresenting — boost
         # first-party fraud hypothesis as a simple heuristic
-        if triage_result.category_shift_detected:
+        if getattr(triage_result, "category_shift_detected", False):
             self.hypothesis_scores["FIRST_PARTY_FRAUD"] = min(
                 1.0, self.hypothesis_scores["FIRST_PARTY_FRAUD"] + 0.15
             )
@@ -262,12 +271,11 @@ class CopilotOrchestrator:
         text: str,
         risk_flags: list[str],
         conversation_history: list[tuple[str, str]] | None = None,
-    ) -> TriageResult | None:
+    ) -> ClaimExtractionResult | None:
         """Run triage agent with error handling."""
         try:
             return await run_triage(
                 transcript_text=text,
-                previous_type=self._current_allegation_type(),
                 model_provider=self.model_provider,
                 conversation_history=conversation_history,
             )

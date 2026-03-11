@@ -15,21 +15,30 @@ from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult
-from agentic_fraud_servicing.copilot.triage_agent import TriageResult
 from agentic_fraud_servicing.models.case import CopilotSuggestion
-from agentic_fraud_servicing.models.enums import AllegationType
+from agentic_fraud_servicing.models.claims import ClaimExtraction, ClaimExtractionResult
+from agentic_fraud_servicing.models.enums import ClaimType
 from agentic_fraud_servicing.ui.helpers import load_transcript_file
 
 # Path to the sample transcript fixture
 _SAMPLE_TRANSCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "sample_transcript.json"
 
 # Canned specialist results for mocking
-_TRIAGE_RESULT = TriageResult(
-    claims=["Unauthorized charge at AMZN Marketplace", "Unknown merchant TechGadgets"],
-    allegation_type=AllegationType.FRAUD,
-    confidence=0.85,
-    category_shift_detected=False,
-    key_phrases=["did not make", "never heard of"],
+_TRIAGE_RESULT = ClaimExtractionResult(
+    claims=[
+        ClaimExtraction(
+            claim_type=ClaimType.TRANSACTION_DISPUTE,
+            claim_description="CM disputes charge at AMZN Marketplace",
+            entities={"merchant_name": "AMZN Marketplace"},
+            confidence=0.85,
+        ),
+        ClaimExtraction(
+            claim_type=ClaimType.MERCHANT_FRAUD,
+            claim_description="CM says TechGadgets is unknown merchant",
+            entities={"merchant_name": "TechGadgets"},
+            confidence=0.75,
+        ),
+    ]
 )
 
 _AUTH_ASSESSMENT = AuthAssessment(
@@ -176,19 +185,22 @@ class TestRunningStateAccumulation:
             assert len(orch.transcript_history) == i + 1
 
     @pytest.mark.usefixtures("_mock_specialists")
-    async def test_hypothesis_scores_update(
+    async def test_hypothesis_scores_present_after_triage(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """Hypothesis scores should be non-zero after triage runs."""
+        """Hypothesis scores dict should have all 4 keys after triage runs.
+
+        Note: With ClaimExtractionResult (no allegation_type), the formulaic
+        scoring is a no-op. Scores remain 0.0 until the hypothesis agent
+        (task 14.3/14.4) replaces the formulaic approach.
+        """
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
 
-        # Process two events so scores accumulate
         await orch.process_event(sample_transcript_events[0])
-        await orch.process_event(sample_transcript_events[1])
 
-        # The triage mock returns FRAUD — maps to THIRD_PARTY_FRAUD hypothesis key
-        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] > 0.0
+        expected_keys = {"THIRD_PARTY_FRAUD", "FIRST_PARTY_FRAUD", "SCAM", "DISPUTE"}
+        assert set(orch.hypothesis_scores.keys()) == expected_keys
 
     @pytest.mark.usefixtures("_mock_specialists")
     async def test_suggestion_has_all_four_hypothesis_keys(
