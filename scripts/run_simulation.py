@@ -37,6 +37,7 @@ os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 from agents import Agent  # noqa: E402
 
 import scripts.scenario_doordash_dashpass  # noqa: E402, F401
+import scripts.scenario_doordash_dashpass_v2  # noqa: E402, F401
 import scripts.scenario_doordash_fraud  # noqa: E402, F401
 import scripts.scenario_highrisk_merchant  # noqa: E402, F401
 import scripts.scenario_scam_techvault  # noqa: E402, F401
@@ -183,7 +184,7 @@ def _persist_trace(
         input_data=input_data,
         output_data=output_data,
         duration_ms=0.0,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(timezone.utc),
         status="success",
     )
 
@@ -193,6 +194,46 @@ def _print_header(text: str) -> None:
     print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
     print(f"{BOLD}{GREEN}{text}{RESET}")
     print(f"{BOLD}{GREEN}{'=' * 60}{RESET}")
+
+
+async def _inject_system_event(
+    turn: int,
+    text: str,
+    scenario: Scenario,
+    copilot: "CopilotOrchestrator",
+    conversation_history: list[tuple[str, str]],
+    gateway,
+) -> tuple[int, CopilotSuggestion]:
+    """Inject a SYSTEM event into the conversation, process via copilot, and persist.
+
+    Returns the updated turn number and the copilot suggestion produced.
+    """
+    turn += 1
+    conversation_history.append(("SYSTEM", text))
+    _print_turn(turn, "SYSTEM", text)
+
+    raw_event = _make_event(scenario.call_id, turn, "SYSTEM", text)
+    event = parse_transcript_event(raw_event)
+    suggestion = await copilot.process_event(event)
+    _print_copilot_brief(suggestion)
+
+    _persist_trace(
+        gateway,
+        scenario.case_id,
+        "transcript",
+        "conversation_turn",
+        json.dumps({"turn": turn, "speaker": "SYSTEM"}),
+        json.dumps({"turn": turn, "speaker": "SYSTEM", "text": text}),
+    )
+    _persist_trace(
+        gateway,
+        scenario.case_id,
+        "copilot_suggestion",
+        "suggestion",
+        json.dumps({"turn": turn}),
+        suggestion.model_dump_json(),
+    )
+    return turn, suggestion
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +302,11 @@ async def run_scenario(scenario: Scenario) -> None:
     _print_header("Phase 2: Copilot — Live Call Simulation via Bedrock")
 
     copilot = CopilotOrchestrator(gateway, model_provider)
+    # Set case_id/call_id directly so the retrieval agent queries the
+    # correct case — the auto-generated ID from call_id doesn't match
+    # the seeded evidence.
+    copilot.case_id = scenario.case_id
+    copilot.call_id = scenario.call_id
     conversation_history: list[tuple[str, str]] = []
     last_suggestion = None
     turn = 0
@@ -280,11 +326,8 @@ async def run_scenario(scenario: Scenario) -> None:
     conversation_history.append(("CCP", ccp_text))
     _print_turn(turn, "CCP", ccp_text)
 
-    raw_event = _make_event(scenario.call_id, turn, "CCP", ccp_text)
-    event = parse_transcript_event(raw_event)
-    last_suggestion = await copilot.process_event(event)
-
-    # Persist turn 1 transcript and copilot suggestion
+    # CCP turns are NOT processed by the copilot — suggestions are only
+    # generated after CARDMEMBER and SYSTEM turns.
     _persist_trace(
         gateway,
         scenario.case_id,
@@ -292,14 +335,6 @@ async def run_scenario(scenario: Scenario) -> None:
         "conversation_turn",
         json.dumps({"turn": turn, "speaker": "CCP"}),
         json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
-    )
-    _persist_trace(
-        gateway,
-        scenario.case_id,
-        "copilot_suggestion",
-        "suggestion",
-        json.dumps({"turn": turn}),
-        last_suggestion.model_dump_json(),
     )
 
     # -- Conversation loop --
@@ -341,71 +376,35 @@ async def run_scenario(scenario: Scenario) -> None:
 
         # Inject SYSTEM events at key points
         if turn == 4:
-            turn += 1
-            conversation_history.append(("SYSTEM", scenario.system_event_auth))
-            _print_turn(turn, "SYSTEM", scenario.system_event_auth)
-            raw_event = _make_event(scenario.call_id, turn, "SYSTEM", scenario.system_event_auth)
-            event = parse_transcript_event(raw_event)
-            last_suggestion = await copilot.process_event(event)
-            _print_copilot_brief(last_suggestion)
-
-            # Persist SYSTEM auth event and copilot suggestion
-            _persist_trace(
+            # Auth verification event
+            turn, last_suggestion = await _inject_system_event(
+                turn,
+                scenario.system_event_auth,
+                scenario,
+                copilot,
+                conversation_history,
                 gateway,
-                scenario.case_id,
-                "transcript",
-                "conversation_turn",
-                json.dumps({"turn": turn, "speaker": "SYSTEM"}),
-                json.dumps(
-                    {
-                        "turn": turn,
-                        "speaker": "SYSTEM",
-                        "text": scenario.system_event_auth,
-                    }
-                ),
-            )
-            _persist_trace(
-                gateway,
-                scenario.case_id,
-                "copilot_suggestion",
-                "suggestion",
-                json.dumps({"turn": turn}),
-                last_suggestion.model_dump_json(),
             )
 
-        if turn == 10:
-            turn += 1
-            conversation_history.append(("SYSTEM", scenario.system_event_evidence))
-            _print_turn(turn, "SYSTEM", scenario.system_event_evidence)
-            raw_event = _make_event(
-                scenario.call_id, turn, "SYSTEM", scenario.system_event_evidence
-            )
-            event = parse_transcript_event(raw_event)
-            last_suggestion = await copilot.process_event(event)
-            _print_copilot_brief(last_suggestion)
+            # Evidence event — injected right after auth when early mode is on
+            if scenario.inject_evidence_early:
+                turn, last_suggestion = await _inject_system_event(
+                    turn,
+                    scenario.system_event_evidence,
+                    scenario,
+                    copilot,
+                    conversation_history,
+                    gateway,
+                )
 
-            # Persist SYSTEM evidence event and copilot suggestion
-            _persist_trace(
+        if turn == 10 and not scenario.inject_evidence_early:
+            turn, last_suggestion = await _inject_system_event(
+                turn,
+                scenario.system_event_evidence,
+                scenario,
+                copilot,
+                conversation_history,
                 gateway,
-                scenario.case_id,
-                "transcript",
-                "conversation_turn",
-                json.dumps({"turn": turn, "speaker": "SYSTEM"}),
-                json.dumps(
-                    {
-                        "turn": turn,
-                        "speaker": "SYSTEM",
-                        "text": scenario.system_event_evidence,
-                    }
-                ),
-            )
-            _persist_trace(
-                gateway,
-                scenario.case_id,
-                "copilot_suggestion",
-                "suggestion",
-                json.dumps({"turn": turn}),
-                last_suggestion.model_dump_json(),
             )
 
         # Check if we have enough turns left for a CCP response
@@ -425,11 +424,8 @@ async def run_scenario(scenario: Scenario) -> None:
         conversation_history.append(("CCP", ccp_text))
         _print_turn(turn, "CCP", ccp_text)
 
-        raw_event = _make_event(scenario.call_id, turn, "CCP", ccp_text)
-        event = parse_transcript_event(raw_event)
-        last_suggestion = await copilot.process_event(event)
-
-        # Persist CCP turn transcript and copilot suggestion
+        # CCP turns are NOT processed by the copilot — suggestions are only
+        # generated after CARDMEMBER and SYSTEM turns.
         _persist_trace(
             gateway,
             scenario.case_id,
@@ -437,14 +433,6 @@ async def run_scenario(scenario: Scenario) -> None:
             "conversation_turn",
             json.dumps({"turn": turn, "speaker": "CCP"}),
             json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
-        )
-        _persist_trace(
-            gateway,
-            scenario.case_id,
-            "copilot_suggestion",
-            "suggestion",
-            json.dumps({"turn": turn}),
-            last_suggestion.model_dump_json(),
         )
 
     # -- Final copilot state --

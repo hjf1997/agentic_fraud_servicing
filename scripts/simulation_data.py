@@ -46,6 +46,7 @@ class Scenario:
     system_event_auth: str
     system_event_evidence: str
     max_turns: int = 14
+    inject_evidence_early: bool = False  # inject system_event_evidence right after auth at turn 4
     seed_evidence_fn: Callable[[ToolGateway, str], None] = field(repr=False, default=None)  # type: ignore[assignment]
     create_case_fn: Callable[[ToolGateway, str, str], Case] = field(repr=False, default=None)  # type: ignore[assignment]
 

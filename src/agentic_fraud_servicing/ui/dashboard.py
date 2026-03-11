@@ -15,7 +15,9 @@ import matplotlib.pyplot as plt
 
 from agentic_fraud_servicing.ui.dashboard_data import (
     discover_scenarios,
+    load_audit_trail,
     load_case,
+    load_case_pack,
     load_copilot_final_state,
     load_copilot_suggestions,
     load_evidence,
@@ -40,9 +42,10 @@ DASHBOARD_CSS = """
 
 /* Section header cards */
 .section-header {
-    background: linear-gradient(135deg, %(navy)s, %(blue)s);
-    color: #fff; padding: 12px 20px; border-radius: 8px 8px 0 0;
-    font-size: 1.1em; font-weight: 600; margin-top: 16px;
+    background: linear-gradient(135deg, %(navy)s 0%%, %(blue)s 100%%);
+    color: %(white)s; padding: 14px 24px; border-radius: 8px 8px 0 0;
+    font-size: 1.25em; font-weight: 700; margin-top: 16px;
+    letter-spacing: 0.5px;
 }
 
 /* Generic card wrapper */
@@ -150,7 +153,7 @@ def _build_case_overview_html(case: dict | None) -> str:
     if txn_rows:
         txn_table = f"""
         <h4 style="margin-top:14px;">Transactions in Scope</h4>
-        <table style="width:100%%; border-collapse:collapse; font-size:0.9em;">
+        <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
           <thead>
             <tr style="background:{AMEX_BLUE}; color:#fff;">
               <th style="padding:6px 10px; text-align:left;">Transaction ID</th>
@@ -163,7 +166,7 @@ def _build_case_overview_html(case: dict | None) -> str:
         </table>"""
 
     return f"""<div class="card">
-      <table style="width:100%%; font-size:0.95em;">
+      <table style="width:100%; font-size:0.95em;">
         <tr><td style="width:140px; font-weight:600; color:{AMEX_NAVY};">Case ID</td>
             <td>{case.get("case_id", "N/A")}</td>
             <td style="width:140px; font-weight:600; color:{AMEX_NAVY};">Status</td>
@@ -357,7 +360,7 @@ def _build_evidence_html(nodes: list[dict], edges: list[dict]) -> str:
     if node_rows:
         nodes_html = f"""
         <h4 style="color:{AMEX_NAVY};">Evidence Nodes</h4>
-        <table style="width:100%%; border-collapse:collapse; font-size:0.9em;">
+        <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
           <thead>
             <tr style="background:{AMEX_BLUE}; color:#fff;">
               <th style="padding:6px 10px; text-align:left;">Node ID</th>
@@ -382,7 +385,7 @@ def _build_evidence_html(nodes: list[dict], edges: list[dict]) -> str:
     if edge_rows:
         edges_html = f"""
         <h4 style="color:{AMEX_NAVY}; margin-top:16px;">Evidence Edges</h4>
-        <table style="width:100%%; border-collapse:collapse; font-size:0.9em;">
+        <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
           <thead>
             <tr style="background:{AMEX_BLUE}; color:#fff;">
               <th style="padding:6px 10px; text-align:left;">Source Node</th>
@@ -424,19 +427,186 @@ def _evidence_node_summary(node: dict) -> str:
     return json.dumps(node, default=str)[:60]
 
 
+def _build_investigation_html(case_pack: dict | None) -> str:
+    """Build HTML for the Investigation Results section."""
+    if not case_pack:
+        return '<div class="card"><p>Investigation not yet completed.</p></div>'
+
+    # Case summary narrative
+    summary = case_pack.get("case_summary", "")
+    summary_paragraphs = "".join(f"<p>{p.strip()}</p>" for p in summary.split("\n\n") if p.strip())
+
+    # Decision recommendation card
+    rec = case_pack.get("decision_recommendation", {})
+    category = rec.get("category", "UNKNOWN")
+    confidence = rec.get("confidence", 0.0)
+    confidence_pct = int(confidence * 100)
+
+    # Confidence bar color
+    bar_color = AMEX_BLUE if confidence >= 0.7 else "#F57C00" if confidence >= 0.4 else "#D32F2F"
+
+    # Top factors
+    factors_html = ""
+    for f in rec.get("top_factors", []):
+        weight = f.get("weight", 0)
+        weight_pct = int(weight * 100)
+        factors_html += (
+            f'<li style="margin-bottom:8px;">'
+            f'<span style="font-weight:600;">{f.get("factor", "")}</span>'
+            f'<br/><span style="font-size:0.85em; color:#666;">'
+            f"Evidence: {f.get('evidence_ref', 'N/A')} · "
+            f'Weight: <span style="background:{AMEX_BLUE}; color:#fff; '
+            f'padding:1px 6px; border-radius:8px; font-size:0.85em;">'
+            f"{weight_pct}%</span></span></li>"
+        )
+
+    # Uncertainties
+    uncert_html = "".join(f"<li>{u}</li>" for u in rec.get("uncertainties", []))
+
+    # Suggested actions
+    actions_html = "".join(f"<li>{a}</li>" for a in rec.get("suggested_actions", []))
+
+    # Required approvals
+    approvals = rec.get("required_approvals", [])
+    approvals_html = "".join(
+        f'<span class="badge badge-investigating" style="margin-right:6px;">'
+        f"{a.replace('_', ' ').title()}</span>"
+        for a in approvals
+    )
+
+    # Timeline
+    timeline = case_pack.get("timeline", [])
+    timeline_rows = ""
+    for entry in timeline:
+        source = entry.get("source", "")
+        src_class = "fact-row" if source == "FACT" else "allegation-row"
+        timeline_rows += (
+            f'<tr class="{src_class}">'
+            f'<td style="padding:6px 10px; white-space:nowrap;">'
+            f"{entry.get('timestamp', 'N/A')[:19]}</td>"
+            f'<td style="padding:6px 10px;">{entry.get("event_type", "N/A")}</td>'
+            f'<td style="padding:6px 10px;">{entry.get("description", "")}</td>'
+            f'<td style="padding:6px 10px;">{source}</td></tr>'
+        )
+
+    timeline_html = ""
+    if timeline_rows:
+        timeline_html = f"""
+        <h4 style="color:{AMEX_NAVY}; margin-top:20px;">
+          Investigation Timeline ({len(timeline)} events)</h4>
+        <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+          <thead>
+            <tr style="background:{AMEX_BLUE}; color:#fff;">
+              <th style="padding:6px 10px; text-align:left;">Timestamp</th>
+              <th style="padding:6px 10px; text-align:left;">Event Type</th>
+              <th style="padding:6px 10px; text-align:left;">Description</th>
+              <th style="padding:6px 10px; text-align:left;">Source</th>
+            </tr>
+          </thead>
+          <tbody>{timeline_rows}</tbody>
+        </table>"""
+
+    # Investigation notes
+    notes = case_pack.get("investigation_notes", [])
+    notes_html = ""
+    if notes:
+        notes_items = "".join(f"<li style='margin-bottom:6px;'>{n}</li>" for n in notes)
+        notes_html = f"""
+        <h4 style="color:{AMEX_NAVY}; margin-top:20px;">Investigation Notes</h4>
+        <ul style="padding-left:20px;">{notes_items}</ul>"""
+
+    return f"""<div class="card">
+      <h4 style="color:{AMEX_NAVY}; margin-top:0;">Case Summary</h4>
+      <div style="line-height:1.7; color:#333;">{summary_paragraphs}</div>
+
+      <div style="margin-top:20px; padding:20px; background:{AMEX_BG};
+                  border-radius:8px; border-left:4px solid {AMEX_BLUE};">
+        <h4 style="color:{AMEX_NAVY}; margin-top:0;">Decision Recommendation</h4>
+        <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px;">
+          <div>{_category_badge(category)}</div>
+          <div style="flex:1;">
+            <div style="font-size:0.85em; color:#666; margin-bottom:4px;">
+              Confidence: {confidence_pct}%</div>
+            <div style="background:#E0E4EA; border-radius:6px; height:16px;
+                        overflow:hidden; display:grid;
+                        grid-template-columns:{confidence_pct}fr {100 - confidence_pct}fr;">
+              <div style="background:{bar_color}; border-radius:6px;"></div>
+              <div></div>
+            </div>
+          </div>
+        </div>
+
+        <h5 style="color:{AMEX_NAVY}; margin:12px 0 6px;">Top Factors</h5>
+        <ol style="padding-left:20px;">{factors_html}</ol>
+
+        <h5 style="color:{AMEX_NAVY}; margin:12px 0 6px;">Uncertainties</h5>
+        <ul style="padding-left:20px; color:#856404;">{uncert_html}</ul>
+
+        <h5 style="color:{AMEX_NAVY}; margin:12px 0 6px;">Suggested Actions</h5>
+        <ol style="padding-left:20px;">{actions_html}</ol>
+
+        <h5 style="color:{AMEX_NAVY}; margin:12px 0 6px;">Required Approvals</h5>
+        <div>{approvals_html if approvals_html else "None"}</div>
+      </div>
+
+      {timeline_html}
+      {notes_html}
+    </div>"""
+
+
+def _build_audit_trail_html(traces: list[dict]) -> str:
+    """Build HTML for the Audit Trail section."""
+    if not traces:
+        return '<div class="card"><p>No audit trail data available.</p></div>'
+
+    rows = ""
+    for t in traces:
+        agent = t.get("agent_id", "N/A")
+        action = t.get("action", "N/A")
+        duration = t.get("duration_ms", 0.0)
+        status = t.get("status", "success")
+        timestamp = t.get("timestamp", "N/A")
+        if isinstance(timestamp, str) and len(timestamp) > 19:
+            timestamp = timestamp[:19]
+
+        status_style = "color:#155724;" if status == "success" else "color:#721C24;"
+        rows += (
+            f"<tr>"
+            f"<td style='padding:5px 10px; white-space:nowrap;'>{timestamp}</td>"
+            f"<td style='padding:5px 10px;'>{agent}</td>"
+            f"<td style='padding:5px 10px;'>{action}</td>"
+            f"<td style='padding:5px 10px; text-align:right;'>"
+            f"{duration:.0f}ms</td>"
+            f"<td style='padding:5px 10px; {status_style}'>{status}</td></tr>"
+        )
+
+    return f"""<div class="card">
+      <table style="width:100%; border-collapse:collapse; font-size:0.85em;">
+        <thead>
+          <tr style="background:{AMEX_BLUE}; color:#fff;">
+            <th style="padding:5px 10px; text-align:left;">Timestamp</th>
+            <th style="padding:5px 10px; text-align:left;">Agent</th>
+            <th style="padding:5px 10px; text-align:left;">Action</th>
+            <th style="padding:5px 10px; text-align:right;">Duration</th>
+            <th style="padding:5px 10px; text-align:left;">Status</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>"""
+
+
 # -- Main load callback -----------------------------------------------------------
 
 
 def _load_scenario(scenario_name: str) -> tuple:
     """Load all data for a scenario and return component updates.
 
-    Returns a tuple matching the output components:
-        (case_html, transcript_html, chart, final_state_html,
-         copilot_turns_html, evidence_html, sections_visible)
+    Returns a tuple of 8 items matching the output components.
     """
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
-        return empty, empty, None, empty, empty, empty, gr.update(visible=False)
+        return empty, empty, None, empty, empty, empty, empty, empty
 
     db_dir = os.path.join(BASE_DIR, scenario_name)
 
@@ -449,23 +619,19 @@ def _load_scenario(scenario_name: str) -> tuple:
     suggestions = load_copilot_suggestions(db_dir, case_id) if case_id else []
     final_state = load_copilot_final_state(db_dir, case_id) if case_id else None
     nodes, edges = load_evidence(db_dir, case_id) if case_id else ([], [])
+    case_pack = load_case_pack(db_dir, case_id) if case_id else None
+    traces = load_audit_trail(db_dir, case_id) if case_id else []
 
     # Build HTML / charts
-    case_html = _build_case_overview_html(case)
-    transcript_html = _build_transcript_html(turns)
-    chart = _build_hypothesis_chart(suggestions)
-    final_html = _build_copilot_final_html(final_state)
-    turns_html = _build_copilot_turns_html(suggestions)
-    evidence_html = _build_evidence_html(nodes, edges)
-
     return (
-        case_html,
-        transcript_html,
-        chart,
-        final_html,
-        turns_html,
-        evidence_html,
-        gr.update(visible=True),
+        _build_case_overview_html(case),
+        _build_transcript_html(turns),
+        _build_hypothesis_chart(suggestions),
+        _build_copilot_final_html(final_state),
+        _build_copilot_turns_html(suggestions),
+        _build_evidence_html(nodes, edges),
+        _build_investigation_html(case_pack),
+        _build_audit_trail_html(traces),
     )
 
 
@@ -503,26 +669,40 @@ def create_dashboard_app() -> gr.Blocks:
             )
             load_btn = gr.Button("Load Scenario", variant="primary", scale=1)
 
-        # -- Sections (hidden until loaded) ----------------------------------------
-        sections = gr.Column(visible=False)
-        with sections:
-            # Section 1: Case Overview
-            gr.HTML('<div class="section-header">Case Overview</div>')
-            case_html = gr.HTML()
+        # -- Sections ---------------------------------------------------------------
+        # Section 1: Case Overview
+        gr.HTML('<div class="section-header" style="color:white;">Case Overview</div>')
+        case_html = gr.HTML()
 
-            # Section 2 & 3: Transcript (left) + Copilot Analysis (right)
-            gr.HTML('<div class="section-header">Conversation &amp; Copilot Analysis</div>')
-            with gr.Row():
-                with gr.Column(scale=1):
-                    transcript_html = gr.HTML()
-                with gr.Column(scale=1):
-                    chart_plot = gr.Plot(label="Hypothesis Scores")
-                    final_state_html = gr.HTML()
-                    copilot_turns_html = gr.HTML()
+        # Section 2 & 3: Copilot Analysis + Conversation
+        gr.HTML(
+            '<div class="section-header" style="color:white;">'
+            "Conversation &amp; Copilot Analysis</div>"
+        )
+        # Top row: hypothesis chart (left) + final copilot state (right)
+        with gr.Row():
+            with gr.Column(scale=3):
+                chart_plot = gr.Plot(label="Hypothesis Scores")
+            with gr.Column(scale=2):
+                final_state_html = gr.HTML()
+        # Bottom row: transcript (left) + per-turn copilot details (right)
+        with gr.Row():
+            with gr.Column(scale=1):
+                transcript_html = gr.HTML()
+            with gr.Column(scale=1):
+                copilot_turns_html = gr.HTML()
 
-            # Section 4: Evidence Graph
-            gr.HTML('<div class="section-header">Evidence Graph</div>')
-            evidence_html = gr.HTML()
+        # Section 4: Evidence Graph
+        gr.HTML('<div class="section-header" style="color:white;">Evidence Graph</div>')
+        evidence_html = gr.HTML()
+
+        # Section 5: Investigation Results
+        gr.HTML('<div class="section-header" style="color:white;">Investigation Results</div>')
+        investigation_html = gr.HTML()
+
+        # Section 6: Audit Trail (collapsible)
+        with gr.Accordion("Audit Trail", open=False):
+            audit_trail_html = gr.HTML()
 
         # -- Wire load callback ----------------------------------------------------
         load_btn.click(
@@ -535,7 +715,8 @@ def create_dashboard_app() -> gr.Blocks:
                 final_state_html,
                 copilot_turns_html,
                 evidence_html,
-                sections,
+                investigation_html,
+                audit_trail_html,
             ],
         )
 
