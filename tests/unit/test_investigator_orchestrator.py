@@ -97,6 +97,35 @@ def _make_evidence_nodes():
             "node_type": "CLAIM_STATEMENT",
             "source_type": "ALLEGATION",
             "text": "I didn't buy this",
+            "entities": {},
+        },
+    ]
+
+
+def _make_evidence_nodes_with_related_claims():
+    """Create evidence nodes with 2 related claims sharing a merchant_name."""
+    return [
+        {"node_id": "n1", "node_type": "TRANSACTION", "source_type": "FACT", "amount": 100.0},
+        {
+            "node_id": "claim-001",
+            "node_type": "CLAIM_STATEMENT",
+            "source_type": "ALLEGATION",
+            "text": "I didn't buy this at TechVault",
+            "entities": {"merchant_name": "TechVault", "amount": 2847.99},
+        },
+        {
+            "node_id": "claim-002",
+            "node_type": "CLAIM_STATEMENT",
+            "source_type": "ALLEGATION",
+            "text": "That TechVault purchase was online",
+            "entities": {"merchant_name": "TechVault", "channel": "online"},
+        },
+        {
+            "node_id": "claim-003",
+            "node_type": "CLAIM_STATEMENT",
+            "source_type": "ALLEGATION",
+            "text": "I also saw a charge from Amazon",
+            "entities": {"merchant_name": "Amazon", "amount": 50.0},
         },
     ]
 
@@ -460,3 +489,142 @@ class TestContradictionEdges:
         await orch.investigate("case-001")
 
         mock_append_edge.assert_not_called()
+
+
+class TestDerivedFromEdges:
+    """Tests for DERIVED_FROM edge creation between related claims."""
+
+    @patch(_UPDATE_STATUS_PATCH)
+    @patch(_APPEND_EDGE_PATCH)
+    @patch(_APPEND_NODE_PATCH)
+    @patch(_WRITER_PATCH, new_callable=AsyncMock)
+    @patch(_SCAM_PATCH, new_callable=AsyncMock)
+    @patch(_MERCHANT_PATCH, new_callable=AsyncMock)
+    @patch(_SCHEME_PATCH, new_callable=AsyncMock)
+    async def test_creates_derived_from_edges_for_related_claims(
+        self,
+        mock_scheme,
+        mock_merchant,
+        mock_scam,
+        mock_writer,
+        mock_append_node,
+        mock_append_edge,
+        mock_update_status,
+    ):
+        """Claims sharing merchant_name get linked with DERIVED_FROM edges."""
+        mock_scheme.return_value = _mock_scheme_result()
+        mock_merchant.return_value = _mock_merchant_result()
+        mock_scam.return_value = _mock_scam_result()
+        mock_writer.return_value = _mock_case_pack()
+
+        gateway = MagicMock()
+        gateway.case_store.get_case.return_value = _make_case()
+        gateway.evidence_store.get_nodes_by_case.return_value = (
+            _make_evidence_nodes_with_related_claims()
+        )
+        gateway.evidence_store.get_edges_by_case.return_value = []
+
+        orch = _make_orchestrator(gateway=gateway)
+        await orch.investigate("case-001")
+
+        # claim-002 -> claim-001 (both have merchant_name=TechVault)
+        # claim-003 has merchant_name=Amazon — no link to the others
+        edge_calls = [
+            c
+            for c in mock_append_edge.call_args_list
+            if c[0][2].edge_type == EvidenceEdgeType.DERIVED_FROM
+        ]
+        assert len(edge_calls) == 1
+        edge = edge_calls[0][0][2]
+        assert edge.source_node_id == "claim-002"
+        assert edge.target_node_id == "claim-001"
+        assert edge.edge_type == EvidenceEdgeType.DERIVED_FROM
+
+    @patch(_UPDATE_STATUS_PATCH)
+    @patch(_APPEND_EDGE_PATCH)
+    @patch(_APPEND_NODE_PATCH)
+    @patch(_WRITER_PATCH, new_callable=AsyncMock)
+    @patch(_SCAM_PATCH, new_callable=AsyncMock)
+    @patch(_MERCHANT_PATCH, new_callable=AsyncMock)
+    @patch(_SCHEME_PATCH, new_callable=AsyncMock)
+    async def test_no_derived_from_without_shared_entities(
+        self,
+        mock_scheme,
+        mock_merchant,
+        mock_scam,
+        mock_writer,
+        mock_append_node,
+        mock_append_edge,
+        mock_update_status,
+    ):
+        """Claims without overlapping entities don't get linked."""
+        mock_scheme.return_value = _mock_scheme_result()
+        mock_merchant.return_value = _mock_merchant_result()
+        mock_scam.return_value = _mock_scam_result()
+        mock_writer.return_value = _mock_case_pack()
+
+        # Two claims with different merchants — no overlap
+        nodes = [
+            {
+                "node_id": "c1",
+                "node_type": "CLAIM_STATEMENT",
+                "source_type": "ALLEGATION",
+                "text": "Claim A",
+                "entities": {"merchant_name": "StoreA"},
+            },
+            {
+                "node_id": "c2",
+                "node_type": "CLAIM_STATEMENT",
+                "source_type": "ALLEGATION",
+                "text": "Claim B",
+                "entities": {"merchant_name": "StoreB"},
+            },
+        ]
+        gateway = MagicMock()
+        gateway.case_store.get_case.return_value = _make_case()
+        gateway.evidence_store.get_nodes_by_case.return_value = nodes
+        gateway.evidence_store.get_edges_by_case.return_value = []
+
+        orch = _make_orchestrator(gateway=gateway)
+        await orch.investigate("case-001")
+
+        # No DERIVED_FROM edges should be created
+        derived_calls = [
+            c
+            for c in mock_append_edge.call_args_list
+            if c[0][2].edge_type == EvidenceEdgeType.DERIVED_FROM
+        ]
+        assert len(derived_calls) == 0
+
+    @patch(_UPDATE_STATUS_PATCH)
+    @patch(_APPEND_EDGE_PATCH)
+    @patch(_APPEND_NODE_PATCH)
+    @patch(_WRITER_PATCH, new_callable=AsyncMock)
+    @patch(_SCAM_PATCH, new_callable=AsyncMock)
+    @patch(_MERCHANT_PATCH, new_callable=AsyncMock)
+    @patch(_SCHEME_PATCH, new_callable=AsyncMock)
+    async def test_no_derived_from_without_entities(
+        self,
+        mock_scheme,
+        mock_merchant,
+        mock_scam,
+        mock_writer,
+        mock_append_node,
+        mock_append_edge,
+        mock_update_status,
+    ):
+        """Claims without entities dict are skipped for linking."""
+        mock_scheme.return_value = _mock_scheme_result()
+        mock_merchant.return_value = _mock_merchant_result()
+        mock_scam.return_value = _mock_scam_result()
+        mock_writer.return_value = _mock_case_pack()
+
+        orch = _make_orchestrator()  # default nodes have empty entities
+        await orch.investigate("case-001")
+
+        derived_calls = [
+            c
+            for c in mock_append_edge.call_args_list
+            if c[0][2].edge_type == EvidenceEdgeType.DERIVED_FROM
+        ]
+        assert len(derived_calls) == 0

@@ -191,6 +191,7 @@ class TestClaimStatement:
         cs = ClaimStatement(**BASE_KWARGS, text="I did not make this purchase")
         assert cs.node_type == EvidenceNodeType.CLAIM_STATEMENT
         assert cs.classification is None
+        assert cs.entities == {}
 
     def test_allegation_source(self) -> None:
         cs = ClaimStatement(
@@ -202,6 +203,29 @@ class TestClaimStatement:
             classification="theft",
         )
         assert cs.source_type == EvidenceSourceType.ALLEGATION
+
+    def test_with_entities(self) -> None:
+        cs = ClaimStatement(
+            **BASE_KWARGS,
+            text="Unauthorized charge at TechVault",
+            entities={"merchant_name": "TechVault", "amount": 2847.99},
+        )
+        assert cs.entities["merchant_name"] == "TechVault"
+        assert cs.entities["amount"] == 2847.99
+
+    def test_entities_round_trip(self) -> None:
+        cs = ClaimStatement(
+            node_id="n-002",
+            case_id="case-001",
+            source_type=EvidenceSourceType.ALLEGATION,
+            created_at=NOW,
+            text="I never bought anything online",
+            entities={"merchant_name": "AMZN", "amount": 500.0, "channel": "online"},
+        )
+        data = cs.model_dump()
+        restored = ClaimStatement(**data)
+        assert restored.entities == cs.entities
+        assert restored == cs
 
 
 class TestInvestigatorNote:
@@ -274,10 +298,12 @@ class TestRoundTrip:
             created_at=NOW,
             text="I never authorized this",
             classification="unauthorized",
+            entities={"amount": 150.0, "merchant_name": "Store X"},
         )
         data = cs.model_dump()
         restored = ClaimStatement(**data)
         assert restored == cs
+        assert restored.entities == {"amount": 150.0, "merchant_name": "Store X"}
 
     def test_transaction_json_roundtrip(self) -> None:
         txn = Transaction(

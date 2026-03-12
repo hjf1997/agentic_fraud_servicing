@@ -110,6 +110,9 @@ class InvestigatorOrchestrator:
         merchant_nodes = [n for n in nodes if n.get("node_type") == "MERCHANT"]
         transaction_nodes = [n for n in nodes if n.get("node_type") == "TRANSACTION"]
 
+        # Link related claims with DERIVED_FROM edges
+        self._link_related_claims(ctx, case_id, nodes)
+
         # 2. Build case summary text
         allegation = case.allegation_type.value if case.allegation_type else "unknown"
         case_summary = (
@@ -258,3 +261,71 @@ class InvestigatorOrchestrator:
         except Exception as exc:
             errors.append(f"Scam detection failed: {exc}")
             return None
+
+    def _link_related_claims(
+        self,
+        ctx: AuthContext,
+        case_id: str,
+        nodes: list[dict],
+    ) -> None:
+        """Create DERIVED_FROM edges between related claims.
+
+        Two CLAIM_STATEMENT nodes are related if they share at least one
+        entity key with the same value (case-insensitive for strings, exact
+        for numbers). Later claims link back to earlier ones via DERIVED_FROM.
+        """
+        claim_nodes = [
+            n for n in nodes if n.get("node_type") == "CLAIM_STATEMENT" and n.get("entities")
+        ]
+        if len(claim_nodes) < 2:
+            return
+
+        # Track which (source, target) pairs we've already linked
+        linked: set[tuple[str, str]] = set()
+
+        for i, later in enumerate(claim_nodes):
+            for earlier in claim_nodes[:i]:
+                later_id = later.get("node_id", "")
+                earlier_id = earlier.get("node_id", "")
+                if not later_id or not earlier_id:
+                    continue
+                if (later_id, earlier_id) in linked:
+                    continue
+
+                if self._entities_overlap(later.get("entities", {}), earlier.get("entities", {})):
+                    edge = EvidenceEdge(
+                        edge_id=f"edge-{uuid.uuid4().hex[:12]}",
+                        case_id=case_id,
+                        source_node_id=later_id,
+                        target_node_id=earlier_id,
+                        edge_type=EvidenceEdgeType.DERIVED_FROM,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                    try:
+                        append_evidence_edge(self.gateway, ctx, edge)
+                        linked.add((later_id, earlier_id))
+                    except RuntimeError:
+                        pass  # Duplicate or storage error — skip
+
+    @staticmethod
+    def _entities_overlap(a: dict, b: dict) -> bool:
+        """Check if two entity dicts share at least one key with the same value."""
+        _MATCH_KEYS = {
+            "merchant_name",
+            "amount",
+            "transaction_id",
+            "merchant_id",
+            "transaction_date",
+        }
+        for key in _MATCH_KEYS:
+            val_a = a.get(key)
+            val_b = b.get(key)
+            if val_a is None or val_b is None:
+                continue
+            # Case-insensitive comparison for strings, exact for numbers
+            if isinstance(val_a, str) and isinstance(val_b, str):
+                if val_a.lower() == val_b.lower():
+                    return True
+            elif val_a == val_b:
+                return True
+        return False

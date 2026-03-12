@@ -7,6 +7,7 @@ for lightweight references. Every node must declare its source_type
 """
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -129,6 +130,7 @@ class ClaimStatement(EvidenceNode):
     text: str
     claim_type: ClaimType | None = None
     classification: str | None = None
+    entities: dict[str, Any] = {}
 
 
 class InvestigatorNote(EvidenceNode):

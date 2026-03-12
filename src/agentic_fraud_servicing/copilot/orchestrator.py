@@ -201,6 +201,7 @@ class CopilotOrchestrator:
                 text=text,
                 claim_type=claim.claim_type,
                 classification=classification,
+                entities=claim.entities if claim.entities else {},
             )
             try:
                 append_evidence_node(self.gateway, ctx, node)
