@@ -54,7 +54,11 @@ from agentic_fraud_servicing.investigator.orchestrator import (
     InvestigatorOrchestrator,  # noqa: E402
 )
 from agentic_fraud_servicing.models.case import CopilotSuggestion  # noqa: E402
-from agentic_fraud_servicing.models.enums import EvidenceEdgeType, EvidenceSourceType  # noqa: E402
+from agentic_fraud_servicing.models.enums import (  # noqa: E402
+    ClaimType,
+    EvidenceEdgeType,
+    EvidenceSourceType,
+)
 from agentic_fraud_servicing.models.evidence import ClaimStatement, EvidenceEdge  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
 from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
@@ -294,6 +298,7 @@ async def _process_dispute_action(
             source_type=EvidenceSourceType.ALLEGATION,
             created_at=now,
             text=action.claim_text,
+            claim_type=ClaimType.TRANSACTION_DISPUTE,
             classification="dispute_claim",
         ),
     )

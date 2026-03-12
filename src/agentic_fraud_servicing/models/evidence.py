@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from agentic_fraud_servicing.models.enums import (
     AuthMethod,
+    ClaimType,
     EvidenceEdgeType,
     EvidenceNodeType,
     EvidenceSourceType,
@@ -126,6 +127,7 @@ class ClaimStatement(EvidenceNode):
 
     node_type: EvidenceNodeType = EvidenceNodeType.CLAIM_STATEMENT
     text: str
+    claim_type: ClaimType | None = None
     classification: str | None = None
 
 

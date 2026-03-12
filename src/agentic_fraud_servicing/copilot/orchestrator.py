@@ -199,6 +199,7 @@ class CopilotOrchestrator:
                 source_type=EvidenceSourceType.ALLEGATION,
                 created_at=datetime.now(tz=timezone.utc),
                 text=text,
+                claim_type=claim.claim_type,
                 classification=classification,
             )
             try:
