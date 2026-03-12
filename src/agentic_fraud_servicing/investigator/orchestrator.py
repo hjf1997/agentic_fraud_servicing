@@ -176,7 +176,7 @@ class InvestigatorOrchestrator:
         )
         append_evidence_node(self.gateway, ctx, note)
 
-        # Add CONTRADICTS edges if scam analysis found contradictions
+        # Add CONTRADICTS edges if scam analysis found contradictions with real node IDs
         if scam_result and scam_result.contradictions:
             for contradiction in scam_result.contradictions:
                 source_id = contradiction.get("claim_node_id", "")
@@ -190,7 +190,10 @@ class InvestigatorOrchestrator:
                         edge_type=EvidenceEdgeType.CONTRADICTS,
                         created_at=datetime.now(timezone.utc),
                     )
-                    append_evidence_edge(self.gateway, ctx, edge)
+                    try:
+                        append_evidence_edge(self.gateway, ctx, edge)
+                    except RuntimeError:
+                        pass  # LLM may hallucinate node IDs — skip bad edges
 
         # Update case status to INVESTIGATING
         update_case_status(self.gateway, ctx, case_id, CaseStatus.INVESTIGATING)

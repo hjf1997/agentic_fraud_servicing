@@ -41,6 +41,17 @@ The input separates claims (ALLEGATION-source, customer-stated) from facts
 
 Rate each contradiction's severity as 'low', 'medium', or 'high'.
 
+IMPORTANT: The input includes actual evidence node IDs (e.g., "txn-sim-001",
+"claim-abc123"). When you identify a contradiction, you MUST reference the exact
+node IDs from the input. In the `contradictions` list, each entry must include:
+- `claim_node_id`: the node_id of the ALLEGATION-source claim that is contradicted
+- `evidence_node_id`: the node_id of the FACT-source evidence that contradicts it
+- `claim`: text describing what the cardmember claimed
+- `contradicting_evidence`: text describing the contradicting fact
+- `severity`: 'low', 'medium', or 'high'
+
+Only reference node IDs that actually appear in the input. Do NOT invent IDs.
+
 ### 2. Detect manipulation indicators in the transcript
 
 - **Urgency tactics**: pressing for immediate resolution, threatening escalation
@@ -187,13 +198,17 @@ async def run_scam_detection(
     Raises:
         RuntimeError: If the agent SDK call fails.
     """
-    # Serialize evidence lists to readable text
-    claims_text = json.dumps(claims, indent=2) if claims else "[]"
-    facts_text = json.dumps(facts, indent=2) if facts else "[]"
+    # Serialize evidence lists with node IDs clearly visible
+    claims_text = json.dumps(claims, indent=2, default=str) if claims else "[]"
+    facts_text = json.dumps(facts, indent=2, default=str) if facts else "[]"
 
     user_msg = (
-        f"ALLEGATION-Source Claims (customer-stated, unverified):\n{claims_text}\n\n"
-        f"FACT-Source Evidence (system-verified):\n{facts_text}\n\n"
+        f"ALLEGATION-Source Claims (customer-stated, unverified):\n"
+        f"Each entry has a 'node_id' field — use these exact IDs in contradictions.\n"
+        f"{claims_text}\n\n"
+        f"FACT-Source Evidence (system-verified):\n"
+        f"Each entry has a 'node_id' field — use these exact IDs in contradictions.\n"
+        f"{facts_text}\n\n"
         f"Transcript Summary:\n{transcript_summary}"
     )
 

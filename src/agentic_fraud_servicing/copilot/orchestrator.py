@@ -7,6 +7,9 @@ for each turn. This is a plain Python class — not an Agents SDK Agent —
 keeping the control flow explicit and auditable.
 """
 
+import uuid
+from datetime import datetime, timezone
+
 from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
@@ -14,9 +17,12 @@ from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessmen
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan, run_question_planner
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult, run_retrieval
 from agentic_fraud_servicing.copilot.triage_agent import run_triage
-from agentic_fraud_servicing.gateway.tool_gateway import ToolGateway
+from agentic_fraud_servicing.gateway.tool_gateway import AuthContext, ToolGateway
+from agentic_fraud_servicing.gateway.tools.write_tools import append_evidence_node
 from agentic_fraud_servicing.models.case import CopilotSuggestion
 from agentic_fraud_servicing.models.claims import ClaimExtraction, ClaimExtractionResult
+from agentic_fraud_servicing.models.enums import EvidenceSourceType
+from agentic_fraud_servicing.models.evidence import ClaimStatement
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
 # Standard fields to gather during a dispute call
@@ -113,6 +119,7 @@ class CopilotOrchestrator:
         triage_result = await self._run_triage_safe(event.text, risk_flags, conversation_history)
         if triage_result is not None and triage_result.claims:
             self.accumulated_claims.extend(triage_result.claims)
+            self._persist_claims(triage_result.claims)
 
         # Build running summary from accumulated claims
         running_summary = self._build_claims_summary()
@@ -166,6 +173,38 @@ class CopilotOrchestrator:
         )
 
     # -- Private helper methods --
+
+    def _persist_claims(self, claims: list[ClaimExtraction]) -> None:
+        """Persist extracted claims as ClaimStatement evidence nodes.
+
+        Each ClaimExtraction is written to the evidence store as a
+        ClaimStatement (source_type=ALLEGATION) so the investigator can
+        access structured claim data in the evidence graph.
+        """
+        if self.case_id is None:
+            return
+        ctx = AuthContext(agent_id="copilot", case_id=self.case_id, permissions={"write"})
+        for claim in claims:
+            node_id = f"claim-{uuid.uuid4().hex[:12]}"
+            entities_str = (
+                ", ".join(f"{k}={v}" for k, v in claim.entities.items()) if claim.entities else ""
+            )
+            classification = claim.claim_type.value
+            text = claim.claim_description
+            if entities_str:
+                text = f"{text} [{entities_str}]"
+            node = ClaimStatement(
+                node_id=node_id,
+                case_id=self.case_id,
+                source_type=EvidenceSourceType.ALLEGATION,
+                created_at=datetime.now(tz=timezone.utc),
+                text=text,
+                classification=classification,
+            )
+            try:
+                append_evidence_node(self.gateway, ctx, node)
+            except RuntimeError:
+                pass  # Duplicate or storage error — don't block the copilot
 
     def _build_claims_summary(self) -> str:
         """Build a running summary string from accumulated claims."""
