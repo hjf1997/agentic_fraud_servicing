@@ -487,7 +487,7 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
             dashes=edge_type == "DERIVED_FROM",
         )
 
-    # Generate HTML and extract just the body content for embedding
+    # Generate HTML via pyvis, then embed in an iframe so vis.js scripts execute
     with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False) as f:
         tmp_path = f.name
     try:
@@ -496,6 +496,10 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
             full_html = f.read()
     finally:
         os.unlink(tmp_path)
+
+    # Escape the HTML for safe embedding in an iframe srcdoc attribute.
+    # srcdoc requires &, <, > and " to be escaped.
+    iframe_html = full_html.replace("&", "&amp;").replace('"', "&quot;")
 
     # Wrap in a styled container with a legend
     legend_html = f"""
@@ -526,7 +530,10 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
     return f"""<div class="card">
         {legend_html}
         <div style="border:1px solid #E0E4EA; border-radius:8px; overflow:hidden;">
-            {full_html}
+            <iframe srcdoc="{iframe_html}"
+                    style="width:100%; height:570px; border:none;"
+                    sandbox="allow-scripts allow-same-origin">
+            </iframe>
         </div>
     </div>"""
 
