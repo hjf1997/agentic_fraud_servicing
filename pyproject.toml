@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.0",
     "httpx",
     "gradio",
+    "pyvis",
     "python-dotenv",
 ]
 

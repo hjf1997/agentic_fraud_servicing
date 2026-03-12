@@ -8,10 +8,12 @@ Entry point: ``python -m agentic_fraud_servicing.ui.dashboard``
 
 import json
 import os
+import tempfile
 
 import gradio as gr
 import matplotlib
 import matplotlib.pyplot as plt
+from pyvis.network import Network
 
 from agentic_fraud_servicing.ui.dashboard_data import (
     discover_scenarios,
@@ -334,6 +336,201 @@ def _build_copilot_turns_html(suggestions: list[dict]) -> str:
     return f'<div class="card">{items}</div>'
 
 
+def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> str:
+    """Build an interactive network graph of evidence nodes and edges using pyvis.
+
+    Returns an HTML string containing a self-contained vis.js network graph
+    that can be embedded directly in a Gradio gr.HTML component.
+    """
+    if not nodes and not edges:
+        return '<div class="card"><p>No evidence data available for graph.</p></div>'
+
+    net = Network(
+        height="550px",
+        width="100%",
+        directed=True,
+        bgcolor=AMEX_WHITE,
+        font_color=AMEX_NAVY,
+    )
+
+    # Physics settings for a readable layout
+    net.set_options(
+        json.dumps(
+            {
+                "physics": {
+                    "enabled": True,
+                    "solver": "forceAtlas2Based",
+                    "forceAtlas2Based": {
+                        "gravitationalConstant": -80,
+                        "centralGravity": 0.01,
+                        "springLength": 180,
+                        "springConstant": 0.04,
+                        "damping": 0.5,
+                    },
+                    "stabilization": {"iterations": 150},
+                },
+                "interaction": {
+                    "hover": True,
+                    "tooltipDelay": 100,
+                    "navigationButtons": True,
+                    "keyboard": {"enabled": True},
+                },
+                "edges": {
+                    "arrows": {"to": {"enabled": True, "scaleFactor": 0.8}},
+                    "smooth": {"type": "curvedCW", "roundness": 0.2},
+                    "font": {"size": 10, "color": "#666666", "strokeWidth": 0},
+                },
+                "nodes": {
+                    "font": {"size": 12, "face": "Helvetica Neue, Arial, sans-serif"},
+                    "borderWidth": 2,
+                    "shadow": {"enabled": True, "size": 4, "x": 2, "y": 2},
+                },
+            }
+        )
+    )
+
+    # Node styling by type and source
+    _NODE_COLORS = {
+        "TRANSACTION": {"background": "#E3F2FD", "border": AMEX_BLUE},
+        "AUTH_EVENT": {"background": "#F3E5F5", "border": "#7B1FA2"},
+        "CARD": {"background": "#E8EAF6", "border": "#283593"},
+        "DEVICE": {"background": "#E0F2F1", "border": "#00695C"},
+        "CUSTOMER": {"background": "#FFF3E0", "border": "#E65100"},
+        "MERCHANT": {"background": "#F1F8E9", "border": "#33691E"},
+        "DELIVERY_PROOF": {"background": "#E0F7FA", "border": "#006064"},
+        "REFUND_RECORD": {"background": "#FCE4EC", "border": "#880E4F"},
+        "CLAIM_STATEMENT": {"background": "#FFF8E1", "border": "#F9A825"},
+        "INVESTIGATOR_NOTE": {"background": "#EFEBE9", "border": "#4E342E"},
+    }
+
+    _NODE_SHAPES = {
+        "TRANSACTION": "dot",
+        "AUTH_EVENT": "diamond",
+        "CARD": "square",
+        "DEVICE": "triangle",
+        "CUSTOMER": "star",
+        "MERCHANT": "dot",
+        "DELIVERY_PROOF": "square",
+        "REFUND_RECORD": "dot",
+        "CLAIM_STATEMENT": "triangle",
+        "INVESTIGATOR_NOTE": "square",
+    }
+
+    _EDGE_COLORS = {
+        "SUPPORTS": "#388E3C",
+        "CONTRADICTS": "#D32F2F",
+        "DERIVED_FROM": "#F57C00",
+        "FACT": "#1565C0",
+        "ALLEGATION": "#FF8F00",
+    }
+
+    # Build a node_id set for edge validation
+    node_ids = set()
+
+    for n in nodes:
+        node_id = n.get("node_id", "")
+        if not node_id:
+            continue
+        node_ids.add(node_id)
+
+        node_type = n.get("node_type", "UNKNOWN")
+        source_type = n.get("source_type", "")
+        summary = _evidence_node_summary(n)
+
+        colors = _NODE_COLORS.get(node_type, {"background": "#E0E0E0", "border": "#616161"})
+        shape = _NODE_SHAPES.get(node_type, "dot")
+
+        # Allegation nodes get an orange border override
+        if source_type == "ALLEGATION":
+            colors = {**colors, "border": "#FF8F00"}
+
+        # Short label for the graph (truncate long IDs)
+        short_id = node_id
+        if len(short_id) > 18:
+            short_id = short_id[:15] + "..."
+
+        # Tooltip with full details
+        tooltip = f"<b>{node_type}</b><br/>ID: {node_id}<br/>Source: {source_type}<br/>{summary}"
+
+        # Size based on node importance
+        size = 25 if node_type in ("TRANSACTION", "CLAIM_STATEMENT", "CUSTOMER") else 18
+
+        net.add_node(
+            node_id,
+            label=short_id,
+            title=tooltip,
+            shape=shape,
+            size=size,
+            color=colors,
+            borderWidth=3 if source_type == "ALLEGATION" else 2,
+        )
+
+    for e in edges:
+        source = e.get("source_node_id", "")
+        target = e.get("target_node_id", "")
+        edge_type = e.get("edge_type", "")
+
+        # Skip edges referencing nodes not in the graph
+        if source not in node_ids or target not in node_ids:
+            continue
+
+        color = _EDGE_COLORS.get(edge_type, "#999999")
+        width = 3 if edge_type in ("CONTRADICTS", "SUPPORTS") else 2
+
+        net.add_edge(
+            source,
+            target,
+            title=edge_type,
+            label=edge_type.replace("_", " ").title(),
+            color=color,
+            width=width,
+            dashes=edge_type == "DERIVED_FROM",
+        )
+
+    # Generate HTML and extract just the body content for embedding
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False) as f:
+        tmp_path = f.name
+    try:
+        net.save_graph(tmp_path)
+        with open(tmp_path) as f:
+            full_html = f.read()
+    finally:
+        os.unlink(tmp_path)
+
+    # Wrap in a styled container with a legend
+    legend_html = f"""
+    <div style="display:flex; flex-wrap:wrap; gap:12px; padding:10px 0;
+                font-size:0.85em; color:{AMEX_NAVY};">
+      <span><b>Node Shapes:</b></span>
+      <span>&#9679; Transaction/Merchant</span>
+      <span>&#9670; Auth Event</span>
+      <span>&#9733; Customer</span>
+      <span>&#9650; Device/Claim</span>
+      <span>&#9632; Card/Delivery/Note</span>
+      <span style="margin-left:16px;"><b>Edges:</b></span>
+      <span style="color:#388E3C;">&#9644; Supports</span>
+      <span style="color:#D32F2F;">&#9644; Contradicts</span>
+      <span style="color:#F57C00;">- - Derived From</span>
+    </div>
+    <div style="display:flex; gap:12px; padding:0 0 10px 0;
+                font-size:0.85em; color:{AMEX_NAVY};">
+      <span><b>Source:</b></span>
+      <span style="border:2px solid #283593; padding:1px 8px;
+                   border-radius:4px; background:#E8EAF6;">FACT</span>
+      <span style="border:2px solid #FF8F00; padding:1px 8px;
+                   border-radius:4px; background:#FFF8E1;">ALLEGATION</span>
+      <span style="margin-left:12px; color:#666;">
+        Drag nodes to rearrange. Scroll to zoom. Hover for details.</span>
+    </div>"""
+
+    return f"""<div class="card">
+        {legend_html}
+        <div style="border:1px solid #E0E4EA; border-radius:8px; overflow:hidden;">
+            {full_html}
+        </div>
+    </div>"""
+
+
 def _build_evidence_html(nodes: list[dict], edges: list[dict]) -> str:
     """Build HTML tables for evidence nodes and edges."""
     if not nodes and not edges:
@@ -605,11 +802,11 @@ def _build_audit_trail_html(traces: list[dict]) -> str:
 def _load_scenario(scenario_name: str) -> tuple:
     """Load all data for a scenario and return component updates.
 
-    Returns a tuple of 8 items matching the output components.
+    Returns a tuple of 9 items matching the output components.
     """
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
-        return empty, empty, None, empty, empty, empty, empty, empty
+        return empty, empty, None, empty, empty, empty, empty, empty, empty
 
     db_dir = os.path.join(BASE_DIR, scenario_name)
 
@@ -632,6 +829,7 @@ def _load_scenario(scenario_name: str) -> tuple:
         _build_hypothesis_chart(suggestions),
         _build_copilot_final_html(final_state),
         _build_copilot_turns_html(suggestions),
+        _build_evidence_graph_interactive(nodes, edges),
         _build_evidence_html(nodes, edges),
         _build_investigation_html(case_pack),
         _build_audit_trail_html(traces),
@@ -697,7 +895,9 @@ def create_dashboard_app() -> gr.Blocks:
 
         # Section 4: Evidence Graph
         gr.HTML('<div class="section-header" style="color:white;">Evidence Graph</div>')
-        evidence_html = gr.HTML()
+        evidence_graph_html = gr.HTML()
+        with gr.Accordion("Evidence Tables (Detail View)", open=False):
+            evidence_html = gr.HTML()
 
         # Section 5: Investigation Results
         gr.HTML('<div class="section-header" style="color:white;">Investigation Results</div>')
@@ -717,6 +917,7 @@ def create_dashboard_app() -> gr.Blocks:
                 chart_plot,
                 final_state_html,
                 copilot_turns_html,
+                evidence_graph_html,
                 evidence_html,
                 investigation_html,
                 audit_trail_html,
