@@ -145,8 +145,8 @@ def _build_case_overview_html(case: dict | None) -> str:
         txn_rows += (
             f"<tr><td>{t.get('transaction_id', 'N/A')}</td>"
             f"<td>${t.get('amount', 0):,.2f}</td>"
-            f"<td>{t.get('merchant', 'N/A')}</td>"
-            f"<td>{t.get('date', 'N/A')}</td></tr>"
+            f"<td>{t.get('merchant_name', 'N/A')}</td>"
+            f"<td>{t.get('transaction_date', 'N/A')}</td></tr>"
         )
 
     txn_table = ""
@@ -404,7 +404,7 @@ def _evidence_node_summary(node: dict) -> str:
     node_type = node.get("node_type", "")
     if node_type == "TRANSACTION":
         amt = node.get("amount", "")
-        merchant = node.get("merchant", "")
+        merchant = node.get("merchant_name", "")
         return f"${amt} at {merchant}" if amt else merchant or "Transaction"
     if node_type == "AUTH_EVENT":
         return f"{node.get('auth_type', '')} — {node.get('result', '')}"

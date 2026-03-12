@@ -43,6 +43,7 @@ import scripts.scenario_highrisk_merchant  # noqa: E402, F401
 import scripts.scenario_scam_techvault  # noqa: E402, F401
 from agentic_fraud_servicing.config import get_settings  # noqa: E402
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator  # noqa: E402
+from agentic_fraud_servicing.ingestion.redaction import redact_all  # noqa: E402
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event  # noqa: E402
 from agentic_fraud_servicing.investigator.orchestrator import (
     InvestigatorOrchestrator,  # noqa: E402
@@ -174,8 +175,19 @@ def _persist_trace(
     """Persist a data record to the trace store for dashboard consumption.
 
     Generates a unique trace_id and timestamps automatically. Duration is 0.0
-    since these are data records, not timed operations.
+    since these are data records, not timed operations. Conversation turn text
+    is redacted before storage to prevent raw PAN/PII from reaching the DB.
     """
+    # Redact PII in conversation turn text before persisting
+    if action == "conversation_turn":
+        try:
+            data = json.loads(output_data)
+            if "text" in data:
+                data["text"], _ = redact_all(data["text"])
+                output_data = json.dumps(data)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     gateway.trace_store.log_invocation(
         trace_id=str(uuid.uuid4()),
         case_id=case_id,
