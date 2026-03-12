@@ -449,8 +449,8 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
         if len(short_id) > 18:
             short_id = short_id[:15] + "..."
 
-        # Tooltip with full details
-        tooltip = f"<b>{node_type}</b><br/>ID: {node_id}<br/>Source: {source_type}<br/>{summary}"
+        # Tooltip with full details (plain text — vis.js tooltips don't render HTML)
+        tooltip = f"{node_type}\nID: {node_id}\nSource: {source_type}\n{summary}"
 
         # Size based on node importance
         size = 25 if node_type in ("TRANSACTION", "CLAIM_STATEMENT", "CUSTOMER") else 18
