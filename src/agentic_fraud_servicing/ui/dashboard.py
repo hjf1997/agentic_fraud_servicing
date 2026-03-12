@@ -409,8 +409,11 @@ def _evidence_node_summary(node: dict) -> str:
     if node_type == "AUTH_EVENT":
         return f"{node.get('auth_type', '')} — {node.get('result', '')}"
     if node_type == "CLAIM_STATEMENT":
+        claim_type = node.get("claim_type", "")
         text = node.get("text", "")
-        return text[:80] + "..." if len(text) > 80 else text
+        prefix = f"[{claim_type}] " if claim_type else ""
+        full = f"{prefix}{text}"
+        return full[:100] + "..." if len(full) > 100 else full
     if node_type == "INVESTIGATOR_NOTE":
         text = node.get("text", "")
         return text[:80] + "..." if len(text) > 80 else text

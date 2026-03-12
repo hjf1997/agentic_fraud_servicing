@@ -78,7 +78,7 @@ class TestRunTriage:
         return ClaimExtractionResult(
             claims=[
                 ClaimExtraction(
-                    claim_type=ClaimType.TRANSACTION_DISPUTE,
+                    claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
                     claim_description="CM says they did not make a $499 charge",
                     entities={"amount": 499.0, "merchant_name": "Electronics Store"},
                     confidence=0.9,
@@ -101,7 +101,7 @@ class TestRunTriage:
 
         assert isinstance(result, ClaimExtractionResult)
         assert len(result.claims) == 1
-        assert result.claims[0].claim_type == ClaimType.TRANSACTION_DISPUTE
+        assert result.claims[0].claim_type == ClaimType.UNRECOGNIZED_TRANSACTION
 
     async def test_passes_model_provider(self, mock_provider):
         """run_triage passes model_provider in RunConfig."""

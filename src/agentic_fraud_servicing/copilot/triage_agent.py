@@ -35,8 +35,8 @@ and expected entities are listed.
 
 ### Fraud Claim Types (9)
 
-1. **TRANSACTION_DISPUTE** — CM disputes a specific transaction they say they
-   did not make or authorize.
+1. **UNRECOGNIZED_TRANSACTION** — CM says they do not recognize a specific
+   transaction on their account.
    - Examples: "I didn't make this charge", "This purchase wasn't me",
      "I don't recognize this transaction", "Someone made a purchase on my card"
    - Entities: amount, merchant_name, transaction_date, transaction_id
@@ -149,20 +149,30 @@ and expected entities are listed.
 
 ## Extraction Rules
 
-1. Analyze the FULL conversation history cumulatively, not just the latest turn.
-   Claims may be spread across multiple turns or clarified over time.
-2. Extract 0-8 distinct claims per analysis. Do not duplicate overlapping claims.
-3. Each claim MUST have a claim_type, claim_description, and confidence score.
-4. The claim_description should paraphrase what the CM said — not your analysis.
-5. Entities must be structured name-value pairs extracted from the conversation.
+1. Extract claims ONLY from the CURRENT TURN (marked with [LATEST TURN] in the
+   input). Do NOT re-extract claims from earlier turns — those were already
+   extracted in previous invocations.
+2. The full conversation history is provided for TWO purposes:
+   a. **Context**: Understand the full story so far to correctly interpret what
+      the CM means in the current turn (e.g., "that charge" refers to a
+      merchant mentioned earlier).
+   b. **Deduplication**: If the CM repeats or rephrases a claim already made in
+      an earlier turn, do NOT extract it again. Only extract genuinely NEW
+      information or claims from the current turn.
+3. Extract 0-8 distinct NEW claims per turn. Most turns yield 0-2 claims.
+   Return an empty claims list if the current turn contains no new claims
+   (e.g., CCP asking questions, SYSTEM events, CM repeating earlier statements).
+4. Each claim MUST have a claim_type, claim_description, and confidence score.
+5. The claim_description should paraphrase what the CM said — not your analysis.
+6. Entities must be structured name-value pairs extracted from the conversation.
    If a value is not explicitly stated, omit it rather than guessing.
-6. Set confidence based on how clearly the CM expressed the claim:
+7. Set confidence based on how clearly the CM expressed the claim:
    - 0.9-1.0: Explicit, unambiguous statement
    - 0.7-0.8: Strong implication with supporting context
    - 0.5-0.6: Inferred from partial or indirect statements
    - Below 0.5: Weak inference, possibly misinterpreted
-7. The context field should capture the relevant quote or paraphrase that
-   prompted the extraction.
+8. The context field should capture the relevant quote or paraphrase from the
+   CURRENT TURN that prompted the extraction.
 
 Respond with structured output only.
 """

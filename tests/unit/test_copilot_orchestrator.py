@@ -41,7 +41,7 @@ def _mock_triage_result(claims=None):
     if claims is None:
         claims = [
             ClaimExtraction(
-                claim_type=ClaimType.TRANSACTION_DISPUTE,
+                claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
                 claim_description="CM says they did not make this purchase",
                 entities={"merchant_name": "TechVault"},
                 confidence=0.9,
@@ -281,7 +281,7 @@ class TestAccumulatedClaims:
     ):
         """accumulated_claims grows with each process_event call."""
         claim1 = ClaimExtraction(
-            claim_type=ClaimType.TRANSACTION_DISPUTE,
+            claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
             claim_description="Unauthorized purchase",
             entities={"amount": "$500"},
             confidence=0.9,
@@ -304,7 +304,7 @@ class TestAccumulatedClaims:
         orch = _make_orchestrator()
         await orch.process_event(_make_event(event_id="evt-1"))
         assert len(orch.accumulated_claims) == 1
-        assert orch.accumulated_claims[0].claim_type == ClaimType.TRANSACTION_DISPUTE
+        assert orch.accumulated_claims[0].claim_type == ClaimType.UNRECOGNIZED_TRANSACTION
 
         await orch.process_event(_make_event(event_id="evt-2"))
         assert len(orch.accumulated_claims) == 2
@@ -348,7 +348,7 @@ class TestAccumulatedClaims:
         result = await orch.process_event(_make_event())
 
         assert "Claims:" in result.running_summary
-        assert "TRANSACTION_DISPUTE" in result.running_summary
+        assert "UNRECOGNIZED_TRANSACTION" in result.running_summary
 
 
 class TestHypothesisScoring:
@@ -426,7 +426,7 @@ class TestHypothesisScoring:
 
         mock_hypothesis.assert_awaited_once()
         call_kwargs = mock_hypothesis.call_args.kwargs
-        assert "TRANSACTION_DISPUTE" in call_kwargs["claims_summary"]
+        assert "UNRECOGNIZED_TRANSACTION" in call_kwargs["claims_summary"]
         assert "Impersonation risk" in call_kwargs["auth_summary"]
         assert "Transactions" in call_kwargs["evidence_summary"]
         assert "THIRD_PARTY_FRAUD" in str(call_kwargs["current_scores"])

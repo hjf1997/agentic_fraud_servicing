@@ -298,7 +298,7 @@ async def _process_dispute_action(
             source_type=EvidenceSourceType.ALLEGATION,
             created_at=now,
             text=action.claim_text,
-            claim_type=ClaimType.TRANSACTION_DISPUTE,
+            claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
             classification="dispute_claim",
         ),
     )

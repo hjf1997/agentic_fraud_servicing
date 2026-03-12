@@ -83,7 +83,7 @@ Combined from the fraud and dispute claim type strategies (see references below)
 
 | ClaimType | Natural Language Match | % of Fraud Calls |
 |---|---|---|
-| TRANSACTION_DISPUTE | "I didn't make this charge" | 50% |
+| UNRECOGNIZED_TRANSACTION | "I didn't make this charge" | 50% |
 | CARD_NOT_PRESENT_FRAUD | "I never bought anything online" | 22% |
 | ACCOUNT_TAKEOVER | "Someone accessed my account" | 11% |
 | LOCATION_CLAIM | "I was in New York, not California" | 6% |
@@ -121,7 +121,7 @@ class ClaimExtraction(BaseModel):
 ```
 
 Entity extraction is critical because:
-- `{"amount": 500.00, "merchant": "XYZ Store"}` from a TRANSACTION_DISPUTE
+- `{"amount": 500.00, "merchant": "XYZ Store"}` from a UNRECOGNIZED_TRANSACTION
   claim can be directly matched against a Transaction evidence node
 - Contradictions become computable: claim says "never heard of TechVault"
   but Device evidence shows enrolled device used at that merchant

@@ -209,7 +209,7 @@ class TestRunHypothesis:
             return_value=mock_run_result,
         ):
             result = await run_hypothesis(
-                claims_summary="TRANSACTION_DISPUTE: CM says didn't make $499 charge",
+                claims_summary="UNRECOGNIZED_TRANSACTION: CM says didn't make $499 charge",
                 auth_summary="Impersonation risk: 0.2, no step-up needed",
                 evidence_summary="Chip+PIN auth from enrolled device",
                 current_scores=default_scores,
@@ -253,7 +253,7 @@ class TestRunHypothesis:
             return_value=mock_run_result,
         ) as mock_run:
             await run_hypothesis(
-                claims_summary="TRANSACTION_DISPUTE: unauthorized $2847 at TechVault",
+                claims_summary="UNRECOGNIZED_TRANSACTION: unauthorized $2847 at TechVault",
                 auth_summary="low risk",
                 evidence_summary="chip+PIN",
                 current_scores=default_scores,
@@ -263,7 +263,7 @@ class TestRunHypothesis:
 
         call_args = mock_run.call_args
         user_input = call_args.kwargs.get("input") or call_args.args[1]
-        assert "TRANSACTION_DISPUTE: unauthorized $2847 at TechVault" in user_input
+        assert "UNRECOGNIZED_TRANSACTION: unauthorized $2847 at TechVault" in user_input
         assert "Accumulated Claims" in user_input
 
     async def test_includes_evidence_in_message(self, mock_provider, default_scores):

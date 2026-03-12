@@ -58,7 +58,7 @@ accumulated evidence, claims, and conversation context.
 You receive the following context each turn:
 
 1. **Accumulated Claims** — Structured claims extracted from the conversation so
-   far, each with a ClaimType (e.g., TRANSACTION_DISPUTE, CARD_POSSESSION,
+   far, each with a ClaimType (e.g., UNRECOGNIZED_TRANSACTION, CARD_POSSESSION,
    GOODS_NOT_RECEIVED) and extracted entities (amounts, merchants, dates).
 2. **Auth Assessment** — Impersonation risk score, risk factors, and step-up
    auth recommendations from the authentication specialist.

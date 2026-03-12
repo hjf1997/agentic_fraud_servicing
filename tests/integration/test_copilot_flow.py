@@ -28,7 +28,7 @@ _SAMPLE_TRANSCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "sample_t
 _TRIAGE_RESULT = ClaimExtractionResult(
     claims=[
         ClaimExtraction(
-            claim_type=ClaimType.TRANSACTION_DISPUTE,
+            claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
             claim_description="CM disputes charge at AMZN Marketplace",
             entities={"merchant_name": "AMZN Marketplace"},
             confidence=0.85,

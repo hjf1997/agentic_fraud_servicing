@@ -13,7 +13,7 @@ class TestClaimType:
     """Tests for the ClaimType enum."""
 
     FRAUD_TYPES = [
-        "TRANSACTION_DISPUTE",
+        "UNRECOGNIZED_TRANSACTION",
         "CARD_NOT_PRESENT_FRAUD",
         "LOST_STOLEN_CARD",
         "IDENTITY_VERIFICATION",
@@ -47,7 +47,7 @@ class TestClaimType:
             assert hasattr(ClaimType, name), f"Missing dispute type: {name}"
 
     def test_str_mixin(self):
-        assert ClaimType.TRANSACTION_DISPUTE == "TRANSACTION_DISPUTE"
+        assert ClaimType.UNRECOGNIZED_TRANSACTION == "UNRECOGNIZED_TRANSACTION"
         assert ClaimType.GOODS_NOT_RECEIVED == "GOODS_NOT_RECEIVED"
 
     def test_string_serialization(self):
@@ -64,11 +64,11 @@ class TestClaimExtraction:
 
     def test_required_fields(self):
         claim = ClaimExtraction(
-            claim_type=ClaimType.TRANSACTION_DISPUTE,
+            claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
             claim_description="I didn't make this charge",
             confidence=0.85,
         )
-        assert claim.claim_type == ClaimType.TRANSACTION_DISPUTE
+        assert claim.claim_type == ClaimType.UNRECOGNIZED_TRANSACTION
         assert claim.claim_description == "I didn't make this charge"
         assert claim.confidence == 0.85
         assert claim.entities == {}
@@ -152,7 +152,7 @@ class TestClaimExtractionResult:
     def test_with_claims_list(self):
         claims = [
             ClaimExtraction(
-                claim_type=ClaimType.TRANSACTION_DISPUTE,
+                claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
                 claim_description="Didn't make this charge",
                 confidence=0.85,
             ),
@@ -165,7 +165,7 @@ class TestClaimExtractionResult:
         ]
         result = ClaimExtractionResult(claims=claims)
         assert len(result.claims) == 2
-        assert result.claims[0].claim_type == ClaimType.TRANSACTION_DISPUTE
+        assert result.claims[0].claim_type == ClaimType.UNRECOGNIZED_TRANSACTION
         assert result.claims[1].claim_type == ClaimType.CARD_POSSESSION
 
     def test_json_round_trip(self):
