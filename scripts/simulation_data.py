@@ -20,6 +20,29 @@ from agentic_fraud_servicing.providers.base import ModelProvider
 
 
 @dataclass
+class DisputeAction:
+    """A CCP action that marks specific transactions as disputed mid-call.
+
+    When triggered at the specified turn, the simulation runner will:
+    1. Create a ClaimStatement evidence node (ALLEGATION) from claim_text
+    2. Create EvidenceEdge(s) linking the ClaimStatement to each transaction
+    3. Inject a SYSTEM event into the copilot with the dispute linkage details
+
+    This models the real-world flow where a CCP identifies which transaction(s)
+    the cardmember is disputing and marks them in the system.
+
+    Attributes:
+        trigger_turn: Fire this action after this CM turn number.
+        transaction_node_ids: Which seeded transaction nodes the CCP marks as disputed.
+        claim_text: Summary of the cardmember's claim (what they said, not conclusions).
+    """
+
+    trigger_turn: int
+    transaction_node_ids: list[str] = field(default_factory=list)
+    claim_text: str = ""
+
+
+@dataclass
 class Scenario:
     """A simulation scenario with all data needed to run an E2E simulation.
 
@@ -30,9 +53,10 @@ class Scenario:
         case_id: Unique case identifier for this simulation run.
         call_id: Unique call identifier for this simulation run.
         cm_system_prompt: System prompt for the cardmember simulator agent.
-        system_event_auth: Text for the identity verification SYSTEM event.
-        system_event_evidence: Text for the evidence retrieval SYSTEM event.
+        system_event_auth: Text for the identity verification SYSTEM event (None to skip).
+        system_event_evidence: Text for the evidence retrieval SYSTEM event (None to skip).
         max_turns: Maximum conversation turns (CCP + CM + SYSTEM combined).
+        dispute_actions: CCP actions that mark transactions as disputed at specific turns.
         seed_evidence_fn: Function that seeds evidence into the gateway.
         create_case_fn: Function that creates the initial Case.
     """
@@ -43,10 +67,11 @@ class Scenario:
     case_id: str
     call_id: str
     cm_system_prompt: str
-    system_event_auth: str
-    system_event_evidence: str
+    system_event_auth: str | None = None
+    system_event_evidence: str | None = None
     max_turns: int = 14
     inject_evidence_early: bool = False  # inject system_event_evidence right after auth at turn 4
+    dispute_actions: list[DisputeAction] = field(default_factory=list)
     seed_evidence_fn: Callable[[ToolGateway, str], None] = field(repr=False, default=None)  # type: ignore[assignment]
     create_case_fn: Callable[[ToolGateway, str, str], Case] = field(repr=False, default=None)  # type: ignore[assignment]
 

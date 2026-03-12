@@ -1,9 +1,9 @@
-"""Scenario: Disputed DoorDash Dash Pass (v2) — transaction info injected early.
+"""Scenario: Disputed DoorDash Dash Pass (v2) — no data injection during call.
 
-Variant of doordash_dashpass where all transaction history is provided to the
-copilot via a SYSTEM event immediately after identity verification (turn 4),
-rather than waiting until turn 10. This gives the CCP full context early in
-the call so the copilot can suggest more targeted questions.
+The copilot has access only to the cardmember profile and historical
+transactions via the evidence store. No SYSTEM events inject data during the
+call — the agents must gather information purely from the conversation and
+what the retrieval agent can fetch from the seeded evidence.
 
 No assumptions are made about whether this is fraud, a dispute, or a scam.
 The agents must analyze the evidence and reach their own conclusion.
@@ -13,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 
 from agentic_fraud_servicing.gateway.tool_gateway import AuthContext, ToolGateway
 from agentic_fraud_servicing.gateway.tools.write_tools import (
-    append_evidence_edge,
     append_evidence_node,
     create_case,
 )
@@ -22,24 +21,21 @@ from agentic_fraud_servicing.models.enums import (
     AllegationType,
     AuthMethod,
     CaseStatus,
-    EvidenceEdgeType,
     EvidenceSourceType,
     TransactionChannel,
 )
 from agentic_fraud_servicing.models.evidence import (
-    ClaimStatement,
-    EvidenceEdge,
     Merchant,
     Transaction,
 )
-from scripts.simulation_data import Scenario, register_scenario
+from scripts.simulation_data import DisputeAction, Scenario, register_scenario
 
 _NOW = datetime.now(tz=timezone.utc)
 _THREE_DAYS_AGO = _NOW - timedelta(days=3)
 
 
 def _seed_evidence(gateway: ToolGateway, case_id: str) -> None:
-    """Seed evidence: disputed Dash Pass charge, historical DoorDash orders, claim."""
+    """Seed evidence: historical DoorDash orders, disputed Dash Pass charge, merchant profile."""
     ctx = AuthContext(agent_id="simulation", case_id=case_id, permissions={"write"})
 
     # -- Historical DoorDash food delivery orders (various amounts, none $96) --
@@ -101,34 +97,6 @@ def _seed_evidence(gateway: ToolGateway, case_id: str) -> None:
         ),
     )
 
-    # -- Claim statement (ALLEGATION) --
-    append_evidence_node(
-        gateway,
-        ctx,
-        ClaimStatement(
-            node_id="claim-dd-001",
-            case_id=case_id,
-            source_type=EvidenceSourceType.ALLEGATION,
-            created_at=_NOW,
-            text="I did not authorize this $96 DoorDash - Dash Pass charge.",
-            classification="dispute_claim",
-        ),
-    )
-
-    # -- Edge: claim relates to the disputed transaction --
-    append_evidence_edge(
-        gateway,
-        ctx,
-        EvidenceEdge(
-            edge_id="edge-dd-001",
-            case_id=case_id,
-            source_node_id="claim-dd-001",
-            target_node_id="txn-dd-disputed",
-            edge_type=EvidenceEdgeType.ALLEGATION,
-            created_at=_NOW,
-        ),
-    )
-
 
 def _create_case(gateway: ToolGateway, case_id: str, call_id: str) -> Case:
     """Create the initial Case for the DoorDash Dash Pass v2 scenario."""
@@ -184,35 +152,26 @@ Behaviors:
 
 
 def build_scenario() -> Scenario:
-    """Build the DoorDash Dash Pass v2 scenario (transaction info injected early)."""
+    """Build the DoorDash Dash Pass v2 scenario (dispute action mid-call)."""
     return Scenario(
         name="doordash_dashpass_v2",
-        title="Disputed DoorDash - Dash Pass Charge v2 ($96 CNP, early transaction injection)",
+        title="Disputed DoorDash - Dash Pass Charge v2 ($96 CNP, dispute action at turn 6)",
         description=(
-            "Variant of doordash_dashpass where all transaction history is\n"
-            "injected as a SYSTEM event right after identity verification,\n"
-            "giving the copilot full context early in the call."
+            "Copilot has access to historical transactions and merchant\n"
+            "profile via the evidence store. At turn 6, the CCP marks the\n"
+            "disputed transaction and links it to the cardmember's claim."
         ),
         case_id="case-sim-ddp2-001",
         call_id="call-sim-ddp2-001",
         cm_system_prompt=CM_SYSTEM_PROMPT,
-        # Identity verification — same as v1
-        system_event_auth=(
-            "SYSTEM: Identity verification complete. Caller confirmed as cardholder, "
-            "AMEX card ending in 0126. Account in good standing. No prior disputes."
-        ),
-        # Transaction details — same content as v1 but will be injected at turn 4
-        # (right after auth) instead of at turn 10
-        system_event_evidence=(
-            "SYSTEM: Transaction details retrieved — $96.00 DoorDash - Dash Pass, "
-            "3 days ago, card-not-present (CNP). Historical DoorDash transactions: "
-            "$27.43 (14 days ago), $34.15 (45 days ago), $18.99 (78 days ago), "
-            "$42.60 (120 days ago), $31.25 (200 days ago). All prior transactions "
-            "are regular DoorDash food delivery orders — none match the $96 Dash Pass "
-            "amount or description."
-        ),
         max_turns=14,
-        inject_evidence_early=True,
+        dispute_actions=[
+            DisputeAction(
+                trigger_turn=6,
+                transaction_node_ids=["txn-dd-disputed"],
+                claim_text="Cardmember does not recognize $96 DoorDash - Dash Pass charge.",
+            ),
+        ],
         seed_evidence_fn=_seed_evidence,
         create_case_fn=_create_case,
     )

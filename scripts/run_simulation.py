@@ -43,15 +43,23 @@ import scripts.scenario_highrisk_merchant  # noqa: E402, F401
 import scripts.scenario_scam_techvault  # noqa: E402, F401
 from agentic_fraud_servicing.config import get_settings  # noqa: E402
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator  # noqa: E402
+from agentic_fraud_servicing.gateway.tool_gateway import AuthContext  # noqa: E402
+from agentic_fraud_servicing.gateway.tools.write_tools import (  # noqa: E402
+    append_evidence_edge,
+    append_evidence_node,
+)
 from agentic_fraud_servicing.ingestion.redaction import redact_all  # noqa: E402
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event  # noqa: E402
 from agentic_fraud_servicing.investigator.orchestrator import (
     InvestigatorOrchestrator,  # noqa: E402
 )
 from agentic_fraud_servicing.models.case import CopilotSuggestion  # noqa: E402
+from agentic_fraud_servicing.models.enums import EvidenceEdgeType, EvidenceSourceType  # noqa: E402
+from agentic_fraud_servicing.models.evidence import ClaimStatement, EvidenceEdge  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
 from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
 from scripts.simulation_data import (  # noqa: E402
+    DisputeAction,
     Scenario,
     generate_ccp_turn,
     generate_cm_turn,
@@ -249,6 +257,95 @@ async def _inject_system_event(
 
 
 # ---------------------------------------------------------------------------
+# Dispute action processing
+# ---------------------------------------------------------------------------
+
+
+async def _process_dispute_action(
+    action: DisputeAction,
+    turn: int,
+    scenario: Scenario,
+    copilot: "CopilotOrchestrator",
+    conversation_history: list[tuple[str, str]],
+    gateway,
+) -> tuple[int, CopilotSuggestion]:
+    """Process a CCP dispute action: create claim node, edges, and SYSTEM event.
+
+    When a CCP identifies which transaction(s) the cardmember is disputing,
+    this function:
+    1. Creates a ClaimStatement evidence node (ALLEGATION) from the action's claim_text
+    2. Creates EvidenceEdge(s) linking the ClaimStatement to each disputed transaction
+    3. Looks up transaction details to build an informative SYSTEM event
+    4. Injects the SYSTEM event into the copilot conversation
+
+    Returns the updated turn number and the copilot suggestion produced.
+    """
+    ctx = AuthContext(agent_id="simulation", case_id=scenario.case_id, permissions={"write"})
+    now = datetime.now(timezone.utc)
+
+    # 1. Create ClaimStatement evidence node
+    claim_node_id = f"claim-sim-{uuid.uuid4().hex[:8]}"
+    append_evidence_node(
+        gateway,
+        ctx,
+        ClaimStatement(
+            node_id=claim_node_id,
+            case_id=scenario.case_id,
+            source_type=EvidenceSourceType.ALLEGATION,
+            created_at=now,
+            text=action.claim_text,
+            classification="dispute_claim",
+        ),
+    )
+
+    # 2. Create edges linking ClaimStatement -> disputed Transaction(s)
+    for i, txn_id in enumerate(action.transaction_node_ids):
+        edge_id = f"edge-dispute-{uuid.uuid4().hex[:8]}"
+        append_evidence_edge(
+            gateway,
+            ctx,
+            EvidenceEdge(
+                edge_id=edge_id,
+                case_id=scenario.case_id,
+                source_node_id=claim_node_id,
+                target_node_id=txn_id,
+                edge_type=EvidenceEdgeType.ALLEGATION,
+                created_at=now,
+            ),
+        )
+
+    # 3. Look up transaction details to build the SYSTEM event text
+    all_nodes = gateway.evidence_store.get_nodes_by_case(scenario.case_id)
+    txn_details = []
+    for txn_id in action.transaction_node_ids:
+        txn = next((n for n in all_nodes if n.get("node_id") == txn_id), None)
+        if txn:
+            amount = txn.get("amount", "?")
+            merchant = txn.get("merchant_name", "unknown")
+            date = txn.get("transaction_date", "unknown")
+            auth = txn.get("auth_method", "unknown")
+            channel = txn.get("channel", "unknown")
+            txn_details.append(f"${amount} {merchant} ({date}, {auth}, {channel})")
+
+    txn_summary = "; ".join(txn_details) if txn_details else "unknown transactions"
+    system_text = (
+        f"SYSTEM: CCP has marked the following transaction(s) as disputed: "
+        f"{txn_summary}. "
+        f"Cardmember's claim: {action.claim_text}"
+    )
+
+    print(
+        f"\n  {DIM}[DisputeAction] Created claim node {claim_node_id} "
+        f"linked to {len(action.transaction_node_ids)} transaction(s){RESET}"
+    )
+
+    # 4. Inject as a SYSTEM event into the copilot
+    return await _inject_system_event(
+        turn, system_text, scenario, copilot, conversation_history, gateway
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main simulation
 # ---------------------------------------------------------------------------
 
@@ -387,7 +484,7 @@ async def run_scenario(scenario: Scenario) -> None:
         )
 
         # Inject SYSTEM events at key points
-        if turn == 4:
+        if turn == 4 and scenario.system_event_auth:
             # Auth verification event
             turn, last_suggestion = await _inject_system_event(
                 turn,
@@ -399,7 +496,7 @@ async def run_scenario(scenario: Scenario) -> None:
             )
 
             # Evidence event — injected right after auth when early mode is on
-            if scenario.inject_evidence_early:
+            if scenario.inject_evidence_early and scenario.system_event_evidence:
                 turn, last_suggestion = await _inject_system_event(
                     turn,
                     scenario.system_event_evidence,
@@ -409,7 +506,7 @@ async def run_scenario(scenario: Scenario) -> None:
                     gateway,
                 )
 
-        if turn == 10 and not scenario.inject_evidence_early:
+        if turn == 10 and not scenario.inject_evidence_early and scenario.system_event_evidence:
             turn, last_suggestion = await _inject_system_event(
                 turn,
                 scenario.system_event_evidence,
@@ -418,6 +515,13 @@ async def run_scenario(scenario: Scenario) -> None:
                 conversation_history,
                 gateway,
             )
+
+        # Process dispute actions triggered at this turn
+        for action in scenario.dispute_actions:
+            if turn == action.trigger_turn:
+                turn, last_suggestion = await _process_dispute_action(
+                    action, turn, scenario, copilot, conversation_history, gateway
+                )
 
         # Check if we have enough turns left for a CCP response
         if turn >= scenario.max_turns:
