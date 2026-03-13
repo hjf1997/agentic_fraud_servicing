@@ -604,34 +604,130 @@ def _build_evidence_html(nodes: list[dict], edges: list[dict]) -> str:
 
 
 def _evidence_node_summary(node: dict) -> str:
-    """Extract a short summary string from an evidence node dict."""
+    """Build a full summary string from an evidence node dict.
+
+    Returns the complete text without truncation so that hover tooltips
+    and detail views show all investigation-relevant information.
+    """
     node_type = node.get("node_type", "")
+    parts: list[str] = []
+
     if node_type == "TRANSACTION":
         amt = node.get("amount", "")
         merchant = node.get("merchant_name", "")
-        return f"${amt} at {merchant}" if amt else merchant or "Transaction"
+        if amt:
+            parts.append(f"Amount: ${amt}")
+        if merchant:
+            parts.append(f"Merchant: {merchant}")
+        date = node.get("transaction_date", "")
+        if date:
+            parts.append(f"Date: {date}")
+        auth = node.get("auth_method", "")
+        if auth:
+            parts.append(f"Auth: {auth}")
+        channel = node.get("channel", "")
+        if channel:
+            parts.append(f"Channel: {channel}")
+        currency = node.get("currency", "")
+        if currency and currency != "USD":
+            parts.append(f"Currency: {currency}")
+        return "\n".join(parts) if parts else "Transaction"
+
     if node_type == "AUTH_EVENT":
-        return f"{node.get('auth_type', '')} — {node.get('result', '')}"
+        parts.append(f"Type: {node.get('auth_type', 'N/A')}")
+        parts.append(f"Result: {node.get('result', 'N/A')}")
+        ts = node.get("timestamp", "")
+        if ts:
+            parts.append(f"Time: {ts}")
+        dev = node.get("device_id", "")
+        if dev:
+            parts.append(f"Device: {dev}")
+        return "\n".join(parts)
+
     if node_type == "CLAIM_STATEMENT":
         claim_type = node.get("claim_type", "")
+        if claim_type:
+            parts.append(f"Type: {claim_type}")
         text = node.get("text", "")
-        prefix = f"[{claim_type}] " if claim_type else ""
-        full = f"{prefix}{text}"
-        return full[:100] + "..." if len(full) > 100 else full
+        if text:
+            parts.append(f"Claim: {text}")
+        entities = node.get("entities", {})
+        if entities:
+            ent_lines = [f"  {k}: {v}" for k, v in entities.items()]
+            parts.append("Entities:\n" + "\n".join(ent_lines))
+        classification = node.get("classification", "")
+        if classification and classification != claim_type:
+            parts.append(f"Classification: {classification}")
+        return "\n".join(parts) if parts else "Claim"
+
     if node_type == "INVESTIGATOR_NOTE":
         text = node.get("text", "")
-        return text[:80] + "..." if len(text) > 80 else text
+        author = node.get("author", "")
+        if author:
+            parts.append(f"Author: {author}")
+        if text:
+            parts.append(f"Note: {text}")
+        return "\n".join(parts) if parts else "Investigator Note"
+
     if node_type == "CUSTOMER":
-        return node.get("customer_id", "") or "Customer record"
+        profile = node.get("profile_hash", "")
+        if profile:
+            parts.append(f"Profile: {profile}")
+        changes = node.get("recent_changes", [])
+        if changes:
+            parts.append(f"Recent changes: {', '.join(changes)}")
+        indicators = node.get("risk_indicators", [])
+        if indicators:
+            parts.append(f"Risk indicators: {', '.join(indicators)}")
+        return "\n".join(parts) if parts else "Customer record"
+
     if node_type == "MERCHANT":
-        return node.get("merchant_id", "") or node.get("category", "") or "Merchant"
+        mid = node.get("merchant_id", "")
+        if mid:
+            parts.append(f"ID: {mid}")
+        cat = node.get("category", "")
+        if cat:
+            parts.append(f"Category: {cat}")
+        hist = node.get("dispute_history", 0)
+        if hist:
+            parts.append(f"Dispute history: {hist}")
+        return "\n".join(parts) if parts else "Merchant"
+
     if node_type == "DELIVERY_PROOF":
-        return f"{node.get('status', '')} — {node.get('tracking_id', '')}"
+        parts.append(f"Status: {node.get('status', 'N/A')}")
+        tracking = node.get("tracking_id", "")
+        if tracking:
+            parts.append(f"Tracking: {tracking}")
+        dd = node.get("delivery_date", "")
+        if dd:
+            parts.append(f"Delivered: {dd}")
+        return "\n".join(parts)
+
     if node_type == "CARD":
-        return f"Status: {node.get('status', 'N/A')}"
+        parts.append(f"Card: {node.get('card_id', 'N/A')}")
+        parts.append(f"Status: {node.get('status', 'N/A')}")
+        changes = node.get("recent_changes", [])
+        if changes:
+            parts.append(f"Recent changes: {', '.join(changes)}")
+        return "\n".join(parts)
+
     if node_type == "DEVICE":
-        return f"Enrolled: {node.get('enrolment_date', 'N/A')}"
-    return json.dumps(node, default=str)[:60]
+        did = node.get("device_id", "")
+        if did:
+            parts.append(f"Device: {did}")
+        fp = node.get("fingerprint", "")
+        if fp:
+            parts.append(f"Fingerprint: {fp}")
+        enrol = node.get("enrolment_date", "")
+        if enrol:
+            parts.append(f"Enrolled: {enrol}")
+        return "\n".join(parts) if parts else "Device"
+
+    # Fallback: show all key-value pairs
+    for k, v in node.items():
+        if k not in ("node_id", "case_id", "node_type", "source_type", "created_at"):
+            parts.append(f"{k}: {v}")
+    return "\n".join(parts) if parts else json.dumps(node, default=str)
 
 
 def _build_investigation_html(case_pack: dict | None) -> str:
