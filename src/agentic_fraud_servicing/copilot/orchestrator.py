@@ -265,13 +265,31 @@ class CopilotOrchestrator:
         return f"{len(self.transcript_history)} turns total. Recent:\n" + "\n".join(lines)
 
     def _update_missing_fields(self, text: str) -> None:
-        """Remove missing fields addressed by keywords in the transcript text."""
+        """Remove missing fields addressed by transcript keywords or extracted entities.
+
+        Two resolution strategies:
+        1. Keyword heuristic: check if known keywords appear in the transcript text.
+        2. Entity-based: if the triage agent extracted an entity whose key matches
+           a missing field name (e.g., 'merchant_name', 'amount'), resolve it.
+        """
         text_lower = text.lower()
+
+        # Collect all entity keys from accumulated claims
+        entity_keys: set[str] = set()
+        for claim in self.accumulated_claims:
+            entity_keys.update(claim.entities.keys())
+
         resolved = []
         for field_name in self.missing_fields:
+            # Strategy 1: keyword match in transcript text
             keywords = _FIELD_KEYWORDS.get(field_name, [])
             if any(kw in text_lower for kw in keywords):
                 resolved.append(field_name)
+                continue
+            # Strategy 2: entity extracted by triage matches the field name
+            if field_name in entity_keys:
+                resolved.append(field_name)
+
         for field_name in resolved:
             self.missing_fields.remove(field_name)
 
