@@ -1,5 +1,9 @@
 """Domain models and enums for fraud servicing."""
 
+from agentic_fraud_servicing.models.allegations import (
+    AllegationExtraction,
+    AllegationExtractionResult,
+)
 from agentic_fraud_servicing.models.case import (
     AuditEntry,
     Case,
@@ -9,16 +13,12 @@ from agentic_fraud_servicing.models.case import (
     TimelineEvent,
     TransactionRef,
 )
-from agentic_fraud_servicing.models.claims import (
-    ClaimExtraction,
-    ClaimExtractionResult,
-)
 from agentic_fraud_servicing.models.enums import (
     INVESTIGATION_CATEGORIES_REFERENCE,
+    AllegationDetailType,
     AllegationType,
     AuthMethod,
     CaseStatus,
-    ClaimType,
     EvidenceEdgeType,
     EvidenceNodeType,
     EvidenceSourceType,
@@ -28,9 +28,9 @@ from agentic_fraud_servicing.models.enums import (
     TransactionChannel,
 )
 from agentic_fraud_servicing.models.evidence import (
+    AllegationStatement,
     AuthEvent,
     Card,
-    ClaimStatement,
     Customer,
     DeliveryProof,
     Device,
@@ -50,10 +50,10 @@ from agentic_fraud_servicing.models.transcript import (
 
 __all__ = [
     # enums
+    "AllegationDetailType",
     "AllegationType",
     "AuthMethod",
     "CaseStatus",
-    "ClaimType",
     "EvidenceEdgeType",
     "EvidenceNodeType",
     "EvidenceSourceType",
@@ -62,17 +62,17 @@ __all__ = [
     "RiskLevel",
     "SpeakerType",
     "TransactionChannel",
-    # claims
-    "ClaimExtraction",
-    "ClaimExtractionResult",
+    # allegations
+    "AllegationExtraction",
+    "AllegationExtractionResult",
     # transcript
     "RedactionInfo",
     "TranscriptEvent",
     "TranscriptMeta",
     # evidence
+    "AllegationStatement",
     "AuthEvent",
     "Card",
-    "ClaimStatement",
     "Customer",
     "DeliveryProof",
     "Device",

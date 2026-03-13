@@ -34,7 +34,7 @@ from agentic_fraud_servicing.models.enums import (
     InvestigationCategory,
 )
 from agentic_fraud_servicing.models.evidence import (
-    ClaimStatement,
+    AllegationStatement,
     Merchant,
     Transaction,
 )
@@ -80,7 +80,7 @@ _SCAM_RESULT_WITH_CONTRADICTIONS = ScamAnalysis(
             "claim": "Card was stolen",
             "contradicting_evidence": "Chip+PIN auth at local POS",
             "severity": "high",
-            "claim_node_id": "claim-001",
+            "allegation_node_id": "allegation-001",
             "evidence_node_id": "txn-001",
         }
     ],
@@ -130,7 +130,7 @@ def seeded_gateway(sample_case, gateway_factory, tmp_path):
     """Create a gateway with seeded case and evidence nodes.
 
     Seeds: 1 Case (OPEN/FRAUD), 1 Transaction (FACT), 1 Merchant (FACT),
-    1 ClaimStatement (ALLEGATION).
+    1 AllegationStatement (ALLEGATION).
     """
     gateway = gateway_factory(tmp_path)
     ctx = AuthContext(
@@ -162,15 +162,15 @@ def seeded_gateway(sample_case, gateway_factory, tmp_path):
         merchant_id="amzn-123",
         category="retail",
     )
-    claim = ClaimStatement(
-        node_id="claim-001",
+    allegation = AllegationStatement(
+        node_id="allegation-001",
         case_id=sample_case.case_id,
         source_type=EvidenceSourceType.ALLEGATION,
         created_at=now,
         text="I did not make this purchase at Amazon.",
     )
 
-    for node in [txn, merchant, claim]:
+    for node in [txn, merchant, allegation]:
         append_evidence_node(gateway, ctx, node)
 
     return gateway
@@ -309,7 +309,7 @@ class TestEvidenceWriteback:
         edges = seeded_gateway.evidence_store.get_edges_by_case(sample_case.case_id)
         contradicts = [e for e in edges if e.get("edge_type") == "CONTRADICTS"]
         assert len(contradicts) == 1
-        assert contradicts[0]["source_node_id"] == "claim-001"
+        assert contradicts[0]["source_node_id"] == "allegation-001"
         assert contradicts[0]["target_node_id"] == "txn-001"
 
 

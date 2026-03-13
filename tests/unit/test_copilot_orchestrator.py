@@ -7,13 +7,17 @@ degradation on specialist failure, and running state accumulation.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from agentic_fraud_servicing.models.allegations import (
+    AllegationExtraction,
+    AllegationExtractionResult,
+)
+
 from agentic_fraud_servicing.copilot.orchestrator import (
     _INITIAL_MISSING_FIELDS,
     CopilotOrchestrator,
 )
 from agentic_fraud_servicing.models.case import CopilotSuggestion
-from agentic_fraud_servicing.models.claims import ClaimExtraction, ClaimExtractionResult
-from agentic_fraud_servicing.models.enums import ClaimType, SpeakerType
+from agentic_fraud_servicing.models.enums import AllegationDetailType, SpeakerType
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
 # -- Fixtures --
@@ -36,18 +40,18 @@ def _make_event(
     )
 
 
-def _mock_triage_result(claims=None):
-    """Create a mock ClaimExtractionResult with claims."""
-    if claims is None:
-        claims = [
-            ClaimExtraction(
-                claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
-                claim_description="CM says they did not make this purchase",
+def _mock_triage_result(allegations=None):
+    """Create a mock AllegationExtractionResult with allegations."""
+    if allegations is None:
+        allegations = [
+            AllegationExtraction(
+                detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
+                description="CM says they did not make this purchase",
                 entities={"merchant_name": "TechVault"},
                 confidence=0.9,
             )
         ]
-    return ClaimExtractionResult(claims=claims)
+    return AllegationExtractionResult(allegations=allegations)
 
 
 def _mock_auth_result(
@@ -143,7 +147,7 @@ class TestCopilotOrchestratorInit:
         assert orch.missing_fields == list(_INITIAL_MISSING_FIELDS)
         assert orch.evidence_collected == []
         assert orch.transcript_history == []
-        assert orch.accumulated_claims == []
+        assert orch.accumulated_allegations == []
 
     def test_stores_gateway_and_provider(self):
         """Gateway and model_provider are stored as attributes."""
@@ -268,33 +272,33 @@ class TestProcessEvent:
         assert "What was the transaction amount?" in result.suggested_questions
 
 
-class TestAccumulatedClaims:
-    """Tests for accumulated claims growing across events."""
+class TestAccumulatedAllegations:
+    """Tests for accumulated allegations growing across events."""
 
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_accumulated_claims_grow(
+    async def test_accumulated_allegations_grow(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
-        """accumulated_claims grows with each process_event call."""
-        claim1 = ClaimExtraction(
-            claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
-            claim_description="Unauthorized purchase",
+        """accumulated_allegations grows with each process_event call."""
+        allegation1 = AllegationExtraction(
+            detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
+            description="Unauthorized purchase",
             entities={"amount": "$500"},
             confidence=0.9,
         )
-        claim2 = ClaimExtraction(
-            claim_type=ClaimType.CARD_POSSESSION,
-            claim_description="Card never left wallet",
+        allegation2 = AllegationExtraction(
+            detail_type=AllegationDetailType.CARD_POSSESSION,
+            description="Card never left wallet",
             entities={},
             confidence=0.8,
         )
         mock_triage.side_effect = [
-            ClaimExtractionResult(claims=[claim1]),
-            ClaimExtractionResult(claims=[claim2]),
+            AllegationExtractionResult(allegations=[allegation1]),
+            AllegationExtractionResult(allegations=[allegation2]),
         ]
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
@@ -303,23 +307,24 @@ class TestAccumulatedClaims:
 
         orch = _make_orchestrator()
         await orch.process_event(_make_event(event_id="evt-1"))
-        assert len(orch.accumulated_claims) == 1
-        assert orch.accumulated_claims[0].claim_type == ClaimType.UNRECOGNIZED_TRANSACTION
+        assert len(orch.accumulated_allegations) == 1
+        first = orch.accumulated_allegations[0]
+        assert first.detail_type == AllegationDetailType.UNRECOGNIZED_TRANSACTION
 
         await orch.process_event(_make_event(event_id="evt-2"))
-        assert len(orch.accumulated_claims) == 2
-        assert orch.accumulated_claims[1].claim_type == ClaimType.CARD_POSSESSION
+        assert len(orch.accumulated_allegations) == 2
+        assert orch.accumulated_allegations[1].detail_type == AllegationDetailType.CARD_POSSESSION
 
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_empty_triage_does_not_add_claims(
+    async def test_empty_triage_does_not_add_allegations(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
-        """No claims added when triage returns empty list."""
-        mock_triage.return_value = ClaimExtractionResult(claims=[])
+        """No allegations added when triage returns empty list."""
+        mock_triage.return_value = AllegationExtractionResult(allegations=[])
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
@@ -327,17 +332,17 @@ class TestAccumulatedClaims:
 
         orch = _make_orchestrator()
         await orch.process_event(_make_event())
-        assert len(orch.accumulated_claims) == 0
+        assert len(orch.accumulated_allegations) == 0
 
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_running_summary_built_from_claims(
+    async def test_running_summary_built_from_allegations(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis
     ):
-        """running_summary in CopilotSuggestion reflects accumulated claims."""
+        """running_summary in CopilotSuggestion reflects accumulated allegations."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
@@ -347,7 +352,7 @@ class TestAccumulatedClaims:
         orch = _make_orchestrator()
         result = await orch.process_event(_make_event())
 
-        assert "Claims:" in result.running_summary
+        assert "Allegations:" in result.running_summary
         assert "UNRECOGNIZED_TRANSACTION" in result.running_summary
 
 
@@ -426,7 +431,7 @@ class TestHypothesisScoring:
 
         mock_hypothesis.assert_awaited_once()
         call_kwargs = mock_hypothesis.call_args.kwargs
-        assert "UNRECOGNIZED_TRANSACTION" in call_kwargs["claims_summary"]
+        assert "UNRECOGNIZED_TRANSACTION" in call_kwargs["allegations_summary"]
         assert "Impersonation risk" in call_kwargs["auth_summary"]
         assert "Transactions" in call_kwargs["evidence_summary"]
         assert "THIRD_PARTY_FRAUD" in str(call_kwargs["current_scores"])

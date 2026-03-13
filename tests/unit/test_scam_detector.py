@@ -223,8 +223,8 @@ class TestRunScamDetection:
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs["run_config"].model_provider is mock_provider
 
-    async def test_includes_claims_in_message(self, mock_provider):
-        """run_scam_detection includes ALLEGATION claims in the user message."""
+    async def test_includes_allegations_in_message(self, mock_provider):
+        """run_scam_detection includes ALLEGATION data in the user message."""
         mock_run_result = MagicMock()
         mock_run_result.final_output = ScamAnalysis()
 

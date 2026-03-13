@@ -19,10 +19,13 @@ from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult, run
 from agentic_fraud_servicing.copilot.triage_agent import run_triage
 from agentic_fraud_servicing.gateway.tool_gateway import AuthContext, ToolGateway
 from agentic_fraud_servicing.gateway.tools.write_tools import append_evidence_node
+from agentic_fraud_servicing.models.allegations import (
+    AllegationExtraction,
+    AllegationExtractionResult,
+)
 from agentic_fraud_servicing.models.case import CopilotSuggestion
-from agentic_fraud_servicing.models.claims import ClaimExtraction, ClaimExtractionResult
 from agentic_fraud_servicing.models.enums import EvidenceSourceType
-from agentic_fraud_servicing.models.evidence import ClaimStatement
+from agentic_fraud_servicing.models.evidence import AllegationStatement
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
 # Standard fields to gather during a dispute call
@@ -61,7 +64,7 @@ class CopilotOrchestrator:
         missing_fields: Fields still needed from the caller.
         evidence_collected: Evidence references gathered so far.
         transcript_history: All transcript events processed.
-        accumulated_claims: All claims extracted across turns.
+        accumulated_allegations: All allegations extracted across turns.
     """
 
     def __init__(self, gateway: ToolGateway, model_provider: ModelProvider) -> None:
@@ -79,13 +82,13 @@ class CopilotOrchestrator:
         self.missing_fields: list[str] = list(_INITIAL_MISSING_FIELDS)
         self.evidence_collected: list[str] = []
         self.transcript_history: list[TranscriptEvent] = []
-        self.accumulated_claims: list[ClaimExtraction] = []
+        self.accumulated_allegations: list[AllegationExtraction] = []
         self._retrieval_result: RetrievalResult | None = None
 
     async def process_event(self, event: TranscriptEvent) -> CopilotSuggestion:
         """Process a single transcript event and return copilot suggestions.
 
-        Runs 5-step pipeline: triage (claim extraction) → auth → question
+        Runs 5-step pipeline: triage (allegation extraction) → auth → question
         planner → retrieval → hypothesis scoring. Each specialist call is
         wrapped in try/except for graceful degradation.
 
@@ -114,15 +117,15 @@ class CopilotOrchestrator:
         auth_events = retrieval.auth_events if retrieval else []
         customer_profile = retrieval.customer_profile if retrieval else None
 
-        # 3. Run triage agent (claim extraction) with full conversation history
+        # 3. Run triage agent (allegation extraction) with full conversation history
         conversation_history = [(e.speaker.value, e.text) for e in self.transcript_history]
         triage_result = await self._run_triage_safe(event.text, risk_flags, conversation_history)
-        if triage_result is not None and triage_result.claims:
-            self.accumulated_claims.extend(triage_result.claims)
-            self._persist_claims(triage_result.claims)
+        if triage_result is not None and triage_result.allegations:
+            self.accumulated_allegations.extend(triage_result.allegations)
+            self._persist_allegations(triage_result.allegations)
 
-        # Build running summary from accumulated claims
-        running_summary = self._build_claims_summary()
+        # Build running summary from accumulated allegations
+        running_summary = self._build_allegations_summary()
 
         # 4. Run auth assessment agent
         auth_result = await self._run_auth_safe(
@@ -174,61 +177,63 @@ class CopilotOrchestrator:
 
     # -- Private helper methods --
 
-    def _persist_claims(self, claims: list[ClaimExtraction]) -> None:
-        """Persist extracted claims as ClaimStatement evidence nodes.
+    def _persist_allegations(self, allegations: list[AllegationExtraction]) -> None:
+        """Persist extracted allegations as AllegationStatement evidence nodes.
 
-        Each ClaimExtraction is written to the evidence store as a
-        ClaimStatement (source_type=ALLEGATION) so the investigator can
-        access structured claim data in the evidence graph.
+        Each AllegationExtraction is written to the evidence store as an
+        AllegationStatement (source_type=ALLEGATION) so the investigator can
+        access structured allegation data in the evidence graph.
         """
         if self.case_id is None:
             return
         ctx = AuthContext(agent_id="copilot", case_id=self.case_id, permissions={"write"})
-        for claim in claims:
-            node_id = f"claim-{uuid.uuid4().hex[:12]}"
+        for allegation in allegations:
+            node_id = f"allegation-{uuid.uuid4().hex[:12]}"
             entities_str = (
-                ", ".join(f"{k}={v}" for k, v in claim.entities.items()) if claim.entities else ""
+                ", ".join(f"{k}={v}" for k, v in allegation.entities.items())
+                if allegation.entities
+                else ""
             )
-            classification = claim.claim_type.value
-            text = claim.claim_description
+            classification = allegation.detail_type.value
+            text = allegation.description
             if entities_str:
                 text = f"{text} [{entities_str}]"
-            node = ClaimStatement(
+            node = AllegationStatement(
                 node_id=node_id,
                 case_id=self.case_id,
                 source_type=EvidenceSourceType.ALLEGATION,
                 created_at=datetime.now(tz=timezone.utc),
                 text=text,
-                claim_type=claim.claim_type,
+                detail_type=allegation.detail_type,
                 classification=classification,
-                entities=claim.entities if claim.entities else {},
+                entities=allegation.entities if allegation.entities else {},
             )
             try:
                 append_evidence_node(self.gateway, ctx, node)
             except RuntimeError:
                 pass  # Duplicate or storage error — don't block the copilot
 
-    def _build_claims_summary(self) -> str:
-        """Build a running summary string from accumulated claims."""
-        if not self.accumulated_claims:
-            return "No claims extracted yet."
+    def _build_allegations_summary(self) -> str:
+        """Build a running summary string from accumulated allegations."""
+        if not self.accumulated_allegations:
+            return "No allegations extracted yet."
         parts = []
-        for c in self.accumulated_claims:
-            parts.append(f"{c.claim_type}: {c.claim_description}")
-        return "Claims: " + "; ".join(parts) + "."
+        for a in self.accumulated_allegations:
+            parts.append(f"{a.detail_type}: {a.description}")
+        return "Allegations: " + "; ".join(parts) + "."
 
-    def _format_claims_for_hypothesis(self) -> str:
-        """Format all accumulated claims for the hypothesis agent input."""
-        if not self.accumulated_claims:
-            return "No claims extracted yet."
+    def _format_allegations_for_hypothesis(self) -> str:
+        """Format all accumulated allegations for the hypothesis agent input."""
+        if not self.accumulated_allegations:
+            return "No allegations extracted yet."
         lines = []
-        for i, c in enumerate(self.accumulated_claims, 1):
+        for i, a in enumerate(self.accumulated_allegations, 1):
             entities_str = (
-                ", ".join(f"{k}={v}" for k, v in c.entities.items()) if c.entities else "none"
+                ", ".join(f"{k}={v}" for k, v in a.entities.items()) if a.entities else "none"
             )
             lines.append(
-                f"{i}. [{c.claim_type}] {c.claim_description} "
-                f"(confidence: {c.confidence:.1f}, entities: {entities_str})"
+                f"{i}. [{a.detail_type}] {a.description} "
+                f"(confidence: {a.confidence:.1f}, entities: {entities_str})"
             )
         return "\n".join(lines)
 
@@ -274,10 +279,10 @@ class CopilotOrchestrator:
         """
         text_lower = text.lower()
 
-        # Collect all entity keys from accumulated claims
+        # Collect all entity keys from accumulated allegations
         entity_keys: set[str] = set()
-        for claim in self.accumulated_claims:
-            entity_keys.update(claim.entities.keys())
+        for allegation in self.accumulated_allegations:
+            entity_keys.update(allegation.entities.keys())
 
         resolved = []
         for field_name in self.missing_fields:
@@ -321,7 +326,7 @@ class CopilotOrchestrator:
         text: str,
         risk_flags: list[str],
         conversation_history: list[tuple[str, str]] | None = None,
-    ) -> ClaimExtractionResult | None:
+    ) -> AllegationExtractionResult | None:
         """Run triage agent with error handling."""
         try:
             return await run_triage(
@@ -378,7 +383,7 @@ class CopilotOrchestrator:
         """
         try:
             return await run_hypothesis(
-                claims_summary=self._format_claims_for_hypothesis(),
+                allegations_summary=self._format_allegations_for_hypothesis(),
                 auth_summary=self._format_auth_for_hypothesis(auth_result),
                 evidence_summary=self._format_evidence_for_hypothesis(),
                 current_scores=dict(self.hypothesis_scores),

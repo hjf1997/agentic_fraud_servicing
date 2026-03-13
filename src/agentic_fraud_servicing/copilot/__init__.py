@@ -28,7 +28,7 @@ from agentic_fraud_servicing.copilot.retrieval_agent import (
     run_retrieval,
 )
 from agentic_fraud_servicing.copilot.triage_agent import (
-    ClaimExtractionResult,
+    AllegationExtractionResult,
     run_triage,
     triage_agent,
 )
@@ -40,7 +40,7 @@ __all__ = [
     "tool_query_auth_logs",
     "tool_fetch_customer_profile",
     # triage_agent
-    "ClaimExtractionResult",
+    "AllegationExtractionResult",
     "triage_agent",
     "run_triage",
     # auth_agent

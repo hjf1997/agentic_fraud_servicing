@@ -55,11 +55,11 @@ from agentic_fraud_servicing.investigator.orchestrator import (
 )
 from agentic_fraud_servicing.models.case import CopilotSuggestion  # noqa: E402
 from agentic_fraud_servicing.models.enums import (  # noqa: E402
-    ClaimType,
+    AllegationDetailType,
     EvidenceEdgeType,
     EvidenceSourceType,
 )
-from agentic_fraud_servicing.models.evidence import ClaimStatement, EvidenceEdge  # noqa: E402
+from agentic_fraud_servicing.models.evidence import AllegationStatement, EvidenceEdge  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
 from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
 from scripts.simulation_data import (  # noqa: E402
@@ -277,8 +277,8 @@ async def _process_dispute_action(
 
     When a CCP identifies which transaction(s) the cardmember is disputing,
     this function:
-    1. Creates a ClaimStatement evidence node (ALLEGATION) from the action's claim_text
-    2. Creates EvidenceEdge(s) linking the ClaimStatement to each disputed transaction
+    1. Creates an AllegationStatement evidence node (ALLEGATION) from the action's claim_text
+    2. Creates EvidenceEdge(s) linking the AllegationStatement to each disputed transaction
     3. Looks up transaction details to build an informative SYSTEM event
     4. Injects the SYSTEM event into the copilot conversation
 
@@ -287,23 +287,23 @@ async def _process_dispute_action(
     ctx = AuthContext(agent_id="simulation", case_id=scenario.case_id, permissions={"write"})
     now = datetime.now(timezone.utc)
 
-    # 1. Create ClaimStatement evidence node
-    claim_node_id = f"claim-sim-{uuid.uuid4().hex[:8]}"
+    # 1. Create AllegationStatement evidence node
+    allegation_node_id = f"allegation-sim-{uuid.uuid4().hex[:8]}"
     append_evidence_node(
         gateway,
         ctx,
-        ClaimStatement(
-            node_id=claim_node_id,
+        AllegationStatement(
+            node_id=allegation_node_id,
             case_id=scenario.case_id,
             source_type=EvidenceSourceType.ALLEGATION,
             created_at=now,
             text=action.claim_text,
-            claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
+            detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
             classification="dispute_claim",
         ),
     )
 
-    # 2. Create edges linking ClaimStatement -> disputed Transaction(s)
+    # 2. Create edges linking AllegationStatement -> disputed Transaction(s)
     for i, txn_id in enumerate(action.transaction_node_ids):
         edge_id = f"edge-dispute-{uuid.uuid4().hex[:8]}"
         append_evidence_edge(
@@ -312,7 +312,7 @@ async def _process_dispute_action(
             EvidenceEdge(
                 edge_id=edge_id,
                 case_id=scenario.case_id,
-                source_node_id=claim_node_id,
+                source_node_id=allegation_node_id,
                 target_node_id=txn_id,
                 edge_type=EvidenceEdgeType.ALLEGATION,
                 created_at=now,
@@ -340,7 +340,7 @@ async def _process_dispute_action(
     )
 
     print(
-        f"\n  {DIM}[DisputeAction] Created claim node {claim_node_id} "
+        f"\n  {DIM}[DisputeAction] Created allegation node {allegation_node_id} "
         f"linked to {len(action.transaction_node_ids)} transaction(s){RESET}"
     )
 
@@ -563,7 +563,7 @@ async def run_scenario(scenario: Scenario) -> None:
     print(f"  Missing fields: {copilot.missing_fields}")
     print(f"  Evidence collected: {copilot.evidence_collected}")
     print(f"  Transcript events processed: {len(copilot.transcript_history)}")
-    print(f"  Claims extracted: {len(copilot.accumulated_claims)}")
+    print(f"  Allegations extracted: {len(copilot.accumulated_allegations)}")
 
     # Persist final copilot state for dashboard
     _persist_trace(
@@ -578,7 +578,7 @@ async def run_scenario(scenario: Scenario) -> None:
                 "impersonation_risk": copilot.impersonation_risk,
                 "missing_fields": copilot.missing_fields,
                 "evidence_collected": copilot.evidence_collected,
-                "claims_extracted": len(copilot.accumulated_claims),
+                "allegations_extracted": len(copilot.accumulated_allegations),
             }
         ),
     )

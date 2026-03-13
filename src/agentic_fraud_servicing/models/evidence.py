@@ -12,8 +12,8 @@ from typing import Any
 from pydantic import BaseModel
 
 from agentic_fraud_servicing.models.enums import (
+    AllegationDetailType,
     AuthMethod,
-    ClaimType,
     EvidenceEdgeType,
     EvidenceNodeType,
     EvidenceSourceType,
@@ -123,12 +123,12 @@ class RefundRecord(EvidenceNode):
     status: str
 
 
-class ClaimStatement(EvidenceNode):
-    """A claim or allegation statement from the cardholder."""
+class AllegationStatement(EvidenceNode):
+    """An allegation statement from the cardholder."""
 
-    node_type: EvidenceNodeType = EvidenceNodeType.CLAIM_STATEMENT
+    node_type: EvidenceNodeType = EvidenceNodeType.ALLEGATION_STATEMENT
     text: str
-    claim_type: ClaimType | None = None
+    detail_type: AllegationDetailType | None = None
     classification: str | None = None
     entities: dict[str, Any] = {}
 

@@ -10,6 +10,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from agentic_fraud_servicing.models.allegations import (
+    AllegationExtraction,
+    AllegationExtractionResult,
+)
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment
@@ -17,25 +21,24 @@ from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult
 from agentic_fraud_servicing.models.case import CopilotSuggestion
-from agentic_fraud_servicing.models.claims import ClaimExtraction, ClaimExtractionResult
-from agentic_fraud_servicing.models.enums import ClaimType
+from agentic_fraud_servicing.models.enums import AllegationDetailType
 from agentic_fraud_servicing.ui.helpers import load_transcript_file
 
 # Path to the sample transcript fixture
 _SAMPLE_TRANSCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "sample_transcript.json"
 
 # Canned specialist results for mocking
-_TRIAGE_RESULT = ClaimExtractionResult(
-    claims=[
-        ClaimExtraction(
-            claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
-            claim_description="CM disputes charge at AMZN Marketplace",
+_TRIAGE_RESULT = AllegationExtractionResult(
+    allegations=[
+        AllegationExtraction(
+            detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
+            description="CM disputes charge at AMZN Marketplace",
             entities={"merchant_name": "AMZN Marketplace"},
             confidence=0.85,
         ),
-        ClaimExtraction(
-            claim_type=ClaimType.MERCHANT_FRAUD,
-            claim_description="CM says TechGadgets is unknown merchant",
+        AllegationExtraction(
+            detail_type=AllegationDetailType.MERCHANT_FRAUD,
+            description="CM says TechGadgets is unknown merchant",
             entities={"merchant_name": "TechGadgets"},
             confidence=0.75,
         ),
@@ -247,19 +250,19 @@ class TestRunningStateAccumulation:
         assert set(result.hypothesis_scores.keys()) == expected_keys
 
     @pytest.mark.usefixtures("_mock_specialists")
-    async def test_accumulated_claims_grow(
+    async def test_accumulated_allegations_grow(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """Accumulated claims should grow with each processed event."""
+        """Accumulated allegations should grow with each processed event."""
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
 
         await orch.process_event(sample_transcript_events[0])
-        claims_after_first = len(orch.accumulated_claims)
-        assert claims_after_first == 2  # _TRIAGE_RESULT has 2 claims
+        allegations_after_first = len(orch.accumulated_allegations)
+        assert allegations_after_first == 2  # _TRIAGE_RESULT has 2 allegations
 
         await orch.process_event(sample_transcript_events[1])
-        assert len(orch.accumulated_claims) == claims_after_first + 2
+        assert len(orch.accumulated_allegations) == allegations_after_first + 2
 
     @pytest.mark.usefixtures("_mock_specialists")
     async def test_impersonation_risk_set_from_auth(

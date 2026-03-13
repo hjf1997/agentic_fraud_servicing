@@ -200,8 +200,8 @@ class TestRunSchemeMapping:
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs["run_config"].model_provider is mock_provider
 
-    async def test_includes_claims_in_message(self, mock_provider):
-        """run_scheme_mapping includes claims in the user message."""
+    async def test_includes_allegations_in_message(self, mock_provider):
+        """run_scheme_mapping includes allegations in the user message."""
         mock_run_result = MagicMock()
         mock_run_result.final_output = SchemeMappingResult()
 
@@ -239,8 +239,8 @@ class TestRunSchemeMapping:
         user_input = call_args.kwargs.get("input") or call_args.args[1]
         assert "scam" in user_input
 
-    async def test_handles_empty_claims(self, mock_provider):
-        """run_scheme_mapping handles empty claims list gracefully."""
+    async def test_handles_empty_allegations(self, mock_provider):
+        """run_scheme_mapping handles empty allegations list gracefully."""
         mock_run_result = MagicMock()
         mock_run_result.final_output = SchemeMappingResult()
 

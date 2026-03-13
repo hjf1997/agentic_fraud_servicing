@@ -2,10 +2,10 @@
 
 from agentic_fraud_servicing.models.enums import (
     INVESTIGATION_CATEGORIES_REFERENCE,
+    AllegationDetailType,
     AllegationType,
     AuthMethod,
     CaseStatus,
-    ClaimType,
     EvidenceEdgeType,
     EvidenceNodeType,
     EvidenceSourceType,
@@ -159,7 +159,7 @@ class TestEvidenceNodeType:
             EvidenceNodeType.MERCHANT,
             EvidenceNodeType.DELIVERY_PROOF,
             EvidenceNodeType.REFUND_RECORD,
-            EvidenceNodeType.CLAIM_STATEMENT,
+            EvidenceNodeType.ALLEGATION_STATEMENT,
             EvidenceNodeType.INVESTIGATOR_NOTE,
         }
         assert set(EvidenceNodeType) == expected
@@ -167,7 +167,7 @@ class TestEvidenceNodeType:
 
     def test_string_serialization(self):
         assert EvidenceNodeType.AUTH_EVENT == "AUTH_EVENT"
-        assert EvidenceNodeType.CLAIM_STATEMENT == "CLAIM_STATEMENT"
+        assert EvidenceNodeType.ALLEGATION_STATEMENT == "ALLEGATION_STATEMENT"
 
 
 class TestAuthMethod:
@@ -206,7 +206,7 @@ def test_all_enums_importable():
         SpeakerType,
         AllegationType,
         InvestigationCategory,
-        ClaimType,
+        AllegationDetailType,
         RiskLevel,
         CaseStatus,
         EvidenceEdgeType,

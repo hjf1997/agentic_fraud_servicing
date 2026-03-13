@@ -1,6 +1,6 @@
 """Hypothesis scoring specialist agent for 4-category investigation assessment.
 
-Receives all accumulated context (claims, auth assessment, retrieved evidence,
+Receives all accumulated context (allegations, auth assessment, retrieved evidence,
 conversation history, previous scores) and produces a holistic probability
 distribution across the 4 investigation categories via LLM reasoning. Replaces
 the formulaic weighted-average approach used previously in the orchestrator.
@@ -24,7 +24,7 @@ class HypothesisAssessment(BaseModel):
             Values between 0.0 and 1.0, summing to approximately 1.0.
         reasoning: Per-category explanation of the score assignment.
             Same 4 keys as scores.
-        contradictions: Detected contradictions between CM claims and evidence.
+        contradictions: Detected contradictions between CM allegations and evidence.
         assessment_summary: Overall assessment of the current situation.
     """
 
@@ -49,7 +49,7 @@ class HypothesisAssessment(BaseModel):
 HYPOTHESIS_INSTRUCTIONS = f"""\
 You are a hypothesis scoring specialist for AMEX card dispute investigation.
 Your job is to assess the probability of each investigation category given ALL
-accumulated evidence, claims, and conversation context.
+accumulated evidence, allegations, and conversation context.
 
 {INVESTIGATION_CATEGORIES_REFERENCE}
 
@@ -57,8 +57,8 @@ accumulated evidence, claims, and conversation context.
 
 You receive the following context each turn:
 
-1. **Accumulated Claims** — Structured claims extracted from the conversation so
-   far, each with a ClaimType (e.g., UNRECOGNIZED_TRANSACTION, CARD_POSSESSION,
+1. **Accumulated Allegations** — Structured allegations extracted from the conversation
+   so far, each with an AllegationDetailType (e.g., UNRECOGNIZED_TRANSACTION, CARD_POSSESSION,
    GOODS_NOT_RECEIVED) and extracted entities (amounts, merchants, dates).
 2. **Auth Assessment** — Impersonation risk score, risk factors, and step-up
    auth recommendations from the authentication specialist.
@@ -80,17 +80,17 @@ You receive the following context each turn:
    strong contradictory evidence emerges.
 4. **FIRST_PARTY_FRAUD is cross-cutting.** Any allegation type (FRAUD, DISPUTE,
    SCAM) can turn out to be first-party fraud. Always evaluate this category
-   regardless of what the CM claims.
+   regardless of what the CM alleges.
 
 ## Key Reasoning Patterns
 
 Apply these evidence-to-hypothesis mappings:
 
-- **Chip+PIN auth from enrolled device contradicts "unauthorized" claim** →
+- **Chip+PIN auth from enrolled device contradicts "unauthorized" allegation** →
   Strongly increase FIRST_PARTY_FRAUD. If the CM's own enrolled device was used
   with chip+PIN, the transaction was very likely authorized by the CM.
 
-- **CM claims card lost/stolen but device was enrolled and used recently** →
+- **CM alleges card lost/stolen but device was enrolled and used recently** →
   Increase FIRST_PARTY_FRAUD. A recently enrolled, actively used device
   contradicts a lost/stolen narrative.
 
@@ -111,9 +111,9 @@ Apply these evidence-to-hypothesis mappings:
   Increase DISPUTE. When there are no contradictions or fraud signals and the
   issue is about goods/services/billing, this is a merchant dispute.
 
-- **Signed delivery proof contradicts "never received" claim** →
+- **Signed delivery proof contradicts "never received" allegation** →
   Increase FIRST_PARTY_FRAUD. Verified delivery evidence directly contradicts
-  the CM's goods-not-received claim.
+  the CM's goods-not-received allegation.
 
 - **CM accidentally reveals merchant familiarity before being told** →
   Increase FIRST_PARTY_FRAUD. Knowledge of merchant details that should be
@@ -133,7 +133,7 @@ Provide your assessment as structured output with:
 - scores: dict with exactly 4 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM,
   DISPUTE), each a float between 0.0 and 1.0
 - reasoning: dict with the same 4 keys, each a brief explanation (1-3 sentences)
-- contradictions: list of detected contradictions between claims and evidence
+- contradictions: list of detected contradictions between allegations and evidence
 - assessment_summary: 2-4 sentence overall assessment
 """
 
@@ -151,7 +151,7 @@ hypothesis_agent = Agent(
 
 
 async def run_hypothesis(
-    claims_summary: str,
+    allegations_summary: str,
     auth_summary: str,
     evidence_summary: str,
     current_scores: dict[str, float],
@@ -161,7 +161,7 @@ async def run_hypothesis(
     """Run the hypothesis agent to score investigation categories.
 
     Args:
-        claims_summary: Formatted claims with types and entities.
+        allegations_summary: Formatted allegations with types and entities.
         auth_summary: Auth assessment text (impersonation risk, risk factors).
         evidence_summary: Retrieved evidence text (transactions, auth events).
         current_scores: Previous hypothesis scores (4-key dict).
@@ -178,7 +178,7 @@ async def run_hypothesis(
     scores_text = ", ".join(f"{k}: {v:.2f}" for k, v in current_scores.items())
 
     user_msg = (
-        f"## Accumulated Claims\n{claims_summary}\n\n"
+        f"## Accumulated Allegations\n{allegations_summary}\n\n"
         f"## Auth Assessment\n{auth_summary}\n\n"
         f"## Retrieved Evidence\n{evidence_summary}\n\n"
         f"## Current Hypothesis Scores\n{scores_text}\n\n"

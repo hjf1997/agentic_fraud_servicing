@@ -94,7 +94,7 @@ def _make_evidence_nodes():
         {"node_id": "n2", "node_type": "MERCHANT", "source_type": "FACT", "name": "Store A"},
         {
             "node_id": "n3",
-            "node_type": "CLAIM_STATEMENT",
+            "node_type": "ALLEGATION_STATEMENT",
             "source_type": "ALLEGATION",
             "text": "I didn't buy this",
             "entities": {},
@@ -102,27 +102,27 @@ def _make_evidence_nodes():
     ]
 
 
-def _make_evidence_nodes_with_related_claims():
-    """Create evidence nodes with 2 related claims sharing a merchant_name."""
+def _make_evidence_nodes_with_related_allegations():
+    """Create evidence nodes with 2 related allegations sharing a merchant_name."""
     return [
         {"node_id": "n1", "node_type": "TRANSACTION", "source_type": "FACT", "amount": 100.0},
         {
-            "node_id": "claim-001",
-            "node_type": "CLAIM_STATEMENT",
+            "node_id": "allegation-001",
+            "node_type": "ALLEGATION_STATEMENT",
             "source_type": "ALLEGATION",
             "text": "I didn't buy this at TechVault",
             "entities": {"merchant_name": "TechVault", "amount": 2847.99},
         },
         {
-            "node_id": "claim-002",
-            "node_type": "CLAIM_STATEMENT",
+            "node_id": "allegation-002",
+            "node_type": "ALLEGATION_STATEMENT",
             "source_type": "ALLEGATION",
             "text": "That TechVault purchase was online",
             "entities": {"merchant_name": "TechVault", "channel": "online"},
         },
         {
-            "node_id": "claim-003",
-            "node_type": "CLAIM_STATEMENT",
+            "node_id": "allegation-003",
+            "node_type": "ALLEGATION_STATEMENT",
             "source_type": "ALLEGATION",
             "text": "I also saw a charge from Amazon",
             "entities": {"merchant_name": "Amazon", "amount": 50.0},
@@ -443,7 +443,7 @@ class TestContradictionEdges:
     ):
         """CONTRADICTS edges are created when scam analysis finds contradictions."""
         contradictions = [
-            {"claim_node_id": "n3", "evidence_node_id": "n1", "severity": "high"},
+            {"allegation_node_id": "n3", "evidence_node_id": "n1", "severity": "high"},
         ]
         mock_scheme.return_value = _mock_scheme_result()
         mock_merchant.return_value = _mock_merchant_result()
@@ -520,15 +520,15 @@ class TestDerivedFromEdges:
         gateway = MagicMock()
         gateway.case_store.get_case.return_value = _make_case()
         gateway.evidence_store.get_nodes_by_case.return_value = (
-            _make_evidence_nodes_with_related_claims()
+            _make_evidence_nodes_with_related_allegations()
         )
         gateway.evidence_store.get_edges_by_case.return_value = []
 
         orch = _make_orchestrator(gateway=gateway)
         await orch.investigate("case-001")
 
-        # claim-002 -> claim-001 (both have merchant_name=TechVault)
-        # claim-003 has merchant_name=Amazon — no link to the others
+        # allegation-002 -> allegation-001 (both have merchant_name=TechVault)
+        # allegation-003 has merchant_name=Amazon — no link to the others
         edge_calls = [
             c
             for c in mock_append_edge.call_args_list
@@ -536,8 +536,8 @@ class TestDerivedFromEdges:
         ]
         assert len(edge_calls) == 1
         edge = edge_calls[0][0][2]
-        assert edge.source_node_id == "claim-002"
-        assert edge.target_node_id == "claim-001"
+        assert edge.source_node_id == "allegation-002"
+        assert edge.target_node_id == "allegation-001"
         assert edge.edge_type == EvidenceEdgeType.DERIVED_FROM
 
     @patch(_UPDATE_STATUS_PATCH)
@@ -557,26 +557,26 @@ class TestDerivedFromEdges:
         mock_append_edge,
         mock_update_status,
     ):
-        """Claims without overlapping entities don't get linked."""
+        """Allegations without overlapping entities don't get linked."""
         mock_scheme.return_value = _mock_scheme_result()
         mock_merchant.return_value = _mock_merchant_result()
         mock_scam.return_value = _mock_scam_result()
         mock_writer.return_value = _mock_case_pack()
 
-        # Two claims with different merchants — no overlap
+        # Two allegations with different merchants — no overlap
         nodes = [
             {
                 "node_id": "c1",
-                "node_type": "CLAIM_STATEMENT",
+                "node_type": "ALLEGATION_STATEMENT",
                 "source_type": "ALLEGATION",
-                "text": "Claim A",
+                "text": "Allegation A",
                 "entities": {"merchant_name": "StoreA"},
             },
             {
                 "node_id": "c2",
-                "node_type": "CLAIM_STATEMENT",
+                "node_type": "ALLEGATION_STATEMENT",
                 "source_type": "ALLEGATION",
-                "text": "Claim B",
+                "text": "Allegation B",
                 "entities": {"merchant_name": "StoreB"},
             },
         ]

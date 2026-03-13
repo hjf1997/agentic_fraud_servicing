@@ -400,7 +400,7 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
         "MERCHANT": {"background": "#F1F8E9", "border": "#33691E"},
         "DELIVERY_PROOF": {"background": "#E0F7FA", "border": "#006064"},
         "REFUND_RECORD": {"background": "#FCE4EC", "border": "#880E4F"},
-        "CLAIM_STATEMENT": {"background": "#FFF8E1", "border": "#F9A825"},
+        "ALLEGATION_STATEMENT": {"background": "#FFF8E1", "border": "#F9A825"},
         "INVESTIGATOR_NOTE": {"background": "#EFEBE9", "border": "#4E342E"},
     }
 
@@ -413,7 +413,7 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
         "MERCHANT": "dot",
         "DELIVERY_PROOF": "square",
         "REFUND_RECORD": "dot",
-        "CLAIM_STATEMENT": "triangle",
+        "ALLEGATION_STATEMENT": "triangle",
         "INVESTIGATOR_NOTE": "square",
     }
 
@@ -458,7 +458,7 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
         )
 
         # Size based on node importance
-        size = 25 if node_type in ("TRANSACTION", "CLAIM_STATEMENT", "CUSTOMER") else 18
+        size = 25 if node_type in ("TRANSACTION", "ALLEGATION_STATEMENT", "CUSTOMER") else 18
 
         net.add_node(
             node_id,
@@ -514,7 +514,7 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
       <span>&#9679; Transaction/Merchant</span>
       <span>&#9670; Auth Event</span>
       <span>&#9733; Customer</span>
-      <span>&#9650; Device/Claim</span>
+      <span>&#9650; Device/Allegation</span>
       <span>&#9632; Card/Delivery/Note</span>
       <span style="margin-left:16px;"><b>Edges:</b></span>
       <span style="color:#388E3C;">&#9644; Supports</span>
@@ -649,21 +649,21 @@ def _evidence_node_summary(node: dict) -> str:
             parts.append(f"Device: {dev}")
         return "\n".join(parts)
 
-    if node_type == "CLAIM_STATEMENT":
-        claim_type = node.get("claim_type", "")
-        if claim_type:
-            parts.append(f"Type: {claim_type}")
+    if node_type == "ALLEGATION_STATEMENT":
+        detail_type = node.get("detail_type", "")
+        if detail_type:
+            parts.append(f"Type: {detail_type}")
         text = node.get("text", "")
         if text:
-            parts.append(f"Claim: {text}")
+            parts.append(f"Allegation: {text}")
         entities = node.get("entities", {})
         if entities:
             ent_lines = [f"  {k}: {v}" for k, v in entities.items()]
             parts.append("Entities:\n" + "\n".join(ent_lines))
         classification = node.get("classification", "")
-        if classification and classification != claim_type:
+        if classification and classification != detail_type:
             parts.append(f"Classification: {classification}")
-        return "\n".join(parts) if parts else "Claim"
+        return "\n".join(parts) if parts else "Allegation"
 
     if node_type == "INVESTIGATOR_NOTE":
         text = node.get("text", "")

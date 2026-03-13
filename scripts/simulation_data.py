@@ -24,8 +24,8 @@ class DisputeAction:
     """A CCP action that marks specific transactions as disputed mid-call.
 
     When triggered at the specified turn, the simulation runner will:
-    1. Create a ClaimStatement evidence node (ALLEGATION) from claim_text
-    2. Create EvidenceEdge(s) linking the ClaimStatement to each transaction
+    1. Create a AllegationStatement evidence node (ALLEGATION) from claim_text
+    2. Create EvidenceEdge(s) linking the AllegationStatement to each transaction
     3. Inject a SYSTEM event into the copilot with the dispute linkage details
 
     This models the real-world flow where a CCP identifies which transaction(s)

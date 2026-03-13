@@ -1,19 +1,19 @@
-"""Tests for the triage specialist agent module (claim extraction)."""
+"""Tests for the triage specialist agent module (allegation extraction)."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agentic_fraud_servicing.models.allegations import (
+    AllegationExtraction,
+    AllegationExtractionResult,
+)
 
 from agentic_fraud_servicing.copilot.triage_agent import (
     TRIAGE_INSTRUCTIONS,
     run_triage,
     triage_agent,
 )
-from agentic_fraud_servicing.models.claims import (
-    ClaimExtraction,
-    ClaimExtractionResult,
-)
-from agentic_fraud_servicing.models.enums import ClaimType
+from agentic_fraud_servicing.models.enums import AllegationDetailType
 
 
 class TestTriageAgent:
@@ -24,12 +24,12 @@ class TestTriageAgent:
         assert triage_agent.name == "triage"
 
     def test_agent_output_type(self):
-        """Agent has ClaimExtractionResult as output_type."""
-        assert triage_agent.output_type.output_type is ClaimExtractionResult
+        """Agent has AllegationExtractionResult as output_type."""
+        assert triage_agent.output_type.output_type is AllegationExtractionResult
 
-    def test_instructions_contain_all_17_claim_types(self):
-        """Instructions reference all 17 ClaimType enum values."""
-        for ct in ClaimType:
+    def test_instructions_contain_all_17_allegation_detail_types(self):
+        """Instructions reference all 17 AllegationDetailType enum values."""
+        for ct in AllegationDetailType:
             assert ct.value in TRIAGE_INSTRUCTIONS, f"Missing {ct.value}"
 
     def test_instructions_contain_entity_guidance(self):
@@ -74,12 +74,12 @@ class TestRunTriage:
 
     @pytest.fixture
     def sample_result(self):
-        """Create a sample ClaimExtractionResult for mocking."""
-        return ClaimExtractionResult(
-            claims=[
-                ClaimExtraction(
-                    claim_type=ClaimType.UNRECOGNIZED_TRANSACTION,
-                    claim_description="CM says they did not make a $499 charge",
+        """Create a sample AllegationExtractionResult for mocking."""
+        return AllegationExtractionResult(
+            allegations=[
+                AllegationExtraction(
+                    detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
+                    description="CM says they did not make a $499 charge",
                     entities={"amount": 499.0, "merchant_name": "Electronics Store"},
                     confidence=0.9,
                     context="I didn't make this purchase at Electronics Store",
@@ -87,8 +87,8 @@ class TestRunTriage:
             ]
         )
 
-    async def test_returns_claim_extraction_result(self, mock_provider, sample_result):
-        """run_triage returns ClaimExtractionResult from Runner.run."""
+    async def test_returns_allegation_extraction_result(self, mock_provider, sample_result):
+        """run_triage returns AllegationExtractionResult from Runner.run."""
         mock_run_result = MagicMock()
         mock_run_result.final_output = sample_result
 
@@ -99,14 +99,14 @@ class TestRunTriage:
         ):
             result = await run_triage("I didn't make this purchase", mock_provider)
 
-        assert isinstance(result, ClaimExtractionResult)
-        assert len(result.claims) == 1
-        assert result.claims[0].claim_type == ClaimType.UNRECOGNIZED_TRANSACTION
+        assert isinstance(result, AllegationExtractionResult)
+        assert len(result.allegations) == 1
+        assert result.allegations[0].detail_type == AllegationDetailType.UNRECOGNIZED_TRANSACTION
 
     async def test_passes_model_provider(self, mock_provider):
         """run_triage passes model_provider in RunConfig."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = ClaimExtractionResult()
+        mock_run_result.final_output = AllegationExtractionResult()
 
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
@@ -121,7 +121,7 @@ class TestRunTriage:
     async def test_conversation_history_included(self, mock_provider):
         """run_triage builds message from conversation_history when provided."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = ClaimExtractionResult()
+        mock_run_result.final_output = AllegationExtractionResult()
 
         history = [
             ("CCP", "How can I help you today?"),
@@ -148,7 +148,7 @@ class TestRunTriage:
     async def test_falls_back_to_transcript_text(self, mock_provider):
         """run_triage uses transcript_text when no conversation_history."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = ClaimExtractionResult()
+        mock_run_result.final_output = AllegationExtractionResult()
 
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",

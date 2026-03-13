@@ -9,7 +9,7 @@ from agentic_fraud_servicing.models.enums import (
     EvidenceSourceType,
 )
 from agentic_fraud_servicing.models.evidence import (
-    ClaimStatement,
+    AllegationStatement,
     EvidenceEdge,
     Transaction,
 )
@@ -34,12 +34,12 @@ def _make_transaction(
     )
 
 
-def _make_claim(
+def _make_allegation(
     node_id: str = "NODE-CLM-001",
     case_id: str = "CASE-001",
-) -> ClaimStatement:
-    """Helper to build a minimal ClaimStatement node for testing."""
-    return ClaimStatement(
+) -> AllegationStatement:
+    """Helper to build a minimal AllegationStatement node for testing."""
+    return AllegationStatement(
         node_id=node_id,
         case_id=case_id,
         source_type=EvidenceSourceType.ALLEGATION,
@@ -124,19 +124,19 @@ class TestAddAndGetNodes:
         """Different node types should be stored and retrieved correctly."""
         store = EvidenceStore(str(tmp_path / "test.db"))
         txn = _make_transaction()
-        claim = _make_claim()
+        claim = _make_allegation()
         store.add_node(txn)
         store.add_node(claim)
 
         nodes = store.get_nodes_by_case("CASE-001")
         assert len(nodes) == 2
         node_types = {n["node_type"] for n in nodes}
-        assert node_types == {"TRANSACTION", "CLAIM_STATEMENT"}
+        assert node_types == {"TRANSACTION", "ALLEGATION_STATEMENT"}
 
         # Verify type-specific fields are preserved
         txn_node = next(n for n in nodes if n["node_type"] == "TRANSACTION")
         assert txn_node["amount"] == 99.99
-        claim_node = next(n for n in nodes if n["node_type"] == "CLAIM_STATEMENT")
+        claim_node = next(n for n in nodes if n["node_type"] == "ALLEGATION_STATEMENT")
         assert claim_node["text"] == "I did not make this purchase."
         store.close()
 
@@ -184,7 +184,7 @@ class TestGetConnectedNodes:
         """Should find nodes connected via both source and target edges."""
         store = EvidenceStore(str(tmp_path / "test.db"))
         txn = _make_transaction("NODE-A")
-        claim = _make_claim("NODE-B")
+        claim = _make_allegation("NODE-B")
         txn2 = _make_transaction("NODE-C")
         store.add_node(txn)
         store.add_node(claim)

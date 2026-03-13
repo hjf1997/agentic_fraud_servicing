@@ -172,7 +172,7 @@ class EvidenceNodeType(str, Enum):
     MERCHANT = "MERCHANT"
     DELIVERY_PROOF = "DELIVERY_PROOF"
     REFUND_RECORD = "REFUND_RECORD"
-    CLAIM_STATEMENT = "CLAIM_STATEMENT"
+    ALLEGATION_STATEMENT = "ALLEGATION_STATEMENT"
     INVESTIGATOR_NOTE = "INVESTIGATOR_NOTE"
 
 
@@ -196,8 +196,8 @@ class TransactionChannel(str, Enum):
     MAIL = "MAIL"
 
 
-class ClaimType(str, Enum):
-    """Tier 1 claim types for granular claim extraction.
+class AllegationDetailType(str, Enum):
+    """Tier 1 allegation detail types for granular extraction.
 
     9 fraud types + 8 dispute types covering 100% of fraud calls
     and 95% of dispute calls.

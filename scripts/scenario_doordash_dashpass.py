@@ -26,7 +26,7 @@ from agentic_fraud_servicing.models.enums import (
     TransactionChannel,
 )
 from agentic_fraud_servicing.models.evidence import (
-    ClaimStatement,
+    AllegationStatement,
     EvidenceEdge,
     Merchant,
     Transaction,
@@ -100,12 +100,12 @@ def _seed_evidence(gateway: ToolGateway, case_id: str) -> None:
         ),
     )
 
-    # -- Claim statement (ALLEGATION) --
+    # -- Allegation statement (ALLEGATION) --
     append_evidence_node(
         gateway,
         ctx,
-        ClaimStatement(
-            node_id="claim-dd-001",
+        AllegationStatement(
+            node_id="allegation-dd-001",
             case_id=case_id,
             source_type=EvidenceSourceType.ALLEGATION,
             created_at=_NOW,
@@ -114,14 +114,14 @@ def _seed_evidence(gateway: ToolGateway, case_id: str) -> None:
         ),
     )
 
-    # -- Edge: claim relates to the disputed transaction --
+    # -- Edge: allegation relates to the disputed transaction --
     append_evidence_edge(
         gateway,
         ctx,
         EvidenceEdge(
             edge_id="edge-dd-001",
             case_id=case_id,
-            source_node_id="claim-dd-001",
+            source_node_id="allegation-dd-001",
             target_node_id="txn-dd-disputed",
             edge_type=EvidenceEdgeType.ALLEGATION,
             created_at=_NOW,

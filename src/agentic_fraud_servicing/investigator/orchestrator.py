@@ -105,7 +105,7 @@ class InvestigatorOrchestrator:
         )
 
         # Separate nodes by source_type and node_type
-        claims = [n for n in nodes if n.get("source_type") == "ALLEGATION"]
+        allegation_nodes = [n for n in nodes if n.get("source_type") == "ALLEGATION"]
         facts = [n for n in nodes if n.get("source_type") == "FACT"]
         merchant_nodes = [n for n in nodes if n.get("node_type") == "MERCHANT"]
         transaction_nodes = [n for n in nodes if n.get("node_type") == "TRANSACTION"]
@@ -113,8 +113,8 @@ class InvestigatorOrchestrator:
         # Build structural edges between FACT nodes
         self._build_supports_edges(ctx, case_id, nodes)
 
-        # Link related claims with DERIVED_FROM edges
-        self._link_related_claims(ctx, case_id, nodes)
+        # Link related allegations with DERIVED_FROM edges
+        self._link_related_allegations(ctx, case_id, nodes)
 
         # 2. Build case summary text
         allegation = case.allegation_type.value if case.allegation_type else "unknown"
@@ -122,18 +122,18 @@ class InvestigatorOrchestrator:
             f"Case {case_id}: {allegation} allegation. "
             f"Customer {case.customer_id}, Account {case.account_id}. "
             f"Evidence: {len(nodes)} nodes, {len(edges)} edges. "
-            f"Claims: {len(claims)}, Facts: {len(facts)}."
+            f"Allegations: {len(allegation_nodes)}, Facts: {len(facts)}."
         )
 
-        # Extract claim texts for specialists
-        claim_texts = [c.get("text", "") for c in claims if c.get("text")]
+        # Extract allegation texts for specialists
+        allegation_texts = [a.get("text", "") for a in allegation_nodes if a.get("text")]
         evidence_summary = json.dumps(facts[:10], indent=2, default=str)
 
         # 3. Run scheme mapper
         scheme_result = await self._run_scheme_mapping_safe(
             case_summary,
             allegation,
-            claim_texts,
+            allegation_texts,
             evidence_summary,
             errors,
         )
@@ -150,7 +150,7 @@ class InvestigatorOrchestrator:
         if case.timeline:
             transcript_summary = "; ".join(e.description for e in case.timeline[:20])
         scam_result = await self._run_scam_detection_safe(
-            claims,
+            allegation_nodes,
             facts,
             transcript_summary,
             errors,
@@ -185,7 +185,7 @@ class InvestigatorOrchestrator:
         # Add CONTRADICTS edges if scam analysis found contradictions with real node IDs
         if scam_result and scam_result.contradictions:
             for contradiction in scam_result.contradictions:
-                source_id = contradiction.get("claim_node_id", "")
+                source_id = contradiction.get("allegation_node_id", "")
                 target_id = contradiction.get("evidence_node_id", "")
                 if source_id and target_id:
                     edge = EvidenceEdge(
@@ -212,7 +212,7 @@ class InvestigatorOrchestrator:
         self,
         case_summary: str,
         allegation_type: str,
-        claims: list[str],
+        allegation_texts: list[str],
         evidence_summary: str,
         errors: list[str],
     ) -> SchemeMappingResult | None:
@@ -221,7 +221,7 @@ class InvestigatorOrchestrator:
             return await run_scheme_mapping(
                 case_summary=case_summary,
                 allegation_type=allegation_type,
-                claims=claims,
+                allegations=allegation_texts,
                 evidence_summary=evidence_summary,
                 model_provider=self.model_provider,
             )
@@ -248,7 +248,7 @@ class InvestigatorOrchestrator:
 
     async def _run_scam_detection_safe(
         self,
-        claims: list[dict],
+        allegation_nodes: list[dict],
         facts: list[dict],
         transcript_summary: str,
         errors: list[str],
@@ -256,7 +256,7 @@ class InvestigatorOrchestrator:
         """Run scam detection with error handling."""
         try:
             return await run_scam_detection(
-                claims=claims,
+                allegations=allegation_nodes,
                 facts=facts,
                 transcript_summary=transcript_summary,
                 model_provider=self.model_provider,
@@ -358,29 +358,29 @@ class InvestigatorOrchestrator:
                 for t in transactions:
                     _add_supports(dp.get("node_id", ""), t.get("node_id", ""))
 
-    def _link_related_claims(
+    def _link_related_allegations(
         self,
         ctx: AuthContext,
         case_id: str,
         nodes: list[dict],
     ) -> None:
-        """Create DERIVED_FROM edges between related claims.
+        """Create DERIVED_FROM edges between related allegation statements.
 
-        Two CLAIM_STATEMENT nodes are related if they share at least one
+        Two ALLEGATION_STATEMENT nodes are related if they share at least one
         entity key with the same value (case-insensitive for strings, exact
-        for numbers). Later claims link back to earlier ones via DERIVED_FROM.
+        for numbers). Later allegations link back to earlier ones via DERIVED_FROM.
         """
-        claim_nodes = [
-            n for n in nodes if n.get("node_type") == "CLAIM_STATEMENT" and n.get("entities")
+        allegation_stmt_nodes = [
+            n for n in nodes if n.get("node_type") == "ALLEGATION_STATEMENT" and n.get("entities")
         ]
-        if len(claim_nodes) < 2:
+        if len(allegation_stmt_nodes) < 2:
             return
 
         # Track which (source, target) pairs we've already linked
         linked: set[tuple[str, str]] = set()
 
-        for i, later in enumerate(claim_nodes):
-            for earlier in claim_nodes[:i]:
+        for i, later in enumerate(allegation_stmt_nodes):
+            for earlier in allegation_stmt_nodes[:i]:
                 later_id = later.get("node_id", "")
                 earlier_id = earlier.get("node_id", "")
                 if not later_id or not earlier_id:

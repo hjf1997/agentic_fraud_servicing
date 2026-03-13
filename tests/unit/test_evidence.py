@@ -13,9 +13,9 @@ from agentic_fraud_servicing.models.enums import (
     TransactionChannel,
 )
 from agentic_fraud_servicing.models.evidence import (
+    AllegationStatement,
     AuthEvent,
     Card,
-    ClaimStatement,
     Customer,
     DeliveryProof,
     Device,
@@ -186,15 +186,15 @@ class TestRefundRecord:
         assert rr.amount == 50.0
 
 
-class TestClaimStatement:
+class TestAllegationStatement:
     def test_creation(self) -> None:
-        cs = ClaimStatement(**BASE_KWARGS, text="I did not make this purchase")
-        assert cs.node_type == EvidenceNodeType.CLAIM_STATEMENT
+        cs = AllegationStatement(**BASE_KWARGS, text="I did not make this purchase")
+        assert cs.node_type == EvidenceNodeType.ALLEGATION_STATEMENT
         assert cs.classification is None
         assert cs.entities == {}
 
     def test_allegation_source(self) -> None:
-        cs = ClaimStatement(
+        cs = AllegationStatement(
             node_id="n-001",
             case_id="case-001",
             source_type=EvidenceSourceType.ALLEGATION,
@@ -205,7 +205,7 @@ class TestClaimStatement:
         assert cs.source_type == EvidenceSourceType.ALLEGATION
 
     def test_with_entities(self) -> None:
-        cs = ClaimStatement(
+        cs = AllegationStatement(
             **BASE_KWARGS,
             text="Unauthorized charge at TechVault",
             entities={"merchant_name": "TechVault", "amount": 2847.99},
@@ -214,7 +214,7 @@ class TestClaimStatement:
         assert cs.entities["amount"] == 2847.99
 
     def test_entities_round_trip(self) -> None:
-        cs = ClaimStatement(
+        cs = AllegationStatement(
             node_id="n-002",
             case_id="case-001",
             source_type=EvidenceSourceType.ALLEGATION,
@@ -223,7 +223,7 @@ class TestClaimStatement:
             entities={"merchant_name": "AMZN", "amount": 500.0, "channel": "online"},
         )
         data = cs.model_dump()
-        restored = ClaimStatement(**data)
+        restored = AllegationStatement(**data)
         assert restored.entities == cs.entities
         assert restored == cs
 
@@ -290,8 +290,8 @@ class TestRoundTrip:
         restored = Transaction(**data)
         assert restored == txn
 
-    def test_claim_statement_model_dump_roundtrip(self) -> None:
-        cs = ClaimStatement(
+    def test_allegation_statement_model_dump_roundtrip(self) -> None:
+        cs = AllegationStatement(
             node_id="n-002",
             case_id="case-001",
             source_type=EvidenceSourceType.ALLEGATION,
@@ -301,7 +301,7 @@ class TestRoundTrip:
             entities={"amount": 150.0, "merchant_name": "Store X"},
         )
         data = cs.model_dump()
-        restored = ClaimStatement(**data)
+        restored = AllegationStatement(**data)
         assert restored == cs
         assert restored.entities == {"amount": 150.0, "merchant_name": "Store X"}
 

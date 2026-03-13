@@ -209,7 +209,7 @@ class TestRunHypothesis:
             return_value=mock_run_result,
         ):
             result = await run_hypothesis(
-                claims_summary="UNRECOGNIZED_TRANSACTION: CM says didn't make $499 charge",
+                allegations_summary="UNRECOGNIZED_TRANSACTION: CM says didn't make $499 charge",
                 auth_summary="Impersonation risk: 0.2, no step-up needed",
                 evidence_summary="Chip+PIN auth from enrolled device",
                 current_scores=default_scores,
@@ -231,7 +231,7 @@ class TestRunHypothesis:
             return_value=mock_run_result,
         ) as mock_run:
             await run_hypothesis(
-                claims_summary="test claims",
+                allegations_summary="test claims",
                 auth_summary="test auth",
                 evidence_summary="test evidence",
                 current_scores=default_scores,
@@ -242,8 +242,8 @@ class TestRunHypothesis:
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs["run_config"].model_provider is mock_provider
 
-    async def test_includes_claims_in_message(self, mock_provider, default_scores):
-        """run_hypothesis includes claims_summary in the user message."""
+    async def test_includes_allegations_in_message(self, mock_provider, default_scores):
+        """run_hypothesis includes allegations_summary in the user message."""
         mock_run_result = MagicMock()
         mock_run_result.final_output = HypothesisAssessment()
 
@@ -253,7 +253,7 @@ class TestRunHypothesis:
             return_value=mock_run_result,
         ) as mock_run:
             await run_hypothesis(
-                claims_summary="UNRECOGNIZED_TRANSACTION: unauthorized $2847 at TechVault",
+                allegations_summary="UNRECOGNIZED_TRANSACTION: unauthorized $2847 at TechVault",
                 auth_summary="low risk",
                 evidence_summary="chip+PIN",
                 current_scores=default_scores,
@@ -264,7 +264,7 @@ class TestRunHypothesis:
         call_args = mock_run.call_args
         user_input = call_args.kwargs.get("input") or call_args.args[1]
         assert "UNRECOGNIZED_TRANSACTION: unauthorized $2847 at TechVault" in user_input
-        assert "Accumulated Claims" in user_input
+        assert "Accumulated Allegations" in user_input
 
     async def test_includes_evidence_in_message(self, mock_provider, default_scores):
         """run_hypothesis includes evidence_summary in the user message."""
@@ -277,7 +277,7 @@ class TestRunHypothesis:
             return_value=mock_run_result,
         ) as mock_run:
             await run_hypothesis(
-                claims_summary="claims",
+                allegations_summary="claims",
                 auth_summary="auth",
                 evidence_summary="Chip+PIN auth from enrolled device ID dev-123",
                 current_scores=default_scores,
@@ -308,7 +308,7 @@ class TestRunHypothesis:
             return_value=mock_run_result,
         ) as mock_run:
             await run_hypothesis(
-                claims_summary="claims",
+                allegations_summary="claims",
                 auth_summary="auth",
                 evidence_summary="evidence",
                 current_scores=scores,
@@ -330,7 +330,7 @@ class TestRunHypothesis:
         ):
             with pytest.raises(RuntimeError, match="Hypothesis agent failed"):
                 await run_hypothesis(
-                    claims_summary="claims",
+                    allegations_summary="claims",
                     auth_summary="auth",
                     evidence_summary="evidence",
                     current_scores=default_scores,

@@ -143,7 +143,7 @@ scheme_mapper_agent = Agent(
 async def run_scheme_mapping(
     case_summary: str,
     allegation_type: str,
-    claims: list[str],
+    allegations: list[str],
     evidence_summary: str,
     model_provider: ModelProvider,
 ) -> SchemeMappingResult:
@@ -152,7 +152,7 @@ async def run_scheme_mapping(
     Args:
         case_summary: Summary of the case and its context.
         allegation_type: The classified allegation type (fraud/dispute/scam).
-        claims: Specific claim statements extracted from the transcript.
+        allegations: Specific allegation statements extracted from the transcript.
         evidence_summary: Summary of available evidence (transactions, auth events, etc.).
         model_provider: LLM model provider for inference.
 
@@ -163,11 +163,11 @@ async def run_scheme_mapping(
         RuntimeError: If the agent SDK call fails.
     """
     # Build user message combining all case context
-    claims_text = "\n".join(f"  - {claim}" for claim in claims) if claims else "  (none)"
+    allegations_text = "\n".join(f"  - {a}" for a in allegations) if allegations else "  (none)"
     user_msg = (
         f"Case Summary:\n{case_summary}\n\n"
         f"Allegation Type: {allegation_type}\n\n"
-        f"Specific Claims:\n{claims_text}\n\n"
+        f"Specific Allegations:\n{allegations_text}\n\n"
         f"Available Evidence:\n{evidence_summary}"
     )
 
