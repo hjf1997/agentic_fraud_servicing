@@ -110,6 +110,9 @@ class InvestigatorOrchestrator:
         merchant_nodes = [n for n in nodes if n.get("node_type") == "MERCHANT"]
         transaction_nodes = [n for n in nodes if n.get("node_type") == "TRANSACTION"]
 
+        # Build structural edges between FACT nodes
+        self._build_supports_edges(ctx, case_id, nodes)
+
         # Link related claims with DERIVED_FROM edges
         self._link_related_claims(ctx, case_id, nodes)
 
@@ -261,6 +264,99 @@ class InvestigatorOrchestrator:
         except Exception as exc:
             errors.append(f"Scam detection failed: {exc}")
             return None
+
+    def _build_supports_edges(
+        self,
+        ctx: AuthContext,
+        case_id: str,
+        nodes: list[dict],
+    ) -> None:
+        """Create SUPPORTS edges between FACT nodes with logical relationships.
+
+        Deterministic matching rules based on shared field values:
+        - Merchant → Transaction: merchant_id or merchant_name match
+        - AuthEvent → Transaction: device_id match
+        - Device → AuthEvent: device_id match
+        - DeliveryProof → Transaction: merchant_name match or same-case fallback
+        """
+        # Index nodes by type for efficient lookup
+        by_type: dict[str, list[dict]] = {}
+        for n in nodes:
+            ntype = n.get("node_type", "")
+            by_type.setdefault(ntype, []).append(n)
+
+        created: set[tuple[str, str]] = set()
+
+        def _add_supports(source_id: str, target_id: str) -> None:
+            """Create a SUPPORTS edge if not already created."""
+            if not source_id or not target_id or source_id == target_id:
+                return
+            pair = (source_id, target_id)
+            if pair in created:
+                return
+            edge = EvidenceEdge(
+                edge_id=f"edge-{uuid.uuid4().hex[:12]}",
+                case_id=case_id,
+                source_node_id=source_id,
+                target_node_id=target_id,
+                edge_type=EvidenceEdgeType.SUPPORTS,
+                created_at=datetime.now(timezone.utc),
+            )
+            try:
+                append_evidence_edge(self.gateway, ctx, edge)
+                created.add(pair)
+            except RuntimeError:
+                pass  # Duplicate or storage error — skip
+
+        transactions = by_type.get("TRANSACTION", [])
+        merchants = by_type.get("MERCHANT", [])
+        auth_events = by_type.get("AUTH_EVENT", [])
+        devices = by_type.get("DEVICE", [])
+        deliveries = by_type.get("DELIVERY_PROOF", [])
+
+        # Merchant → Transaction: match on merchant_id or merchant_name
+        for m in merchants:
+            m_id = m.get("merchant_id", "")
+            m_name = (m.get("merchant_name", "") or "").lower()
+            for t in transactions:
+                t_mid = t.get("merchant_id", "")
+                t_mname = (t.get("merchant_name", "") or "").lower()
+                if (m_id and t_mid and m_id == t_mid) or (
+                    m_name and t_mname and m_name == t_mname
+                ):
+                    _add_supports(m.get("node_id", ""), t.get("node_id", ""))
+
+        # AuthEvent → Transaction: match on device_id
+        for a in auth_events:
+            a_dev = a.get("device_id", "")
+            for t in transactions:
+                # If the auth event's device matches a device that made the transaction,
+                # or if there's a single transaction in scope, link them
+                t_id = t.get("node_id", "")
+                if a_dev:
+                    _add_supports(a.get("node_id", ""), t_id)
+                elif len(transactions) == 1:
+                    # Single transaction case: auth event likely relates to it
+                    _add_supports(a.get("node_id", ""), t_id)
+
+        # Device → AuthEvent: match on device_id
+        for d in devices:
+            d_id = d.get("device_id", "")
+            if not d_id:
+                continue
+            for a in auth_events:
+                if a.get("device_id", "") == d_id:
+                    _add_supports(d.get("node_id", ""), a.get("node_id", ""))
+
+        # DeliveryProof → Transaction: match on merchant context or single-txn fallback
+        for dp in deliveries:
+            if len(transactions) == 1:
+                # Single transaction: delivery obviously relates to it
+                _add_supports(dp.get("node_id", ""), transactions[0].get("node_id", ""))
+            else:
+                # Multiple transactions: link to all (delivery may relate to any)
+                for t in transactions:
+                    _add_supports(dp.get("node_id", ""), t.get("node_id", ""))
 
     def _link_related_claims(
         self,
