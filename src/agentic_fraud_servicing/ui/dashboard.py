@@ -9,6 +9,7 @@ Entry point: ``python -m agentic_fraud_servicing.ui.dashboard``
 import json
 import os
 import tempfile
+import textwrap
 
 import gradio as gr
 import matplotlib
@@ -449,17 +450,11 @@ def _build_evidence_graph_interactive(nodes: list[dict], edges: list[dict]) -> s
         if len(short_id) > 18:
             short_id = short_id[:15] + "..."
 
-        # Tooltip with full details as HTML (rendered inside iframe so JS executes).
-        # Wrap in a div with max-width so long claim text wraps across lines.
-        summary_html = summary.replace("\n", "<br/>")
+        # Tooltip as plain text (vis.js tooltips don't render HTML).
+        # Wrap long lines at 60 chars so they display as multiple lines.
+        wrapped_summary = "\n".join(textwrap.fill(line, width=60) for line in summary.split("\n"))
         tooltip = (
-            f'<div style="max-width:420px; white-space:normal; word-wrap:break-word;">'
-            f"<b>{node_type}</b><br/>"
-            f"ID: {node_id}<br/>"
-            f"Source: {source_type}<br/>"
-            f"<hr style='margin:4px 0; border:0; border-top:1px solid #ccc;'/>"
-            f"{summary_html}"
-            f"</div>"
+            f"{node_type}\nID: {node_id}\nSource: {source_type}\n{'─' * 40}\n{wrapped_summary}"
         )
 
         # Size based on node importance
