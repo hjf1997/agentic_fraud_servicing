@@ -156,6 +156,9 @@ B
 
 - CLI via `ui/cli.py` using `argparse` — supports simulating call transcripts and triggering investigation
 - Gradio app via `ui/gradio_app.py` — streaming web demo
+- Gradio dashboard via `ui/dashboard.py` — read-only simulation results viewer
+- Static HTML report exporter via `scripts/export_report.py` — self-contained offline reports
+- **Any UI changes must update both the Gradio dashboard (`ui/dashboard.py`) and the static report exporter (`scripts/export_report.py`)** — the report reuses dashboard HTML builders, so changes to section layout, styling, or data display must be reflected in both
 - Both UIs call the same orchestrator interfaces — no business logic in UI layer
 - CLI output is structured (JSON or formatted text) — never raw debug prints in production paths
 
