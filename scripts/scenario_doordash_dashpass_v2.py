@@ -164,7 +164,7 @@ def build_scenario() -> Scenario:
         case_id="case-sim-ddp2-001",
         call_id="call-sim-ddp2-001",
         cm_system_prompt=CM_SYSTEM_PROMPT,
-        max_turns=14,
+        max_turns=30,
         dispute_actions=[
             DisputeAction(
                 trigger_turn=6,

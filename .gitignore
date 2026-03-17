@@ -8,6 +8,8 @@ build/
 dist/
 *.egg-info/
 *.egg
+.gradio
+.CLAUDE.md
 
 # Virtual environments
 venv/

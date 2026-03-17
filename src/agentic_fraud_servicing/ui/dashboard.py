@@ -1038,7 +1038,7 @@ def create_dashboard_app() -> gr.Blocks:
 def main() -> None:
     """Launch the dashboard."""
     app = create_dashboard_app()
-    app.launch()
+    app.launch(share=True)
 
 
 if __name__ == "__main__":
