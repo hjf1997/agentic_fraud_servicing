@@ -339,6 +339,123 @@ class TestRunningStateAccumulation:
         assert orch.impersonation_risk == pytest.approx(0.15)
 
 
+class TestPipelineOptimizations:
+    """Verify pipeline optimizations from L1-16 work end-to-end."""
+
+    async def test_system_event_fewer_agent_calls(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """SYSTEM events should skip triage, auth, and hypothesis agents."""
+        with (
+            patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
+            patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
+            patch(_PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN),
+            patch(_PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT),
+            patch(
+                _PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
+            ) as m_hypo,
+            patch(_PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY),
+        ):
+            gateway = gateway_factory(tmp_path)
+            orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+            # Process SYSTEM event (index 2)
+            await orch.process_event(sample_transcript_events[2])
+
+            # SYSTEM events skip triage, auth, and hypothesis
+            m_triage.assert_not_awaited()
+            m_auth.assert_not_awaited()
+            m_hypo.assert_not_awaited()
+
+    async def test_multiple_events_retrieval_cached(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """Retrieval should only be called once across multiple events (cached)."""
+        with (
+            patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT),
+            patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT),
+            patch(_PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN),
+            patch(
+                _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
+            ) as m_retrieval,
+            patch(_PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT),
+            patch(_PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY),
+        ):
+            gateway = gateway_factory(tmp_path)
+            orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+            # Process 3 events
+            for event in sample_transcript_events[:3]:
+                await orch.process_event(event)
+
+            # Retrieval should be called exactly once (cached after first call)
+            m_retrieval.assert_awaited_once()
+
+    async def test_cardmember_full_pipeline(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """CARDMEMBER events should invoke all 6 agents."""
+        with (
+            patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
+            patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
+            patch(
+                _PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN
+            ) as m_question,
+            patch(
+                _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
+            ) as m_retrieval,
+            patch(
+                _PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
+            ) as m_hypo,
+            patch(
+                _PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY
+            ) as m_advisor,
+        ):
+            gateway = gateway_factory(tmp_path)
+            orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+            # Process CARDMEMBER event (index 1) — full pipeline
+            await orch.process_event(sample_transcript_events[1])
+
+            # All 6 agents should be called
+            m_triage.assert_awaited_once()
+            m_auth.assert_awaited_once()
+            m_retrieval.assert_awaited_once()
+            m_hypo.assert_awaited_once()
+            m_advisor.assert_awaited_once()
+            m_question.assert_awaited_once()
+
+    @pytest.mark.usefixtures("_mock_specialists")
+    async def test_output_format_unchanged(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """CopilotSuggestion must have all expected fields with correct types."""
+        gateway = gateway_factory(tmp_path)
+        orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+        result = await orch.process_event(sample_transcript_events[1])
+
+        # Verify all expected fields exist with correct types
+        assert isinstance(result, CopilotSuggestion)
+        assert isinstance(result.call_id, str) and result.call_id != ""
+        assert isinstance(result.timestamp_ms, int)
+        assert isinstance(result.suggested_questions, list)
+        assert isinstance(result.risk_flags, list)
+        assert isinstance(result.retrieved_facts, list)
+        assert isinstance(result.running_summary, str)
+        assert isinstance(result.safety_guidance, str)
+        assert isinstance(result.hypothesis_scores, dict)
+        assert isinstance(result.impersonation_risk, float)
+        assert isinstance(result.case_eligibility, list)
+        assert isinstance(result.case_advisory_summary, str)
+
+        # Verify hypothesis_scores has all 4 keys
+        expected_keys = {"THIRD_PARTY_FRAUD", "FIRST_PARTY_FRAUD", "SCAM", "DISPUTE"}
+        assert set(result.hypothesis_scores.keys()) == expected_keys
+        for v in result.hypothesis_scores.values():
+            assert isinstance(v, float)
+
+
 class TestLiveTest:
     """Live integration test requiring real Bedrock credentials."""
 
