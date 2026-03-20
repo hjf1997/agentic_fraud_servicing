@@ -10,16 +10,17 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agentic_fraud_servicing.models.allegations import (
-    AllegationExtraction,
-    AllegationExtractionResult,
-)
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment
+from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, CaseTypeAssessment
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult
+from agentic_fraud_servicing.models.allegations import (
+    AllegationExtraction,
+    AllegationExtractionResult,
+)
 from agentic_fraud_servicing.models.case import CopilotSuggestion
 from agentic_fraud_servicing.models.enums import AllegationDetailType
 from agentic_fraud_servicing.ui.helpers import load_transcript_file
@@ -91,18 +92,43 @@ _HYPOTHESIS_RESULT = HypothesisAssessment(
     assessment_summary="Likely third-party fraud based on initial claim analysis.",
 )
 
+_CASE_ADVISORY = CaseAdvisory(
+    assessments=[
+        CaseTypeAssessment(
+            case_type="fraud",
+            eligibility="incomplete",
+            met_criteria=["Transaction identified", "Card status active"],
+            unmet_criteria=["Identity verification pending", "Date reported missing"],
+            blockers=[],
+            policy_citations=["Per fraud_case_checklist.md: 'Identity must be verified'"],
+        ),
+        CaseTypeAssessment(
+            case_type="dispute",
+            eligibility="eligible",
+            met_criteria=["Merchant identified", "Amount confirmed"],
+            unmet_criteria=[],
+            blockers=[],
+            policy_citations=[],
+        ),
+    ],
+    general_warnings=["Escalation may be required for amounts over $10K"],
+    next_info_needed=["Caller identity verification", "Date CM first noticed the charge"],
+    summary="Fraud case incomplete pending identity verification. Dispute case eligible.",
+)
 
-# -- Patch targets for the 5 specialist run_* functions --
+
+# -- Patch targets for the 6 specialist run_* functions --
 _PATCH_TRIAGE = "agentic_fraud_servicing.copilot.orchestrator.run_triage"
 _PATCH_AUTH = "agentic_fraud_servicing.copilot.orchestrator.run_auth_assessment"
 _PATCH_QUESTION = "agentic_fraud_servicing.copilot.orchestrator.run_question_planner"
 _PATCH_RETRIEVAL = "agentic_fraud_servicing.copilot.orchestrator.run_retrieval"
 _PATCH_HYPOTHESIS = "agentic_fraud_servicing.copilot.orchestrator.run_hypothesis"
+_PATCH_CASE_ADVISOR = "agentic_fraud_servicing.copilot.orchestrator.run_case_advisor"
 
 
 @pytest.fixture()
 def _mock_specialists():
-    """Patch all 5 specialist run_* functions with canned results."""
+    """Patch all 6 specialist run_* functions with canned results."""
     with (
         patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
         patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
@@ -113,6 +139,9 @@ def _mock_specialists():
         patch(
             _PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
         ) as m_hypothesis,
+        patch(
+            _PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY
+        ) as m_case_advisor,
     ):
         yield {
             "triage": m_triage,
@@ -120,6 +149,7 @@ def _mock_specialists():
             "question": m_question,
             "retrieval": m_retrieval,
             "hypothesis": m_hypothesis,
+            "case_advisor": m_case_advisor,
         }
 
 
@@ -195,6 +225,33 @@ class TestCopilotSuggestionOutput:
         assert result.hypothesis_scores["FIRST_PARTY_FRAUD"] == pytest.approx(0.10)
         assert result.hypothesis_scores["SCAM"] == pytest.approx(0.15)
         assert result.hypothesis_scores["DISPUTE"] == pytest.approx(0.15)
+
+    @pytest.mark.usefixtures("_mock_specialists")
+    async def test_suggestion_contains_case_eligibility(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """CopilotSuggestion.case_eligibility should be populated from case advisor mock."""
+        gateway = gateway_factory(tmp_path)
+        orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+        result = await orch.process_event(sample_transcript_events[0])
+        assert len(result.case_eligibility) == 2
+        assert result.case_eligibility[0]["case_type"] == "fraud"
+        assert result.case_eligibility[0]["eligibility"] == "incomplete"
+        assert result.case_eligibility[1]["case_type"] == "dispute"
+        assert result.case_eligibility[1]["eligibility"] == "eligible"
+
+    @pytest.mark.usefixtures("_mock_specialists")
+    async def test_case_advisory_summary_in_suggestion(
+        self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
+    ):
+        """CopilotSuggestion.case_advisory_summary should be populated from case advisor mock."""
+        gateway = gateway_factory(tmp_path)
+        orch = CopilotOrchestrator(gateway, mock_model_provider)
+
+        result = await orch.process_event(sample_transcript_events[0])
+        assert "Fraud case incomplete" in result.case_advisory_summary
+        assert "Dispute case eligible" in result.case_advisory_summary
 
 
 class TestRunningStateAccumulation:

@@ -5,6 +5,13 @@ from agentic_fraud_servicing.copilot.auth_agent import (
     auth_agent,
     run_auth_assessment,
 )
+from agentic_fraud_servicing.copilot.case_advisor import (
+    CaseAdvisory,
+    CaseTypeAssessment,
+    case_advisor,
+    load_policies,
+    run_case_advisor,
+)
 from agentic_fraud_servicing.copilot.context import (
     CopilotContext,
     tool_fetch_customer_profile,
@@ -59,6 +66,12 @@ __all__ = [
     "HypothesisAssessment",
     "hypothesis_agent",
     "run_hypothesis",
+    # case_advisor
+    "CaseTypeAssessment",
+    "CaseAdvisory",
+    "case_advisor",
+    "run_case_advisor",
+    "load_policies",
     # orchestrator
     "CopilotOrchestrator",
 ]
