@@ -81,6 +81,8 @@ async def run_question_planner(
     missing_fields: list[str],
     hypothesis_scores: dict[str, float],
     model_provider: ModelProvider,
+    recent_turns: list[tuple[str, str]] | None = None,
+    recent_questions: list[str] | None = None,
 ) -> QuestionPlan:
     """Run the question planner agent to suggest next-best questions.
 
@@ -89,6 +91,8 @@ async def run_question_planner(
         missing_fields: List of fields that still need to be gathered.
         hypothesis_scores: Dict mapping category names to confidence scores.
         model_provider: LLM model provider for inference.
+        recent_turns: Recent (speaker, text) conversation turns for context.
+        recent_questions: Previously suggested questions to avoid repeating.
 
     Returns:
         QuestionPlan with suggested questions and rationale.
@@ -110,6 +114,16 @@ async def run_question_planner(
         parts.append(f"\nHypothesis scores: {scores_str}")
     else:
         parts.append("\nNo hypothesis scores available yet.")
+
+    if recent_turns:
+        turn_lines = [f"{speaker}: {text}" for speaker, text in recent_turns]
+        parts.append("\nRecent conversation:\n" + "\n".join(turn_lines))
+
+    if recent_questions:
+        q_lines = [f"- {q}" for q in recent_questions]
+        parts.append(
+            "\nRecently suggested questions (do NOT repeat these):\n" + "\n".join(q_lines)
+        )
 
     user_msg = "\n".join(parts)
 

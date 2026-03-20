@@ -214,3 +214,51 @@ class TestRunQuestionPlanner:
         ):
             with pytest.raises(RuntimeError, match="Question planner agent failed"):
                 await run_question_planner("bad input", [], {}, mock_provider)
+
+    async def test_includes_recent_turns(self, mock_provider):
+        """run_question_planner includes recent conversation turns in user message."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = QuestionPlan()
+
+        with patch(
+            "agentic_fraud_servicing.copilot.question_planner.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_question_planner(
+                "summary",
+                [],
+                {},
+                mock_provider,
+                recent_turns=[("CCP", "When was this charge?"), ("CARDMEMBER", "Last Tuesday")],
+            )
+
+        call_args = mock_run.call_args
+        user_input = call_args.kwargs.get("input") or call_args.args[1]
+        assert "Recent conversation:" in user_input
+        assert "CCP: When was this charge?" in user_input
+        assert "CARDMEMBER: Last Tuesday" in user_input
+
+    async def test_includes_recent_questions_with_dedup(self, mock_provider):
+        """run_question_planner includes recent questions with dedup instruction."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = QuestionPlan()
+
+        with patch(
+            "agentic_fraud_servicing.copilot.question_planner.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_question_planner(
+                "summary",
+                [],
+                {},
+                mock_provider,
+                recent_questions=["When did the transaction occur?", "What was the amount?"],
+            )
+
+        call_args = mock_run.call_args
+        user_input = call_args.kwargs.get("input") or call_args.args[1]
+        assert "do NOT repeat" in user_input
+        assert "When did the transaction occur?" in user_input
+        assert "What was the amount?" in user_input

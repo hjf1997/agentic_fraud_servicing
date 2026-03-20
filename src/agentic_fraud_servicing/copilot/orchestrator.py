@@ -40,15 +40,6 @@ _INITIAL_MISSING_FIELDS = [
     "auth_method",
 ]
 
-# Mapping from missing field names to keywords that indicate the field
-# has been addressed in the transcript text (simple heuristic)
-_FIELD_KEYWORDS: dict[str, list[str]] = {
-    "transaction_date": ["date", "when", "day", "yesterday", "last week", "month"],
-    "merchant_name": ["merchant", "store", "shop", "vendor", "company", "amazon", "walmart"],
-    "amount": ["amount", "dollar", "charge", "charged", "$", "paid", "cost"],
-    "auth_method": ["pin", "chip", "swipe", "tap", "contactless", "online", "signature"],
-}
-
 
 class CopilotOrchestrator:
     """Central orchestrator for the realtime copilot.
@@ -88,6 +79,7 @@ class CopilotOrchestrator:
         self.transcript_history: list[TranscriptEvent] = []
         self.accumulated_allegations: list[AllegationExtraction] = []
         self._retrieval_result: RetrievalResult | None = None
+        self._recent_suggestions: list[list[str]] = []
 
     async def process_event(self, event: TranscriptEvent) -> CopilotSuggestion:
         """Process a single transcript event and return copilot suggestions.
@@ -169,8 +161,8 @@ class CopilotOrchestrator:
                 risk_flags.append(f"Step-up auth recommended: {auth_result.step_up_method}")
             risk_flags.extend(auth_result.risk_factors)
 
-        # 6. Update missing fields based on event text keywords
-        self._update_missing_fields(event.text)
+        # 6. Update missing fields from triage-extracted entities
+        self._update_missing_fields()
 
         # 7. Collect retrieved facts from retrieval result
         if self._retrieval_result is not None:
@@ -205,7 +197,12 @@ class CopilotOrchestrator:
         if question_result is not None:
             suggested_questions = question_result.questions
 
-        # 11. Build safety guidance
+        # 11. Track recent suggestions for dedup in subsequent turns
+        self._recent_suggestions.append(suggested_questions)
+        if len(self._recent_suggestions) > 3:
+            self._recent_suggestions = self._recent_suggestions[-3:]
+
+        # 12. Build safety guidance
         safety_guidance = self._build_safety_guidance()
 
         return CopilotSuggestion(
@@ -339,34 +336,18 @@ class CopilotOrchestrator:
         lines = [f"{e.speaker.value}: {e.text[:100]}" for e in last_n]
         return f"{len(self.transcript_history)} turns total. Recent:\n" + "\n".join(lines)
 
-    def _update_missing_fields(self, text: str) -> None:
-        """Remove missing fields addressed by transcript keywords or extracted entities.
+    def _update_missing_fields(self) -> None:
+        """Remove missing fields resolved by triage-extracted entities.
 
-        Two resolution strategies:
-        1. Keyword heuristic: check if known keywords appear in the transcript text.
-        2. Entity-based: if the triage agent extracted an entity whose key matches
-           a missing field name (e.g., 'merchant_name', 'amount'), resolve it.
+        Iterates accumulated allegations and collects entity keys. If an
+        entity key matches a missing field name (e.g., 'merchant_name',
+        'amount'), the field is considered resolved and removed.
         """
-        text_lower = text.lower()
-
-        # Collect all entity keys from accumulated allegations
         entity_keys: set[str] = set()
         for allegation in self.accumulated_allegations:
             entity_keys.update(allegation.entities.keys())
 
-        resolved = []
-        for field_name in self.missing_fields:
-            # Strategy 1: keyword match in transcript text
-            keywords = _FIELD_KEYWORDS.get(field_name, [])
-            if any(kw in text_lower for kw in keywords):
-                resolved.append(field_name)
-                continue
-            # Strategy 2: entity extracted by triage matches the field name
-            if field_name in entity_keys:
-                resolved.append(field_name)
-
-        for field_name in resolved:
-            self.missing_fields.remove(field_name)
+        self.missing_fields = [f for f in self.missing_fields if f not in entity_keys]
 
     def _build_safety_guidance(self) -> str:
         """Build safety guidance string based on current state."""
@@ -436,13 +417,23 @@ class CopilotOrchestrator:
     async def _run_question_planner_safe(
         self, case_summary: str, risk_flags: list[str]
     ) -> QuestionPlan | None:
-        """Run question planner agent with error handling."""
+        """Run question planner agent with error handling.
+
+        Passes recent conversation turns and previously suggested questions
+        so the planner avoids repeating questions already asked or suggested.
+        """
+        # Last 5 conversation turns for context
+        recent_turns = [(e.speaker.value, e.text) for e in self.transcript_history[-5:]]
+        # Flatten recent suggestions into a single dedup list
+        recent_questions = [q for qs in self._recent_suggestions for q in qs]
         try:
             return await run_question_planner(
                 case_summary=case_summary,
                 missing_fields=list(self.missing_fields),
                 hypothesis_scores=dict(self.hypothesis_scores),
                 model_provider=self.model_provider,
+                recent_turns=recent_turns if recent_turns else None,
+                recent_questions=recent_questions if recent_questions else None,
             )
         except Exception as exc:
             risk_flags.append(f"Question planner failed: {exc}")

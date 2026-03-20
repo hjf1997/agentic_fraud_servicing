@@ -620,7 +620,7 @@ class TestHypothesisScoring:
 
 
 class TestMissingFieldsUpdate:
-    """Tests for missing fields keyword-based removal."""
+    """Tests for entity-based missing field resolution."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
@@ -628,11 +628,20 @@ class TestMissingFieldsUpdate:
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_removes_field_on_keyword_match(
+    async def test_resolves_field_from_entities(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """Missing fields are removed when keywords appear in text."""
-        mock_triage.return_value = _mock_triage_result()
+        """Fields are resolved when triage extracts a matching entity key."""
+        mock_triage.return_value = _mock_triage_result(
+            allegations=[
+                AllegationExtraction(
+                    detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
+                    description="Unauthorized purchase at TechVault",
+                    entities={"merchant_name": "TechVault", "amount": "$500"},
+                    confidence=0.9,
+                )
+            ]
+        )
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
@@ -640,12 +649,49 @@ class TestMissingFieldsUpdate:
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
-        # Text mentions "amount" and "merchant" — should resolve those fields
-        await orch.process_event(_make_event(text="The amount was $500 at the merchant store"))
+        await orch.process_event(_make_event())
 
-        assert "amount" not in orch.missing_fields
+        # Entity keys merchant_name and amount should resolve those fields
         assert "merchant_name" not in orch.missing_fields
-        # transaction_date and auth_method should still be missing
+        assert "amount" not in orch.missing_fields
+        # transaction_date and auth_method still missing (no matching entities)
+        assert "transaction_date" in orch.missing_fields
+        assert "auth_method" in orch.missing_fields
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_keyword_text_does_not_resolve_field(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Text containing keywords but no entity extraction does NOT resolve fields."""
+        # Triage returns empty entities — keywords in text should not matter
+        mock_triage.return_value = _mock_triage_result(
+            allegations=[
+                AllegationExtraction(
+                    detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
+                    description="Mentioned merchant store and amount",
+                    entities={},
+                    confidence=0.5,
+                )
+            ]
+        )
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # Text has keywords "amount" and "merchant" but no entities extracted
+        await orch.process_event(_make_event(text="What about the merchant store and the amount?"))
+
+        # All fields should still be missing — keyword text alone doesn't resolve
+        assert "merchant_name" in orch.missing_fields
+        assert "amount" in orch.missing_fields
         assert "transaction_date" in orch.missing_fields
         assert "auth_method" in orch.missing_fields
 
@@ -998,3 +1044,86 @@ class TestCaseAdvisorIntegration:
         assert result.case_eligibility == []
         assert result.case_advisory_summary == ""
         assert any("Case advisor failed" in f for f in result.risk_flags)
+
+
+class TestQuestionPlannerContext:
+    """Tests for conversation context and dedup passed to the question planner."""
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_recent_turns_passed_to_question_planner(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Question planner receives recent conversation turns."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event(text="I didn't make this purchase"))
+
+        call_kwargs = mock_question.call_args.kwargs
+        assert call_kwargs["recent_turns"] is not None
+        speakers = [t[0] for t in call_kwargs["recent_turns"]]
+        assert "CARDMEMBER" in speakers
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_recent_suggestions_tracked_and_passed(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Previously suggested questions are passed to avoid repetition."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result(
+            questions=["When did the transaction occur?"]
+        )
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # First event — no recent suggestions yet
+        await orch.process_event(_make_event(event_id="evt-1"))
+        first_call_kwargs = mock_question.call_args.kwargs
+        assert first_call_kwargs["recent_questions"] is None
+
+        # Second event — should have the first event's suggestions
+        await orch.process_event(_make_event(event_id="evt-2"))
+        second_call_kwargs = mock_question.call_args.kwargs
+        assert second_call_kwargs["recent_questions"] is not None
+        assert "When did the transaction occur?" in second_call_kwargs["recent_questions"]
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_recent_suggestions_limited_to_three(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """_recent_suggestions stores at most 3 entries."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        for i in range(5):
+            await orch.process_event(_make_event(event_id=f"evt-{i}"))
+
+        assert len(orch._recent_suggestions) == 3
