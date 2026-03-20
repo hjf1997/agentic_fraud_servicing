@@ -1,12 +1,14 @@
 """Central copilot orchestrator with running state.
 
 Processes transcript events, maintains running hypothesis scores and
-impersonation risk, invokes specialist agents (triage, auth, retrieval,
-hypothesis, case advisor, question planner), and produces CopilotSuggestion
-output for each turn. This is a plain Python class — not an Agents SDK
+impersonation risk, invokes specialist agents, and produces CopilotSuggestion
+output for each turn. Triage, auth, and retrieval run concurrently via
+asyncio.gather(); hypothesis, case advisor, and question planner run
+sequentially after them. This is a plain Python class — not an Agents SDK
 Agent — keeping the control flow explicit and auditable.
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -89,9 +91,10 @@ class CopilotOrchestrator:
     async def process_event(self, event: TranscriptEvent) -> CopilotSuggestion:
         """Process a single transcript event and return copilot suggestions.
 
-        Runs 6-step pipeline: triage → auth → retrieval → hypothesis →
-        case advisor → question planner. Each specialist call is wrapped in
-        try/except for graceful degradation.
+        Runs a parallelized pipeline: triage, auth, and retrieval run
+        concurrently via asyncio.gather(), then hypothesis → case advisor →
+        question planner run sequentially. Each specialist call is wrapped
+        in try/except for graceful degradation.
 
         Args:
             event: The transcript event to process.
@@ -111,18 +114,25 @@ class CopilotOrchestrator:
         case_eligibility: list[dict] = []
         case_advisory_summary: str = ""
 
-        # 2. Run retrieval once at the start to pre-fetch data
-        if self._retrieval_result is None and self.case_id is not None:
-            self._retrieval_result = await self._run_retrieval_safe(risk_flags)
-
-        # Extract data from retrieval for downstream agents
-        retrieval = self._retrieval_result
-        auth_events = retrieval.auth_events if retrieval else []
-        customer_profile = retrieval.customer_profile if retrieval else None
-
-        # 3. Run triage agent (allegation extraction) with full conversation history
+        # 2. Prepare inputs for the parallel group
         conversation_history = [(e.speaker.value, e.text) for e in self.transcript_history]
-        triage_result = await self._run_triage_safe(event.text, risk_flags, conversation_history)
+        # Use existing retrieval data for auth inputs (defaults on first call)
+        prior_retrieval = self._retrieval_result
+        auth_events = prior_retrieval.auth_events if prior_retrieval else []
+        customer_profile = prior_retrieval.customer_profile if prior_retrieval else None
+
+        # 3. Run triage, auth, and retrieval in parallel
+        triage_result, auth_result, retrieval_result = await asyncio.gather(
+            self._run_triage_safe(event.text, risk_flags, conversation_history),
+            self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
+            self._run_retrieval_safe(risk_flags),
+        )
+
+        # 4. Process parallel results: retrieval
+        if retrieval_result is not None:
+            self._retrieval_result = retrieval_result
+
+        # 5. Process parallel results: triage
         if triage_result is not None and triage_result.allegations:
             self.accumulated_allegations.extend(triage_result.allegations)
             self._persist_allegations(triage_result.allegations)
@@ -130,20 +140,17 @@ class CopilotOrchestrator:
         # Build running summary from accumulated allegations
         running_summary = self._build_allegations_summary()
 
-        # 4. Run auth assessment agent
-        auth_result = await self._run_auth_safe(
-            event.text, auth_events, customer_profile, risk_flags
-        )
+        # 6. Process parallel results: auth
         if auth_result is not None:
             self.impersonation_risk = auth_result.impersonation_risk
             if auth_result.step_up_recommended:
                 risk_flags.append(f"Step-up auth recommended: {auth_result.step_up_method}")
             risk_flags.extend(auth_result.risk_factors)
 
-        # 5. Update missing fields based on event text keywords
+        # 7. Update missing fields based on event text keywords
         self._update_missing_fields(event.text)
 
-        # 6. Collect retrieved facts from retrieval result
+        # 8. Collect retrieved facts from retrieval result
         if self._retrieval_result is not None:
             retrieved_facts = [self._retrieval_result.retrieval_summary]
             self.evidence_collected = [
@@ -151,14 +158,14 @@ class CopilotOrchestrator:
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
-        # 7. Run hypothesis agent — scores 4 categories using all context
+        # 9. Run hypothesis agent — scores 4 categories using all context
         hypothesis_result = await self._run_hypothesis_safe(
             auth_result=auth_result, risk_flags=risk_flags
         )
         if hypothesis_result is not None:
             self.hypothesis_scores = dict(hypothesis_result.scores)
 
-        # 8. Run case advisor — evaluate case opening eligibility
+        # 10. Run case advisor — evaluate case opening eligibility
         case_advisory = await self._run_case_advisor_safe(risk_flags)
         if case_advisory is not None:
             case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]
@@ -170,12 +177,12 @@ class CopilotOrchestrator:
                     unmet.append(f"[{assessment.case_type}] {criterion}")
             self.missing_fields = unmet + self.missing_fields
 
-        # 9. Run question planner agent (after case advisor so it has unmet criteria)
+        # 11. Run question planner agent (after case advisor so it has unmet criteria)
         question_result = await self._run_question_planner_safe(running_summary, risk_flags)
         if question_result is not None:
             suggested_questions = question_result.questions
 
-        # 10. Build safety guidance
+        # 12. Build safety guidance
         safety_guidance = self._build_safety_guidance()
 
         return CopilotSuggestion(
@@ -326,7 +333,13 @@ class CopilotOrchestrator:
         return " ".join(parts)
 
     async def _run_retrieval_safe(self, risk_flags: list[str]) -> RetrievalResult | None:
-        """Run retrieval agent with error handling."""
+        """Run retrieval agent with error handling.
+
+        Idempotent: returns cached result immediately if retrieval has already
+        run, making it safe to include in every asyncio.gather() call.
+        """
+        if self._retrieval_result is not None:
+            return self._retrieval_result
         try:
             return await run_retrieval(
                 case_id=self.case_id,  # type: ignore[arg-type]

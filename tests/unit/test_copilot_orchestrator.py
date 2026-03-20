@@ -312,6 +312,61 @@ class TestProcessEvent:
         assert "What was the transaction amount?" in result.suggested_questions
 
 
+class TestParallelExecution:
+    """Tests for the asyncio.gather() parallel execution of triage, auth, and retrieval."""
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_triage_auth_retrieval_all_called_on_first_event(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Triage, auth, and retrieval are all invoked on the first event."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event())
+
+        mock_triage.assert_awaited_once()
+        mock_auth.assert_awaited_once()
+        mock_retrieval.assert_awaited_once()
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_retrieval_not_reinvoked_on_second_event(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Retrieval is cached after the first call and not re-invoked."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event(event_id="evt-1"))
+        await orch.process_event(_make_event(event_id="evt-2"))
+
+        # Retrieval called only once — second call returns cached result
+        mock_retrieval.assert_awaited_once()
+        # Triage and auth called twice (once per event)
+        assert mock_triage.await_count == 2
+        assert mock_auth.await_count == 2
+
+
 class TestAccumulatedAllegations:
     """Tests for accumulated allegations growing across events."""
 
