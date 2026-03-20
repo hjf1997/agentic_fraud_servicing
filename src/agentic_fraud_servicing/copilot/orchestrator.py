@@ -9,6 +9,7 @@ Agent — keeping the control flow explicit and auditable.
 """
 
 import asyncio
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -274,16 +275,39 @@ class CopilotOrchestrator:
         )
 
     def _format_evidence_for_hypothesis(self) -> str:
-        """Format retrieved evidence for the hypothesis agent input."""
+        """Format retrieved evidence as structured JSON for the hypothesis agent.
+
+        Produces a summary line followed by detailed JSON containing actual
+        evidence node data (amounts, auth types, device IDs, etc.) so the
+        hypothesis agent's reasoning patterns can trigger on specific evidence.
+        """
         if self._retrieval_result is None:
             return "No evidence retrieved."
         r = self._retrieval_result
-        return (
+
+        # Summary counts for quick reference
+        summary = (
             f"Transactions: {len(r.transactions)} found. "
             f"Auth events: {len(r.auth_events)} found. "
-            f"Customer profile: {'available' if r.customer_profile else 'not available'}. "
-            f"{r.retrieval_summary}"
+            f"Customer profile: {'available' if r.customer_profile else 'not available'}."
         )
+
+        # Build structured evidence data
+        evidence_data: dict = {}
+
+        if r.transactions:
+            evidence_data["transactions"] = r.transactions
+
+        if r.auth_events:
+            evidence_data["auth_events"] = r.auth_events
+
+        if r.customer_profile:
+            evidence_data["customer_profile"] = r.customer_profile
+
+        if not evidence_data:
+            return f"{summary}\n{r.retrieval_summary}"
+
+        return f"{summary}\n{json.dumps(evidence_data, indent=2, default=str)}"
 
     def _format_conversation_for_hypothesis(self) -> str:
         """Format a brief conversation summary for the hypothesis agent."""

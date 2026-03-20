@@ -540,9 +540,50 @@ class TestHypothesisScoring:
         call_kwargs = mock_hypothesis.call_args.kwargs
         assert "UNRECOGNIZED_TRANSACTION" in call_kwargs["allegations_summary"]
         assert "Impersonation risk" in call_kwargs["auth_summary"]
-        assert "Transactions" in call_kwargs["evidence_summary"]
+        # Evidence summary should contain structured JSON with actual data
+        evidence = call_kwargs["evidence_summary"]
+        assert "Transactions: 1 found" in evidence
+        assert "amount" in evidence
         assert "THIRD_PARTY_FRAUD" in str(call_kwargs["current_scores"])
         assert "CARDMEMBER" in call_kwargs["conversation_summary"]
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_evidence_summary_contains_structured_json(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Evidence summary includes structured JSON with transaction and auth fields."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result(
+            transactions=[{"amount": 2847.99, "merchant": "TechVault", "auth_method": "chip_pin"}],
+            auth_events=[{"auth_type": "chip_pin", "result": "success", "device_id": "dev-001"}],
+            customer_profile={"customer_id": "cust-001", "name": "John Smith"},
+        )
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event())
+
+        call_kwargs = mock_hypothesis.call_args.kwargs
+        evidence = call_kwargs["evidence_summary"]
+        # Structured transaction fields
+        assert "2847.99" in evidence
+        assert "TechVault" in evidence
+        assert "chip_pin" in evidence
+        # Structured auth event fields
+        assert "auth_type" in evidence
+        assert "device_id" in evidence
+        assert "dev-001" in evidence
+        # Customer profile included
+        assert "customer_id" in evidence
+        assert "cust-001" in evidence
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
