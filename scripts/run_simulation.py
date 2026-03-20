@@ -36,6 +36,7 @@ os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 # Import scenario modules to trigger registration
 from agents import Agent  # noqa: E402
 
+import scripts.scenario_dispute_to_fraud  # noqa: E402, F401
 import scripts.scenario_doordash_dashpass  # noqa: E402, F401
 import scripts.scenario_doordash_dashpass_v2  # noqa: E402, F401
 import scripts.scenario_doordash_fraud  # noqa: E402, F401
