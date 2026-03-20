@@ -92,6 +92,15 @@ DASHBOARD_CSS = """
 .fact-row td { background: #E8F5E9 !important; }
 .allegation-row td { background: #FFF3E0 !important; }
 
+/* Case eligibility badges */
+.elig-badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
+              font-size: 0.8em; font-weight: 600; margin: 2px 3px; }
+.elig-eligible   { background: #D4EDDA; color: #155724; }
+.elig-blocked    { background: #F8D7DA; color: #721C24; }
+.elig-incomplete { background: #FFF3CD; color: #856404; }
+.elig-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+            margin: 4px 0; }
+
 /* Copilot turn accordion */
 .copilot-detail { background: %(bg)s; padding: 10px; border-radius: 6px;
                   font-size: 0.9em; }
@@ -280,8 +289,113 @@ def _build_hypothesis_chart(suggestions: list[dict]) -> plt.Figure | None:
     return fig
 
 
-def _build_copilot_final_html(state: dict | None) -> str:
-    """Build HTML for the final copilot state card."""
+def _build_eligibility_badges_html(eligibility: list[dict]) -> str:
+    """Build inline HTML badges for case eligibility assessments."""
+    if not eligibility:
+        return ""
+    badges = ""
+    for item in eligibility:
+        case_type = item.get("case_type", "unknown")
+        status = item.get("eligibility", "unknown")
+        css_class = f"elig-{status}" if status in ("eligible", "blocked", "incomplete") else ""
+        badges += f'<span class="elig-badge {css_class}">{case_type}={status}</span>'
+    return f'<div class="elig-bar">{badges}</div>'
+
+
+def _build_eligibility_chart(suggestions: list[dict]) -> plt.Figure | None:
+    """Build a stacked status chart showing case eligibility evolution per turn.
+
+    Renders a heatmap-style grid: rows = case types, columns = turns,
+    cells colored by eligibility status (green=eligible, red=blocked, amber=incomplete).
+    """
+    if not suggestions:
+        return None
+
+    # Collect eligibility data per turn
+    turns: list[int] = []
+    case_types_set: set[str] = set()
+    elig_data: list[dict[str, str]] = []  # per-turn: {case_type: status}
+
+    for s in suggestions:
+        turn = s.get("turn", 0)
+        sug = s.get("suggestion", {})
+        ce = sug.get("case_eligibility", [])
+        if not ce:
+            continue
+        turns.append(turn)
+        turn_map: dict[str, str] = {}
+        for item in ce:
+            ct = item.get("case_type", "")
+            st = item.get("eligibility", "")
+            if ct and st:
+                turn_map[ct] = st
+                case_types_set.add(ct)
+        elig_data.append(turn_map)
+
+    if not turns or not case_types_set:
+        return None
+
+    case_types = sorted(case_types_set)
+    status_colors = {"eligible": "#388E3C", "blocked": "#D32F2F", "incomplete": "#F57C00"}
+
+    fig, ax = plt.subplots(figsize=(7, max(1.5, 0.5 * len(case_types) + 0.8)))
+
+    for row_idx, ct in enumerate(case_types):
+        for col_idx, turn_map in enumerate(elig_data):
+            status = turn_map.get(ct, "")
+            color = status_colors.get(status, "#CCCCCC")
+            ax.barh(
+                row_idx,
+                0.8,
+                left=col_idx - 0.4,
+                height=0.6,
+                color=color,
+                edgecolor="white",
+                linewidth=1,
+            )
+            if status:
+                label = status[0].upper()  # E/B/I
+                ax.text(
+                    col_idx,
+                    row_idx,
+                    label,
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    fontweight="bold",
+                    color="white",
+                )
+
+    ax.set_yticks(range(len(case_types)))
+    ax.set_yticklabels([ct.title() for ct in case_types], fontsize=9)
+    ax.set_xticks(range(len(turns)))
+    ax.set_xticklabels([str(t) for t in turns], fontsize=8)
+    ax.set_xlabel("Turn", fontsize=10)
+    ax.set_title("Case Eligibility by Turn", fontsize=12, fontweight="bold", color=AMEX_NAVY)
+    ax.invert_yaxis()
+
+    # Legend
+    from matplotlib.patches import Patch
+
+    legend_items = [
+        Patch(facecolor="#388E3C", label="Eligible"),
+        Patch(facecolor="#D32F2F", label="Blocked"),
+        Patch(facecolor="#F57C00", label="Incomplete"),
+    ]
+    ax.legend(handles=legend_items, fontsize=7, loc="upper right", framealpha=0.8)
+    fig.tight_layout()
+    return fig
+
+
+def _build_copilot_final_html(
+    state: dict | None,
+    suggestions: list[dict] | None = None,
+) -> str:
+    """Build HTML for the final copilot state card.
+
+    Includes hypothesis scores, impersonation risk, missing fields,
+    and final case eligibility (extracted from the last copilot suggestion).
+    """
     if not state:
         return '<div class="card"><p>No copilot final state available.</p></div>'
 
@@ -294,12 +408,48 @@ def _build_copilot_final_html(state: dict | None) -> str:
     missing = state.get("missing_fields", [])
     missing_str = ", ".join(missing) if missing else "None"
 
+    # Extract final case eligibility from the last copilot suggestion
+    elig_html = ""
+    advisory_html = ""
+    if suggestions:
+        last_sug = suggestions[-1].get("suggestion", {})
+        case_elig = last_sug.get("case_eligibility", [])
+        advisory = last_sug.get("case_advisory_summary", "")
+        if case_elig:
+            elig_html = (
+                f"<p><strong>Case Eligibility:</strong></p>"
+                f"{_build_eligibility_badges_html(case_elig)}"
+            )
+            # Show unmet criteria / blockers for blocked or incomplete case types
+            details = ""
+            for item in case_elig:
+                ct = item.get("case_type", "")
+                status = item.get("eligibility", "")
+                blockers = item.get("blockers", [])
+                unmet = item.get("unmet_criteria", [])
+                if (blockers or unmet) and status in ("blocked", "incomplete"):
+                    items_str = "".join(f"<li>{b}</li>" for b in (blockers + unmet))
+                    details += (
+                        f"<div style='margin:4px 0 4px 12px; font-size:0.88em;'>"
+                        f"<strong>{ct.title()}</strong> ({status}): "
+                        f"<ul style='margin:2px 0;'>{items_str}</ul></div>"
+                    )
+            if details:
+                elig_html += details
+        if advisory:
+            advisory_html = (
+                f"<p style='margin-top:8px; font-size:0.9em; color:#555;'>"
+                f"<strong>Advisory:</strong> {advisory}</p>"
+            )
+
     return f"""<div class="card">
       <h4 style="color:{AMEX_NAVY}; margin-top:0;">Final Copilot State</h4>
       <p><strong>Impersonation Risk:</strong> {imp_risk:.2f}</p>
       <p><strong>Hypothesis Scores:</strong></p>
       <ul style="margin:4px 0;">{score_items}</ul>
       <p><strong>Missing Fields:</strong> {missing_str}</p>
+      {elig_html}
+      {advisory_html}
     </div>"""
 
 
@@ -316,9 +466,21 @@ def _build_copilot_turns_html(suggestions: list[dict]) -> str:
         risk_flags = sug.get("risk_flags", [])
         summary = sug.get("running_summary", "")
         safety = sug.get("safety_guidance", "")
+        case_elig = sug.get("case_eligibility", [])
+        advisory = sug.get("case_advisory_summary", "")
 
         q_list = "".join(f"<li>{q}</li>" for q in questions) if questions else "<li>None</li>"
         r_list = "".join(f"<li>{r}</li>" for r in risk_flags) if risk_flags else "<li>None</li>"
+
+        # Build eligibility badges for this turn
+        elig_section = ""
+        if case_elig:
+            elig_badges = _build_eligibility_badges_html(case_elig)
+            elig_section = f"<dt>Case Eligibility</dt><dd>{elig_badges}</dd>"
+            if advisory:
+                elig_section += (
+                    f"<dt>Advisory Summary</dt><dd style='font-size:0.9em;'>{advisory}</dd>"
+                )
 
         items += f"""
         <details style="margin-bottom:6px;">
@@ -326,6 +488,7 @@ def _build_copilot_turns_html(suggestions: list[dict]) -> str:
                           padding:6px;">Turn {turn}</summary>
           <div class="copilot-detail">
             <dl>
+              {elig_section}
               <dt>Suggested Questions</dt><dd><ul>{q_list}</ul></dd>
               <dt>Risk Flags</dt><dd><ul>{r_list}</ul></dd>
               <dt>Running Summary</dt><dd>{summary or "N/A"}</dd>
@@ -910,11 +1073,11 @@ def _build_audit_trail_html(traces: list[dict]) -> str:
 def _load_scenario(scenario_name: str) -> tuple:
     """Load all data for a scenario and return component updates.
 
-    Returns a tuple of 9 items matching the output components.
+    Returns a tuple of 10 items matching the output components.
     """
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
-        return empty, empty, None, empty, empty, empty, empty, empty, empty
+        return empty, empty, None, None, empty, empty, empty, empty, empty, empty
 
     db_dir = os.path.join(BASE_DIR, scenario_name)
 
@@ -935,7 +1098,8 @@ def _load_scenario(scenario_name: str) -> tuple:
         _build_case_overview_html(case),
         _build_transcript_html(turns),
         _build_hypothesis_chart(suggestions),
-        _build_copilot_final_html(final_state),
+        _build_eligibility_chart(suggestions),
+        _build_copilot_final_html(final_state, suggestions),
         _build_copilot_turns_html(suggestions),
         _build_evidence_graph_interactive(nodes, edges),
         _build_evidence_html(nodes, edges),
@@ -988,12 +1152,14 @@ def create_dashboard_app() -> gr.Blocks:
             '<div class="section-header" style="color:white;">'
             "Conversation &amp; Copilot Analysis</div>"
         )
-        # Top row: hypothesis chart (left) + final copilot state (right)
+        # Top row: hypothesis chart (left) + eligibility chart (right)
         with gr.Row():
             with gr.Column(scale=3):
                 chart_plot = gr.Plot(label="Hypothesis Scores")
             with gr.Column(scale=2):
-                final_state_html = gr.HTML()
+                elig_chart_plot = gr.Plot(label="Case Eligibility")
+        # Middle row: final copilot state (full width)
+        final_state_html = gr.HTML()
         # Bottom row: transcript (left) + per-turn copilot details (right)
         with gr.Row():
             with gr.Column(scale=1):
@@ -1023,6 +1189,7 @@ def create_dashboard_app() -> gr.Blocks:
                 case_html,
                 transcript_html,
                 chart_plot,
+                elig_chart_plot,
                 final_state_html,
                 copilot_turns_html,
                 evidence_graph_html,

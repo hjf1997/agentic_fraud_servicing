@@ -126,6 +126,96 @@ def _render_hypothesis_chart_base64(suggestions: list[dict]) -> str:
     return f'<img src="data:image/png;base64,{b64}" style="width:100%; max-width:800px;" />'
 
 
+def _render_eligibility_chart_base64(suggestions: list[dict]) -> str:
+    """Render the case eligibility evolution chart as a base64-encoded PNG.
+
+    Returns an <img> tag with the chart embedded, or a placeholder message
+    if no eligibility data is available.
+    """
+    if not suggestions:
+        return '<p style="color:#666;">No eligibility data available.</p>'
+
+    turns: list[int] = []
+    case_types_set: set[str] = set()
+    elig_data: list[dict[str, str]] = []
+
+    for s in suggestions:
+        turn = s.get("turn", 0)
+        sug = s.get("suggestion", {})
+        ce = sug.get("case_eligibility", [])
+        if not ce:
+            continue
+        turns.append(turn)
+        turn_map: dict[str, str] = {}
+        for item in ce:
+            ct = item.get("case_type", "")
+            st = item.get("eligibility", "")
+            if ct and st:
+                turn_map[ct] = st
+                case_types_set.add(ct)
+        elig_data.append(turn_map)
+
+    if not turns or not case_types_set:
+        return '<p style="color:#666;">No eligibility data available.</p>'
+
+    case_types = sorted(case_types_set)
+    status_colors = {"eligible": "#388E3C", "blocked": "#D32F2F", "incomplete": "#F57C00"}
+
+    fig, ax = plt.subplots(figsize=(8, max(1.5, 0.5 * len(case_types) + 0.8)))
+
+    for row_idx, ct in enumerate(case_types):
+        for col_idx, turn_map in enumerate(elig_data):
+            status = turn_map.get(ct, "")
+            color = status_colors.get(status, "#CCCCCC")
+            ax.barh(
+                row_idx,
+                0.8,
+                left=col_idx - 0.4,
+                height=0.6,
+                color=color,
+                edgecolor="white",
+                linewidth=1,
+            )
+            if status:
+                label = status[0].upper()
+                ax.text(
+                    col_idx,
+                    row_idx,
+                    label,
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    fontweight="bold",
+                    color="white",
+                )
+
+    ax.set_yticks(range(len(case_types)))
+    ax.set_yticklabels([ct.title() for ct in case_types], fontsize=9)
+    ax.set_xticks(range(len(turns)))
+    ax.set_xticklabels([str(t) for t in turns], fontsize=8)
+    ax.set_xlabel("Turn", fontsize=10)
+    ax.set_title("Case Eligibility by Turn", fontsize=12, fontweight="bold", color=AMEX_NAVY)
+    ax.invert_yaxis()
+
+    from matplotlib.patches import Patch
+
+    legend_items = [
+        Patch(facecolor="#388E3C", label="Eligible"),
+        Patch(facecolor="#D32F2F", label="Blocked"),
+        Patch(facecolor="#F57C00", label="Incomplete"),
+    ]
+    ax.legend(handles=legend_items, fontsize=7, loc="upper right", framealpha=0.8)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    b64 = base64.b64encode(buf.read()).decode("ascii")
+
+    return f'<img src="data:image/png;base64,{b64}" style="width:100%; max-width:800px;" />'
+
+
 # ---------------------------------------------------------------------------
 # Evidence graph → inline HTML (pyvis generates self-contained HTML)
 # ---------------------------------------------------------------------------
@@ -166,7 +256,8 @@ def _build_full_report(scenario_name: str) -> str:
     case_overview = _build_case_overview_html(case)
     transcript = _build_transcript_html(turns)
     hypothesis_chart = _render_hypothesis_chart_base64(suggestions)
-    copilot_final = _build_copilot_final_html(final_state)
+    eligibility_chart = _render_eligibility_chart_base64(suggestions)
+    copilot_final = _build_copilot_final_html(final_state, suggestions)
     copilot_turns = _build_copilot_turns_html(suggestions)
     evidence_graph = _render_evidence_graph_inline(nodes, edges)
     evidence_tables = _build_evidence_html(nodes, edges)
@@ -257,8 +348,9 @@ def _build_full_report(scenario_name: str) -> str:
 
     <!-- Section 2 & 3: Conversation & Copilot -->
     <div class="section-header">Conversation &amp; Copilot Analysis</div>
-    <div class="card" style="margin-bottom:12px;">
-      {hypothesis_chart}
+    <div class="two-col" style="margin-bottom:12px;">
+      <div class="card">{hypothesis_chart}</div>
+      <div class="card">{eligibility_chart}</div>
     </div>
     {copilot_final}
     <div class="two-col">
