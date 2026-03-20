@@ -944,6 +944,150 @@ class TestSpeakerFastPath:
         assert orch.transcript_history[2].speaker == SpeakerType.CARDMEMBER
 
 
+class TestConditionalAuth:
+    """Tests for conditional auth invocation after identity established."""
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_auth_runs_on_first_three_turns(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Auth agent is called on turns 1, 2, and 3 unconditionally."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        for i in range(3):
+            await orch.process_event(_make_event(event_id=f"evt-{i}"))
+
+        assert mock_auth.await_count == 3
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_auth_skipped_on_turn_4_low_risk(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Auth agent is NOT called on turn 4 when impersonation_risk < 0.4."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # First 3 turns — auth runs
+        for i in range(3):
+            await orch.process_event(_make_event(event_id=f"evt-{i}"))
+        assert mock_auth.await_count == 3
+
+        # Turn 4 — low risk, auth should be skipped
+        await orch.process_event(_make_event(event_id="evt-3"))
+        assert mock_auth.await_count == 3  # Still 3, not 4
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_auth_runs_on_turn_4_high_risk(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Auth agent IS called on turn 4 when impersonation_risk >= 0.4."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result(impersonation_risk=0.5)
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # First 3 turns — auth runs, risk set to 0.5
+        for i in range(3):
+            await orch.process_event(_make_event(event_id=f"evt-{i}"))
+        assert mock_auth.await_count == 3
+
+        # Turn 4 — high risk (0.5 >= 0.4), auth should run
+        await orch.process_event(_make_event(event_id="evt-3"))
+        assert mock_auth.await_count == 4
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_auth_runs_on_system_event_after_turn_3(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Auth agent runs on SYSTEM events regardless of turn count.
+
+        Note: SYSTEM events already skip auth via speaker fast path (16.3),
+        so this verifies _should_run_auth returns True for SYSTEM events even
+        though the fast path takes precedence.
+        """
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # 3 CARDMEMBER turns to establish identity
+        for i in range(3):
+            await orch.process_event(_make_event(event_id=f"evt-{i}"))
+
+        # _should_run_auth returns True for SYSTEM event (even though speaker
+        # fast path skips auth for SYSTEM events at a higher level)
+        system_event = _make_event(
+            event_id="evt-sys", text="Identity verified", speaker=SpeakerType.SYSTEM
+        )
+        assert orch._should_run_auth(system_event) is True
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_impersonation_risk_preserved_when_auth_skipped(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """When auth is skipped, impersonation_risk retains its previous value."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result(impersonation_risk=0.2)
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # 3 turns with risk 0.2 — auth runs
+        for i in range(3):
+            await orch.process_event(_make_event(event_id=f"evt-{i}"))
+        assert orch.impersonation_risk == 0.2
+
+        # Turn 4 — auth skipped (risk 0.2 < 0.4), risk should stay at 0.2
+        result = await orch.process_event(_make_event(event_id="evt-3"))
+        assert mock_auth.await_count == 3  # Auth not called on turn 4
+        assert orch.impersonation_risk == 0.2
+        assert result.impersonation_risk == 0.2
+
+
 class TestCaseAdvisorIntegration:
     """Tests for case advisor integration in the pipeline."""
 

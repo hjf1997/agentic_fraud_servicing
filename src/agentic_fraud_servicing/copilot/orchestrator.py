@@ -80,6 +80,7 @@ class CopilotOrchestrator:
         self.accumulated_allegations: list[AllegationExtraction] = []
         self._retrieval_result: RetrievalResult | None = None
         self._recent_suggestions: list[list[str]] = []
+        self._turn_count: int = 0
 
     async def process_event(self, event: TranscriptEvent) -> CopilotSuggestion:
         """Process a single transcript event and return copilot suggestions.
@@ -88,6 +89,9 @@ class CopilotOrchestrator:
         - SYSTEM events: skip triage/auth/hypothesis (no CM speech to analyze).
         - CCP events: skip triage (CCP isn't making allegations).
         - CARDMEMBER events: full pipeline.
+
+        Auth is conditional after the first 3 turns: skipped when
+        impersonation risk is low (< 0.4) and the event is not SYSTEM.
 
         Within each path, independent agents run concurrently via
         asyncio.gather(). Hypothesis → case advisor → question planner always
@@ -100,7 +104,8 @@ class CopilotOrchestrator:
         Returns:
             CopilotSuggestion combining all specialist results.
         """
-        # 1. Append event and set case_id/call_id on first event
+        # 1. Append event, increment turn count, set case_id/call_id on first event
+        self._turn_count += 1
         self.transcript_history.append(event)
         if self.case_id is None:
             self.case_id = f"case-{event.call_id}"
@@ -120,15 +125,18 @@ class CopilotOrchestrator:
             # SYSTEM events: only run retrieval (if not cached)
             retrieval_result = await self._run_retrieval_safe(risk_flags)
         elif event.speaker == SpeakerType.CCP:
-            # CCP events: skip triage, run auth + retrieval in parallel
+            # CCP events: skip triage, run auth (conditionally) + retrieval in parallel
             prior_retrieval = self._retrieval_result
             auth_events = prior_retrieval.auth_events if prior_retrieval else []
             customer_profile = prior_retrieval.customer_profile if prior_retrieval else None
 
-            auth_result, retrieval_result = await asyncio.gather(
-                self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
-                self._run_retrieval_safe(risk_flags),
-            )
+            if self._should_run_auth(event):
+                auth_result, retrieval_result = await asyncio.gather(
+                    self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
+                    self._run_retrieval_safe(risk_flags),
+                )
+            else:
+                retrieval_result = await self._run_retrieval_safe(risk_flags)
         else:
             # CARDMEMBER events: full parallel group (triage + auth + retrieval)
             # Use sliding window: last 5 turns for context, allegation summary for dedup
@@ -145,13 +153,21 @@ class CopilotOrchestrator:
             auth_events = prior_retrieval.auth_events if prior_retrieval else []
             customer_profile = prior_retrieval.customer_profile if prior_retrieval else None
 
-            triage_result, auth_result, retrieval_result = await asyncio.gather(
-                self._run_triage_safe(
-                    event.text, risk_flags, conversation_window, allegation_summary
-                ),
-                self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
-                self._run_retrieval_safe(risk_flags),
-            )
+            if self._should_run_auth(event):
+                triage_result, auth_result, retrieval_result = await asyncio.gather(
+                    self._run_triage_safe(
+                        event.text, risk_flags, conversation_window, allegation_summary
+                    ),
+                    self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
+                    self._run_retrieval_safe(risk_flags),
+                )
+            else:
+                triage_result, retrieval_result = await asyncio.gather(
+                    self._run_triage_safe(
+                        event.text, risk_flags, conversation_window, allegation_summary
+                    ),
+                    self._run_retrieval_safe(risk_flags),
+                )
 
         # 3. Process parallel results: retrieval
         if retrieval_result is not None:
@@ -369,6 +385,22 @@ class CopilotOrchestrator:
             parts.append(f"Still need: {', '.join(self.missing_fields)}.")
         parts.append("Never ask for full PAN or CVV.")
         return " ".join(parts)
+
+    def _should_run_auth(self, event: TranscriptEvent) -> bool:
+        """Determine whether to invoke the auth agent on this turn.
+
+        Auth runs unconditionally on the first 3 turns (identity not yet
+        established), on SYSTEM events (may carry auth status updates), or
+        when impersonation risk is elevated (>= 0.4). Once identity is
+        established with low risk, auth is skipped to save latency.
+        """
+        if self._turn_count <= 3:
+            return True
+        if event.speaker == SpeakerType.SYSTEM:
+            return True
+        if self.impersonation_risk >= 0.4:
+            return True
+        return False
 
     async def _run_retrieval_safe(self, risk_flags: list[str]) -> RetrievalResult | None:
         """Run retrieval agent with error handling.
