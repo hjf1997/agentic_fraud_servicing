@@ -3,15 +3,15 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agentic_fraud_servicing.models.allegations import (
-    AllegationExtraction,
-    AllegationExtractionResult,
-)
 
 from agentic_fraud_servicing.copilot.triage_agent import (
     TRIAGE_INSTRUCTIONS,
     run_triage,
     triage_agent,
+)
+from agentic_fraud_servicing.models.allegations import (
+    AllegationExtraction,
+    AllegationExtractionResult,
 )
 from agentic_fraud_servicing.models.enums import AllegationDetailType
 
@@ -141,7 +141,7 @@ class TestRunTriage:
 
         call_args = mock_run.call_args
         user_input = call_args.kwargs.get("input") or call_args.args[1]
-        assert "Conversation history:" in user_input
+        assert "Recent conversation" in user_input
         assert "[LATEST TURN]" in user_input
         assert "CARDMEMBER: I didn't make this charge" in user_input
 
@@ -161,6 +161,63 @@ class TestRunTriage:
         user_input = call_args.kwargs.get("input") or call_args.args[1]
         assert "Transcript segment:" in user_input
         assert "some transcript text" in user_input
+
+    async def test_includes_allegation_summary_when_provided(self, mock_provider):
+        """run_triage prepends allegation summary to user message when provided."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = AllegationExtractionResult()
+
+        history = [
+            ("CCP", "How can I help?"),
+            ("CARDMEMBER", "I see a duplicate charge"),
+        ]
+        summary = "1. [UNRECOGNIZED_TRANSACTION] CM says unauthorized purchase"
+
+        with patch(
+            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_triage(
+                "I see a duplicate charge",
+                mock_provider,
+                conversation_history=history,
+                allegation_summary=summary,
+            )
+
+        call_args = mock_run.call_args
+        user_input = call_args.kwargs.get("input") or call_args.args[1]
+        assert "Previously extracted allegations" in user_input
+        assert "UNRECOGNIZED_TRANSACTION" in user_input
+        assert "do NOT re-extract" in user_input
+        assert "[LATEST TURN]" in user_input
+        assert "Recent conversation" in user_input
+
+    async def test_no_allegation_summary_omits_section(self, mock_provider):
+        """run_triage omits allegation summary section when not provided."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = AllegationExtractionResult()
+
+        history = [
+            ("CCP", "How can I help?"),
+            ("CARDMEMBER", "I didn't make this charge"),
+        ]
+
+        with patch(
+            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_triage(
+                "I didn't make this charge",
+                mock_provider,
+                conversation_history=history,
+            )
+
+        call_args = mock_run.call_args
+        user_input = call_args.kwargs.get("input") or call_args.args[1]
+        assert "Previously extracted allegations" not in user_input
+        assert "[LATEST TURN]" in user_input
 
     async def test_no_previous_type_parameter(self):
         """run_triage does not accept previous_type parameter."""

@@ -192,16 +192,20 @@ async def run_triage(
     transcript_text: str,
     model_provider: ModelProvider,
     conversation_history: list[tuple[str, str]] | None = None,
+    allegation_summary: str | None = None,
 ) -> AllegationExtractionResult:
     """Run the triage agent on a transcript to extract structured allegations.
 
     Args:
         transcript_text: The current turn's transcript text.
         model_provider: LLM model provider for inference.
-        conversation_history: Full conversation so far as list of
-            (speaker, text) tuples. If provided, the agent receives the
-            full context with the latest turn highlighted. If None,
-            falls back to single-turn mode with transcript_text only.
+        conversation_history: Recent conversation turns as list of
+            (speaker, text) tuples. When a sliding window is used, this
+            contains only the last N turns (not the full history). If
+            None, falls back to single-turn mode with transcript_text.
+        allegation_summary: Structured summary of previously extracted
+            allegations for deduplication. Prepended to the user message
+            so the agent avoids re-extracting known allegations.
 
     Returns:
         AllegationExtractionResult with extracted allegations.
@@ -209,14 +213,29 @@ async def run_triage(
     Raises:
         RuntimeError: If the agent SDK call fails.
     """
-    # Build user message with full conversation context
+    # Build user message with conversation context
     if conversation_history:
+        parts = []
+
+        # Prepend allegation summary for dedup when available
+        if allegation_summary:
+            parts.append(
+                "Previously extracted allegations (do NOT re-extract these):\n"
+                f"{allegation_summary}"
+            )
+
+        # Add conversation turns with latest turn highlighted
         history_lines = []
         for i, (speaker, text) in enumerate(conversation_history):
             is_latest = i == len(conversation_history) - 1
-            prefix = "[LATEST TURN] " if is_latest else ""
+            prefix = "[LATEST TURN] " if is_latest else "[CONTEXT] "
             history_lines.append(f"{prefix}{speaker}: {text}")
-        user_msg = "Conversation history:\n" + "\n".join(history_lines)
+        parts.append(
+            f"Recent conversation (last {len(conversation_history)} turns):\n"
+            + "\n".join(history_lines)
+        )
+
+        user_msg = "\n\n".join(parts)
     else:
         user_msg = f"Transcript segment:\n{transcript_text}"
 

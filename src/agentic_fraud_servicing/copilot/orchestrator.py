@@ -131,13 +131,24 @@ class CopilotOrchestrator:
             )
         else:
             # CARDMEMBER events: full parallel group (triage + auth + retrieval)
-            conversation_history = [(e.speaker.value, e.text) for e in self.transcript_history]
+            # Use sliding window: last 5 turns for context, allegation summary for dedup
+            window_size = 5
+            history = self.transcript_history
+            if len(history) > window_size:
+                conversation_window = [(e.speaker.value, e.text) for e in history[-window_size:]]
+                allegation_summary = self._format_allegations_for_hypothesis()
+            else:
+                conversation_window = [(e.speaker.value, e.text) for e in history]
+                allegation_summary = None  # Short calls: full history, no summary needed
+
             prior_retrieval = self._retrieval_result
             auth_events = prior_retrieval.auth_events if prior_retrieval else []
             customer_profile = prior_retrieval.customer_profile if prior_retrieval else None
 
             triage_result, auth_result, retrieval_result = await asyncio.gather(
-                self._run_triage_safe(event.text, risk_flags, conversation_history),
+                self._run_triage_safe(
+                    event.text, risk_flags, conversation_window, allegation_summary
+                ),
                 self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
                 self._run_retrieval_safe(risk_flags),
             )
@@ -383,6 +394,7 @@ class CopilotOrchestrator:
         text: str,
         risk_flags: list[str],
         conversation_history: list[tuple[str, str]] | None = None,
+        allegation_summary: str | None = None,
     ) -> AllegationExtractionResult | None:
         """Run triage agent with error handling."""
         try:
@@ -390,6 +402,7 @@ class CopilotOrchestrator:
                 transcript_text=text,
                 model_provider=self.model_provider,
                 conversation_history=conversation_history,
+                allegation_summary=allegation_summary,
             )
         except Exception as exc:
             risk_flags.append(f"Triage failed: {exc}")
