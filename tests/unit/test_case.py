@@ -204,6 +204,8 @@ class TestCopilotSuggestion:
         assert suggestion.safety_guidance == ""
         assert suggestion.hypothesis_scores == {}
         assert suggestion.impersonation_risk == 0.0
+        assert suggestion.case_eligibility == []
+        assert suggestion.case_advisory_summary == ""
 
     def test_all_fields(self) -> None:
         suggestion = CopilotSuggestion(
@@ -225,6 +227,50 @@ class TestCopilotSuggestion:
         assert len(suggestion.suggested_questions) == 1
         assert suggestion.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.7
         assert suggestion.impersonation_risk == 0.15
+
+    def test_case_eligibility_with_dicts(self) -> None:
+        eligibility = [
+            {
+                "case_type": "fraud",
+                "eligibility": "eligible",
+                "met_criteria": ["Identity verified", "Within 120-day window"],
+                "unmet_criteria": [],
+                "blockers": [],
+                "policy_citations": ["Per fraud_case_checklist.md: '120-day window'"],
+            },
+            {
+                "case_type": "dispute",
+                "eligibility": "incomplete",
+                "met_criteria": ["Amount > $25"],
+                "unmet_criteria": ["Merchant contact attempt"],
+                "blockers": [],
+                "policy_citations": [],
+            },
+        ]
+        suggestion = CopilotSuggestion(
+            call_id="call-003",
+            timestamp_ms=4000,
+            case_eligibility=eligibility,
+            case_advisory_summary="Fraud case eligible; dispute needs merchant contact.",
+        )
+        assert len(suggestion.case_eligibility) == 2
+        assert suggestion.case_eligibility[0]["eligibility"] == "eligible"
+        assert suggestion.case_eligibility[1]["unmet_criteria"] == ["Merchant contact attempt"]
+        assert "Fraud case eligible" in suggestion.case_advisory_summary
+
+    def test_case_eligibility_json_roundtrip(self) -> None:
+        suggestion = CopilotSuggestion(
+            call_id="call-004",
+            timestamp_ms=5000,
+            case_eligibility=[
+                {"case_type": "scam", "eligibility": "blocked", "blockers": ["Active fraud case"]}
+            ],
+            case_advisory_summary="Scam case blocked.",
+        )
+        json_str = suggestion.model_dump_json()
+        restored = CopilotSuggestion.model_validate_json(json_str)
+        assert restored.case_eligibility == suggestion.case_eligibility
+        assert restored.case_advisory_summary == "Scam case blocked."
 
     def test_model_dump_roundtrip(self) -> None:
         suggestion = CopilotSuggestion(

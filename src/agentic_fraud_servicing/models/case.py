@@ -104,3 +104,5 @@ class CopilotSuggestion(BaseModel):
     safety_guidance: str = ""
     hypothesis_scores: dict[str, float] = {}
     impersonation_risk: float = 0.0
+    case_eligibility: list[dict] = []
+    case_advisory_summary: str = ""
