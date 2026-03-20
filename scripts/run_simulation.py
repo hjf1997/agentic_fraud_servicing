@@ -147,6 +147,17 @@ def _format_copilot_context(suggestion: CopilotSuggestion) -> str:
         lines.append(f"Summary: {suggestion.running_summary}")
     if suggestion.retrieved_facts:
         lines.append(f"Retrieved facts: {suggestion.retrieved_facts[0][:200]}")
+    if suggestion.case_eligibility:
+        lines.append("Case eligibility:")
+        for assess in suggestion.case_eligibility:
+            ctype = assess.get("case_type", "?")
+            elig = assess.get("eligibility", "?")
+            lines.append(f"  - {ctype}: {elig}")
+            unmet = assess.get("unmet_criteria", [])
+            if unmet:
+                lines.append(f"    Unmet: {'; '.join(unmet[:3])}")
+    if suggestion.case_advisory_summary:
+        lines.append(f"Case advisory: {suggestion.case_advisory_summary}")
     return "\n".join(lines)
 
 
@@ -179,6 +190,18 @@ def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
         print(f"  {DIM}Summary: {suggestion.running_summary}{RESET}")
     if suggestion.safety_guidance:
         print(f"  {YELLOW}Safety: {suggestion.safety_guidance}{RESET}")
+    if suggestion.case_eligibility:
+        parts = []
+        for assess in suggestion.case_eligibility:
+            ctype = assess.get("case_type", "?")
+            elig = assess.get("eligibility", "?")
+            if elig == "eligible":
+                parts.append(f"{GREEN}{ctype}={elig}{RESET}")
+            elif elig == "blocked":
+                parts.append(f"{RED}{ctype}={elig}{RESET}")
+            else:
+                parts.append(f"{YELLOW}{ctype}={elig}{RESET}")
+        print(f"  Case Eligibility: {' | '.join(parts)}")
 
 
 def _persist_trace(
