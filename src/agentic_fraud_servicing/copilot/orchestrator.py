@@ -1,10 +1,10 @@
 """Central copilot orchestrator with running state.
 
 Processes transcript events, maintains running hypothesis scores and
-impersonation risk, invokes specialist agents (triage, auth, question
-planner, retrieval, hypothesis), and produces CopilotSuggestion output
-for each turn. This is a plain Python class — not an Agents SDK Agent —
-keeping the control flow explicit and auditable.
+impersonation risk, invokes specialist agents (triage, auth, retrieval,
+hypothesis, case advisor, question planner), and produces CopilotSuggestion
+output for each turn. This is a plain Python class — not an Agents SDK
+Agent — keeping the control flow explicit and auditable.
 """
 
 import uuid
@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
+from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_hypothesis
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan, run_question_planner
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult, run_retrieval
@@ -88,9 +89,9 @@ class CopilotOrchestrator:
     async def process_event(self, event: TranscriptEvent) -> CopilotSuggestion:
         """Process a single transcript event and return copilot suggestions.
 
-        Runs 5-step pipeline: triage (allegation extraction) → auth → question
-        planner → retrieval → hypothesis scoring. Each specialist call is
-        wrapped in try/except for graceful degradation.
+        Runs 6-step pipeline: triage → auth → retrieval → hypothesis →
+        case advisor → question planner. Each specialist call is wrapped in
+        try/except for graceful degradation.
 
         Args:
             event: The transcript event to process.
@@ -107,6 +108,8 @@ class CopilotOrchestrator:
         risk_flags: list[str] = []
         suggested_questions: list[str] = []
         retrieved_facts: list[str] = []
+        case_eligibility: list[dict] = []
+        case_advisory_summary: str = ""
 
         # 2. Run retrieval once at the start to pre-fetch data
         if self._retrieval_result is None and self.case_id is not None:
@@ -137,15 +140,10 @@ class CopilotOrchestrator:
                 risk_flags.append(f"Step-up auth recommended: {auth_result.step_up_method}")
             risk_flags.extend(auth_result.risk_factors)
 
-        # 5. Run question planner agent
-        question_result = await self._run_question_planner_safe(running_summary, risk_flags)
-        if question_result is not None:
-            suggested_questions = question_result.questions
-
-        # 6. Update missing fields based on event text keywords
+        # 5. Update missing fields based on event text keywords
         self._update_missing_fields(event.text)
 
-        # 7. Collect retrieved facts from retrieval result
+        # 6. Collect retrieved facts from retrieval result
         if self._retrieval_result is not None:
             retrieved_facts = [self._retrieval_result.retrieval_summary]
             self.evidence_collected = [
@@ -153,14 +151,31 @@ class CopilotOrchestrator:
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
-        # 8. Run hypothesis agent — scores 4 categories using all context
+        # 7. Run hypothesis agent — scores 4 categories using all context
         hypothesis_result = await self._run_hypothesis_safe(
             auth_result=auth_result, risk_flags=risk_flags
         )
         if hypothesis_result is not None:
             self.hypothesis_scores = dict(hypothesis_result.scores)
 
-        # 9. Build safety guidance
+        # 8. Run case advisor — evaluate case opening eligibility
+        case_advisory = await self._run_case_advisor_safe(risk_flags)
+        if case_advisory is not None:
+            case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]
+            case_advisory_summary = case_advisory.summary
+            # Prepend unmet criteria to missing_fields for the question planner
+            unmet = []
+            for assessment in case_advisory.assessments:
+                for criterion in assessment.unmet_criteria:
+                    unmet.append(f"[{assessment.case_type}] {criterion}")
+            self.missing_fields = unmet + self.missing_fields
+
+        # 9. Run question planner agent (after case advisor so it has unmet criteria)
+        question_result = await self._run_question_planner_safe(running_summary, risk_flags)
+        if question_result is not None:
+            suggested_questions = question_result.questions
+
+        # 10. Build safety guidance
         safety_guidance = self._build_safety_guidance()
 
         return CopilotSuggestion(
@@ -173,6 +188,8 @@ class CopilotOrchestrator:
             safety_guidance=safety_guidance,
             hypothesis_scores=dict(self.hypothesis_scores),
             impersonation_risk=self.impersonation_risk,
+            case_eligibility=case_eligibility,
+            case_advisory_summary=case_advisory_summary,
         )
 
     # -- Private helper methods --
@@ -392,4 +409,18 @@ class CopilotOrchestrator:
             )
         except Exception as exc:
             risk_flags.append(f"Hypothesis scoring failed: {exc}")
+            return None
+
+    async def _run_case_advisor_safe(self, risk_flags: list[str]) -> CaseAdvisory | None:
+        """Run case advisor agent with error handling."""
+        try:
+            return await run_case_advisor(
+                allegations_summary=self._format_allegations_for_hypothesis(),
+                evidence_summary=self._format_evidence_for_hypothesis(),
+                hypothesis_scores=dict(self.hypothesis_scores),
+                conversation_summary=self._format_conversation_for_hypothesis(),
+                model_provider=self.model_provider,
+            )
+        except Exception as exc:
+            risk_flags.append(f"Case advisor failed: {exc}")
             return None
