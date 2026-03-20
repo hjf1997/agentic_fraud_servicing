@@ -310,14 +310,20 @@ class TestRunningStateAccumulation:
     async def test_accumulated_allegations_grow(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """Accumulated allegations should grow with each processed event."""
+        """Accumulated allegations should grow with each CARDMEMBER event.
+
+        Uses CARDMEMBER events (index 1) since triage is skipped for CCP/SYSTEM
+        speakers via the speaker-based fast path.
+        """
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
 
-        await orch.process_event(sample_transcript_events[0])
+        # sample_transcript_events[1] is CARDMEMBER — triage runs
+        await orch.process_event(sample_transcript_events[1])
         allegations_after_first = len(orch.accumulated_allegations)
         assert allegations_after_first == 2  # _TRIAGE_RESULT has 2 allegations
 
+        # Process another CARDMEMBER-like event to see growth
         await orch.process_event(sample_transcript_events[1])
         assert len(orch.accumulated_allegations) == allegations_after_first + 2
 

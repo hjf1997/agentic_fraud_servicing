@@ -763,6 +763,141 @@ class TestSafetyGuidance:
         assert "Never ask for full PAN or CVV" in result.safety_guidance
 
 
+class TestSpeakerFastPath:
+    """Tests for speaker-based fast path routing."""
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_system_event_skips_triage_auth_hypothesis(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """SYSTEM events skip triage, auth, and hypothesis agents."""
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        event = _make_event(text="Call connected", speaker=SpeakerType.SYSTEM)
+        result = await orch.process_event(event)
+
+        assert isinstance(result, CopilotSuggestion)
+        mock_triage.assert_not_awaited()
+        mock_auth.assert_not_awaited()
+        mock_hypothesis.assert_not_awaited()
+        # Retrieval, question planner, and case advisor still run
+        mock_retrieval.assert_awaited_once()
+        mock_question.assert_awaited_once()
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_system_event_returns_previous_hypothesis_scores(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """SYSTEM events return the previous hypothesis scores unchanged."""
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        orch.hypothesis_scores = {
+            "THIRD_PARTY_FRAUD": 0.6,
+            "FIRST_PARTY_FRAUD": 0.1,
+            "SCAM": 0.2,
+            "DISPUTE": 0.1,
+        }
+        event = _make_event(text="Identity verified", speaker=SpeakerType.SYSTEM)
+        result = await orch.process_event(event)
+
+        assert result.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.6
+        assert result.hypothesis_scores["FIRST_PARTY_FRAUD"] == 0.1
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_ccp_event_skips_triage(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """CCP events skip triage but run auth and hypothesis."""
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        event = _make_event(text="Can you confirm the transaction date?", speaker=SpeakerType.CCP)
+        await orch.process_event(event)
+
+        mock_triage.assert_not_awaited()
+        mock_auth.assert_awaited_once()
+        mock_hypothesis.assert_awaited_once()
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_cardmember_event_runs_full_pipeline(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """CARDMEMBER events run all 6 agents."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        event = _make_event(speaker=SpeakerType.CARDMEMBER)
+        await orch.process_event(event)
+
+        mock_triage.assert_awaited_once()
+        mock_auth.assert_awaited_once()
+        mock_retrieval.assert_awaited_once()
+        mock_hypothesis.assert_awaited_once()
+        mock_question.assert_awaited_once()
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_transcript_history_updated_for_all_speakers(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Transcript history grows for SYSTEM, CCP, and CARDMEMBER events."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event(event_id="e1", speaker=SpeakerType.SYSTEM))
+        await orch.process_event(_make_event(event_id="e2", speaker=SpeakerType.CCP))
+        await orch.process_event(_make_event(event_id="e3", speaker=SpeakerType.CARDMEMBER))
+
+        assert len(orch.transcript_history) == 3
+        assert orch.transcript_history[0].speaker == SpeakerType.SYSTEM
+        assert orch.transcript_history[1].speaker == SpeakerType.CCP
+        assert orch.transcript_history[2].speaker == SpeakerType.CARDMEMBER
+
+
 class TestCaseAdvisorIntegration:
     """Tests for case advisor integration in the pipeline."""
 
