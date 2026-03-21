@@ -1145,10 +1145,11 @@ class TestCaseAdvisorIntegration:
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_unmet_criteria_prepended_to_missing_fields(
+    async def test_unmet_criteria_passed_to_question_planner(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """Unmet criteria from case advisor are prepended to missing_fields."""
+        """Unmet criteria from case advisor are passed to question planner
+        as extra missing fields, but NOT accumulated in self.missing_fields."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
@@ -1159,10 +1160,12 @@ class TestCaseAdvisorIntegration:
         orch = _make_orchestrator()
         await orch.process_event(_make_event())
 
-        # Unmet criteria should be at the front of missing_fields
-        assert any("[fraud]" in f.lower() for f in orch.missing_fields)
-        assert "[fraud] Identity verification pending" in orch.missing_fields
-        assert "[fraud] Authorization method unclear" in orch.missing_fields
+        # Unmet criteria should NOT be accumulated in self.missing_fields
+        assert not any("[fraud]" in f.lower() for f in orch.missing_fields)
+        # But they should have been passed to the question planner via missing_fields arg
+        call_kwargs = mock_question.call_args
+        planner_missing = call_kwargs.kwargs.get("missing_fields", call_kwargs[1].get("missing_fields", []))
+        assert any("[fraud]" in f.lower() for f in planner_missing)
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)

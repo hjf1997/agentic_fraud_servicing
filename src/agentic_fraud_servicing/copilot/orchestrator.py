@@ -209,18 +209,21 @@ class CopilotOrchestrator:
 
         # 9. Run case advisor — evaluate case opening eligibility
         case_advisory = await self._run_case_advisor_safe(risk_flags)
+        unmet_criteria: list[str] = []
         if case_advisory is not None:
             case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]
             case_advisory_summary = case_advisory.summary
-            # Prepend unmet criteria to missing_fields for the question planner
-            unmet = []
+            # Collect unmet criteria to pass to question planner (not accumulated
+            # in self.missing_fields — they change each turn and would bloat the list)
             for assessment in case_advisory.assessments:
                 for criterion in assessment.unmet_criteria:
-                    unmet.append(f"[{assessment.case_type}] {criterion}")
-            self.missing_fields = unmet + self.missing_fields
+                    unmet_criteria.append(f"[{assessment.case_type}] {criterion}")
 
         # 10. Run question planner agent (after case advisor so it has unmet criteria)
-        question_result = await self._run_question_planner_safe(running_summary, risk_flags)
+        planner_missing = unmet_criteria + self.missing_fields
+        question_result = await self._run_question_planner_safe(
+            running_summary, risk_flags, extra_missing=planner_missing
+        )
         if question_result is not None:
             suggested_questions = question_result.questions
 
@@ -460,21 +463,29 @@ class CopilotOrchestrator:
             return None
 
     async def _run_question_planner_safe(
-        self, case_summary: str, risk_flags: list[str]
+        self,
+        case_summary: str,
+        risk_flags: list[str],
+        *,
+        extra_missing: list[str] | None = None,
     ) -> QuestionPlan | None:
         """Run question planner agent with error handling.
 
         Passes recent conversation turns and previously suggested questions
         so the planner avoids repeating questions already asked or suggested.
+        ``extra_missing`` (typically unmet case-advisor criteria) is passed
+        as additional missing fields for the current turn only — it is NOT
+        accumulated into ``self.missing_fields``.
         """
         # Last 5 conversation turns for context
         recent_turns = [(e.speaker.value, e.text) for e in self.transcript_history[-5:]]
         # Flatten recent suggestions into a single dedup list
         recent_questions = [q for qs in self._recent_suggestions for q in qs]
+        missing = extra_missing if extra_missing else list(self.missing_fields)
         try:
             return await run_question_planner(
                 case_summary=case_summary,
-                missing_fields=list(self.missing_fields),
+                missing_fields=missing,
                 hypothesis_scores=dict(self.hypothesis_scores),
                 model_provider=self.model_provider,
                 recent_turns=recent_turns if recent_turns else None,
