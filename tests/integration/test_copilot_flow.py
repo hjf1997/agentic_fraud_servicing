@@ -233,6 +233,7 @@ class TestCopilotSuggestionOutput:
         """CopilotSuggestion.case_eligibility should be populated from case advisor mock."""
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch._turn_count = 3  # Case advisor only runs after turn 3
 
         result = await orch.process_event(sample_transcript_events[0])
         assert len(result.case_eligibility) == 2
@@ -248,6 +249,7 @@ class TestCopilotSuggestionOutput:
         """CopilotSuggestion.case_advisory_summary should be populated from case advisor mock."""
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch._turn_count = 3  # Case advisor only runs after turn 3
 
         result = await orch.process_event(sample_transcript_events[0])
         assert "Fraud case incomplete" in result.case_advisory_summary
@@ -413,6 +415,10 @@ class TestPipelineOptimizations:
         ):
             gateway = gateway_factory(tmp_path)
             orch = CopilotOrchestrator(gateway, mock_model_provider)
+            # Advance past early-turn gates so all 6 agents run:
+            # turn > 3 for case advisor, impersonation_risk >= 0.4 for auth
+            orch._turn_count = 3
+            orch.impersonation_risk = 0.5
 
             # Process CARDMEMBER event (index 1) — full pipeline
             await orch.process_event(sample_transcript_events[1])

@@ -126,7 +126,7 @@ async def generate_cm_turn(
     Args:
         cm_agent: The scenario-specific CM simulator agent.
         conversation_history: Full conversation so far, formatted as text.
-        model_provider: The ModelProvider instance (e.g. BedrockModelProvider).
+        model_provider: The ModelProvider for the simulator (e.g. Haiku for speed).
 
     Returns:
         The cardmember's response text.
@@ -147,7 +147,7 @@ async def generate_ccp_turn(
     Args:
         conversation_history: Full conversation so far, formatted as text.
         copilot_context: Formatted copilot suggestions for the CCP to incorporate.
-        model_provider: The ModelProvider instance (e.g. BedrockModelProvider).
+        model_provider: The ModelProvider for the simulator (e.g. Haiku for speed).
 
     Returns:
         The CCP's response text.

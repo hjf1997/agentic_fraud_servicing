@@ -207,8 +207,12 @@ class CopilotOrchestrator:
             if hypothesis_result is not None:
                 self.hypothesis_scores = dict(hypothesis_result.scores)
 
-        # 9. Run case advisor — evaluate case opening eligibility
-        case_advisory = await self._run_case_advisor_safe(risk_flags)
+        # 9. Run case advisor — evaluate case opening eligibility.
+        # Skipped on early turns (first 3) when there isn't enough information
+        # to make meaningful eligibility assessments. Saves one LLM call per turn.
+        case_advisory = None
+        if self._turn_count > 3:
+            case_advisory = await self._run_case_advisor_safe(risk_flags)
         unmet_criteria: list[str] = []
         if case_advisory is not None:
             case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]

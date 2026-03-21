@@ -742,6 +742,10 @@ class TestGracefulDegradation:
         mock_advisor.side_effect = RuntimeError("case advisor error")
 
         orch = _make_orchestrator()
+        # Advance past early-turn gates so all agents are invoked:
+        # turn > 3 for case advisor, impersonation_risk >= 0.4 for auth
+        orch._turn_count = 3
+        orch.impersonation_risk = 0.5
         result = await orch.process_event(_make_event())
 
         assert isinstance(result, CopilotSuggestion)
@@ -1109,6 +1113,7 @@ class TestCaseAdvisorIntegration:
         mock_advisor.return_value = _mock_case_advisory()
 
         orch = _make_orchestrator()
+        orch._turn_count = 3  # Case advisor only runs after turn 3
         result = await orch.process_event(_make_event())
 
         assert len(result.case_eligibility) == 2
@@ -1135,6 +1140,7 @@ class TestCaseAdvisorIntegration:
         mock_advisor.return_value = _mock_case_advisory()
 
         orch = _make_orchestrator()
+        orch._turn_count = 3  # Case advisor only runs after turn 3
         result = await orch.process_event(_make_event())
 
         assert "Fraud case is incomplete" in result.case_advisory_summary
@@ -1158,13 +1164,16 @@ class TestCaseAdvisorIntegration:
         mock_advisor.return_value = _mock_case_advisory()
 
         orch = _make_orchestrator()
+        orch._turn_count = 3  # Case advisor only runs after turn 3
         await orch.process_event(_make_event())
 
         # Unmet criteria should NOT be accumulated in self.missing_fields
         assert not any("[fraud]" in f.lower() for f in orch.missing_fields)
         # But they should have been passed to the question planner via missing_fields arg
         call_kwargs = mock_question.call_args
-        planner_missing = call_kwargs.kwargs.get("missing_fields", call_kwargs[1].get("missing_fields", []))
+        planner_missing = call_kwargs.kwargs.get(
+            "missing_fields", call_kwargs[1].get("missing_fields", [])
+        )
         assert any("[fraud]" in f.lower() for f in planner_missing)
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
@@ -1185,6 +1194,7 @@ class TestCaseAdvisorIntegration:
         mock_advisor.side_effect = RuntimeError("LLM timeout")
 
         orch = _make_orchestrator()
+        orch._turn_count = 3  # Case advisor only runs after turn 3
         result = await orch.process_event(_make_event())
 
         assert isinstance(result, CopilotSuggestion)

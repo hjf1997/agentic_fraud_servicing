@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -62,6 +63,7 @@ from agentic_fraud_servicing.models.enums import (  # noqa: E402
 )
 from agentic_fraud_servicing.models.evidence import AllegationStatement, EvidenceEdge  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
+from agentic_fraud_servicing.providers.bedrock_provider import BedrockModelProvider  # noqa: E402
 from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
 from scripts.simulation_data import (  # noqa: E402
     DisputeAction,
@@ -85,6 +87,9 @@ DIM = "\033[2m"
 RESET = "\033[0m"
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+# Haiku model for CM/CCP simulators (cheaper and faster than Sonnet)
+_HAIKU_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 class TeeWriter(io.TextIOBase):
@@ -206,13 +211,22 @@ def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
 
 
 def _persist_trace(
-    gateway, case_id: str, agent_id: str, action: str, input_data: str, output_data: str
+    gateway,
+    case_id: str,
+    agent_id: str,
+    action: str,
+    input_data: str,
+    output_data: str,
+    duration_ms: float = 0.0,
 ) -> None:
     """Persist a data record to the trace store for dashboard consumption.
 
-    Generates a unique trace_id and timestamps automatically. Duration is 0.0
-    since these are data records, not timed operations. Conversation turn text
-    is redacted before storage to prevent raw PAN/PII from reaching the DB.
+    Generates a unique trace_id and timestamps automatically. Conversation turn
+    text is redacted before storage to prevent raw PAN/PII from reaching the DB.
+
+    Args:
+        duration_ms: Wall-clock duration of the operation in milliseconds.
+            Defaults to 0.0 for pure data records (e.g. transcript turns).
     """
     # Redact PII in conversation turn text before persisting
     if action == "conversation_turn":
@@ -231,7 +245,7 @@ def _persist_trace(
         action=action,
         input_data=input_data,
         output_data=output_data,
-        duration_ms=0.0,
+        duration_ms=duration_ms,
         timestamp=datetime.now(timezone.utc),
         status="success",
     )
@@ -411,6 +425,18 @@ async def run_scenario(scenario: Scenario) -> None:
         print(f"{RED}Check AWS credentials and Bedrock model configuration.{RESET}")
         sys.exit(1)
 
+    # Create a faster/cheaper Haiku provider for CM/CCP dialogue simulators.
+    # Specialist agents (triage, hypothesis, etc.) still use the main provider.
+    if settings.llm_provider == "bedrock":
+        from copy import copy
+
+        haiku_settings = copy(settings)
+        haiku_settings.aws_bedrock_model_id = _HAIKU_MODEL_ID
+        simulator_provider = BedrockModelProvider(haiku_settings)
+        print(f"  {DIM}Simulator model (CM/CCP): {_HAIKU_MODEL_ID}{RESET}")
+    else:
+        simulator_provider = model_provider
+
     db_dir = f"data/simulation/{scenario.name}"
     gateway = create_gateway(db_dir)
     print(f"\n{DIM}Gateway created with SQLite stores in {db_dir}/{RESET}")
@@ -452,11 +478,13 @@ async def run_scenario(scenario: Scenario) -> None:
     # -- Turn 1: CCP greeting (no copilot context yet) --
     turn += 1
     try:
+        t0 = time.perf_counter()
         ccp_text = await generate_ccp_turn(
             conversation_history="[Call begins. Greet the caller.]",
             copilot_context="No copilot data yet — this is the start of the call.",
-            model_provider=model_provider,
+            model_provider=simulator_provider,
         )
+        ccp_dur = (time.perf_counter() - t0) * 1000
     except Exception as exc:
         print(f"\n{RED}CCP generation failed on turn {turn}: {exc}{RESET}")
         sys.exit(1)
@@ -473,6 +501,7 @@ async def run_scenario(scenario: Scenario) -> None:
         "conversation_turn",
         json.dumps({"turn": turn, "speaker": "CCP"}),
         json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
+        duration_ms=ccp_dur,
     )
 
     # -- Conversation loop --
@@ -481,7 +510,9 @@ async def run_scenario(scenario: Scenario) -> None:
         turn += 1
         history_text = "\n".join(f"{spk}: {txt}" for spk, txt in conversation_history)
         try:
-            cm_text = await generate_cm_turn(scenario_cm_agent, history_text, model_provider)
+            t0 = time.perf_counter()
+            cm_text = await generate_cm_turn(scenario_cm_agent, history_text, simulator_provider)
+            cm_dur = (time.perf_counter() - t0) * 1000
         except Exception as exc:
             print(f"\n{RED}CM generation failed on turn {turn}: {exc}{RESET}")
             break
@@ -489,9 +520,11 @@ async def run_scenario(scenario: Scenario) -> None:
         conversation_history.append(("CARDMEMBER", cm_text))
         _print_turn(turn, "CARDMEMBER", cm_text)
 
+        t0 = time.perf_counter()
         raw_event = _make_event(scenario.call_id, turn, "CARDMEMBER", cm_text)
         event = parse_transcript_event(raw_event)
         last_suggestion = await copilot.process_event(event)
+        copilot_dur = (time.perf_counter() - t0) * 1000
         _print_copilot_brief(last_suggestion)
 
         # Persist CM turn transcript and copilot suggestion
@@ -502,6 +535,7 @@ async def run_scenario(scenario: Scenario) -> None:
             "conversation_turn",
             json.dumps({"turn": turn, "speaker": "CARDMEMBER"}),
             json.dumps({"turn": turn, "speaker": "CARDMEMBER", "text": cm_text}),
+            duration_ms=cm_dur,
         )
         _persist_trace(
             gateway,
@@ -510,6 +544,7 @@ async def run_scenario(scenario: Scenario) -> None:
             "suggestion",
             json.dumps({"turn": turn}),
             last_suggestion.model_dump_json(),
+            duration_ms=copilot_dur,
         )
 
         # Inject SYSTEM events at key points
@@ -561,7 +596,9 @@ async def run_scenario(scenario: Scenario) -> None:
         copilot_ctx = _format_copilot_context(last_suggestion)
         history_text = "\n".join(f"{spk}: {txt}" for spk, txt in conversation_history)
         try:
-            ccp_text = await generate_ccp_turn(history_text, copilot_ctx, model_provider)
+            t0 = time.perf_counter()
+            ccp_text = await generate_ccp_turn(history_text, copilot_ctx, simulator_provider)
+            ccp_dur = (time.perf_counter() - t0) * 1000
         except Exception as exc:
             print(f"\n{RED}CCP generation failed on turn {turn}: {exc}{RESET}")
             break
@@ -578,6 +615,7 @@ async def run_scenario(scenario: Scenario) -> None:
             "conversation_turn",
             json.dumps({"turn": turn, "speaker": "CCP"}),
             json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
+            duration_ms=ccp_dur,
         )
 
     # -- Final copilot state --
