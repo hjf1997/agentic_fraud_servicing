@@ -395,6 +395,7 @@ async def _process_dispute_action(
 
 async def run_scenario(scenario: Scenario) -> None:
     """Run a full end-to-end simulation for the given scenario."""
+    wall_start = time.perf_counter()
 
     # -- Banner --
     print(f"\n{BOLD}{CYAN}{'=' * 60}{RESET}")
@@ -717,7 +718,10 @@ async def run_scenario(scenario: Scenario) -> None:
     traces = gateway.trace_store.get_traces_by_case(scenario.case_id)
     print(f"  Trace records: {len(traces)}")
 
+    elapsed = time.perf_counter() - wall_start
+    minutes, seconds = divmod(elapsed, 60)
     print(f"\n{BOLD}{GREEN}Simulation complete.{RESET}")
+    print(f"  Elapsed time: {int(minutes)}m {seconds:.1f}s")
     all_ok = final_case is not None and len(final_nodes) > len(nodes) and len(traces) > 0
     if all_ok:
         print(f"{GREEN}All verification checks passed.{RESET}")
