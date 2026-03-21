@@ -822,14 +822,10 @@ class TestSpeakerFastPath:
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_system_event_skips_triage_auth_hypothesis(
+    async def test_system_event_skips_all_agents(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """SYSTEM events skip triage, auth, and hypothesis agents."""
-        mock_question.return_value = _mock_question_result()
-        mock_retrieval.return_value = _mock_retrieval_result()
-        mock_advisor.return_value = None
-
+        """SYSTEM events skip all agents — only CARDMEMBER events trigger agents."""
         orch = _make_orchestrator()
         event = _make_event(text="Call connected", speaker=SpeakerType.SYSTEM)
         result = await orch.process_event(event)
@@ -838,9 +834,9 @@ class TestSpeakerFastPath:
         mock_triage.assert_not_awaited()
         mock_auth.assert_not_awaited()
         mock_hypothesis.assert_not_awaited()
-        # Retrieval, question planner, and case advisor still run
-        mock_retrieval.assert_awaited_once()
-        mock_question.assert_awaited_once()
+        mock_retrieval.assert_not_awaited()
+        mock_question.assert_not_awaited()
+        mock_advisor.assert_not_awaited()
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
@@ -852,10 +848,6 @@ class TestSpeakerFastPath:
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
         """SYSTEM events return the previous hypothesis scores unchanged."""
-        mock_question.return_value = _mock_question_result()
-        mock_retrieval.return_value = _mock_retrieval_result()
-        mock_advisor.return_value = None
-
         orch = _make_orchestrator()
         orch.hypothesis_scores = {
             "THIRD_PARTY_FRAUD": 0.6,
@@ -875,23 +867,21 @@ class TestSpeakerFastPath:
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_ccp_event_skips_triage(
+    async def test_ccp_event_skips_all_agents(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """CCP events skip triage but run auth and hypothesis."""
-        mock_auth.return_value = _mock_auth_result()
-        mock_question.return_value = _mock_question_result()
-        mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
-        mock_advisor.return_value = None
-
+        """CCP events skip all agents — only CARDMEMBER events trigger agents."""
         orch = _make_orchestrator()
         event = _make_event(text="Can you confirm the transaction date?", speaker=SpeakerType.CCP)
-        await orch.process_event(event)
+        result = await orch.process_event(event)
 
+        assert isinstance(result, CopilotSuggestion)
         mock_triage.assert_not_awaited()
-        mock_auth.assert_awaited_once()
-        mock_hypothesis.assert_awaited_once()
+        mock_auth.assert_not_awaited()
+        mock_hypothesis.assert_not_awaited()
+        mock_retrieval.assert_not_awaited()
+        mock_question.assert_not_awaited()
+        mock_advisor.assert_not_awaited()
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
@@ -1027,40 +1017,6 @@ class TestConditionalAuth:
         # Turn 4 — high risk (0.5 >= 0.4), auth should run
         await orch.process_event(_make_event(event_id="evt-3"))
         assert mock_auth.await_count == 4
-
-    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
-    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
-    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
-    @patch(_AUTH_PATCH, new_callable=AsyncMock)
-    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_auth_runs_on_system_event_after_turn_3(
-        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
-    ):
-        """Auth agent runs on SYSTEM events regardless of turn count.
-
-        Note: SYSTEM events already skip auth via speaker fast path (16.3),
-        so this verifies _should_run_auth returns True for SYSTEM events even
-        though the fast path takes precedence.
-        """
-        mock_triage.return_value = _mock_triage_result()
-        mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
-        mock_question.return_value = _mock_question_result()
-        mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
-        mock_advisor.return_value = None
-
-        orch = _make_orchestrator()
-        # 3 CARDMEMBER turns to establish identity
-        for i in range(3):
-            await orch.process_event(_make_event(event_id=f"evt-{i}"))
-
-        # _should_run_auth returns True for SYSTEM event (even though speaker
-        # fast path skips auth for SYSTEM events at a higher level)
-        system_event = _make_event(
-            event_id="evt-sys", text="Identity verified", speaker=SpeakerType.SYSTEM
-        )
-        assert orch._should_run_auth(system_event) is True
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)

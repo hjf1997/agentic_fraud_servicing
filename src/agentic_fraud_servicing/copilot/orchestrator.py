@@ -85,18 +85,17 @@ class CopilotOrchestrator:
     async def process_event(self, event: TranscriptEvent) -> CopilotSuggestion:
         """Process a single transcript event and return copilot suggestions.
 
-        Uses speaker-based routing to avoid unnecessary agent calls:
-        - SYSTEM events: skip triage/auth/hypothesis (no CM speech to analyze).
-        - CCP events: skip triage (CCP isn't making allegations).
-        - CARDMEMBER events: full pipeline.
+        Only CARDMEMBER events trigger the agent pipeline — these are the
+        only turns that introduce new information to analyze. SYSTEM and CCP
+        events are recorded in transcript history but return the previous
+        suggestion state immediately (no LLM calls).
+
+        For CARDMEMBER events the pipeline is:
+        1. Parallel: triage (claim extraction) + auth (conditional) + retrieval
+        2. Sequential: hypothesis → case advisor (after turn 3) → question planner
 
         Auth is conditional after the first 3 turns: skipped when
-        impersonation risk is low (< 0.4) and the event is not SYSTEM.
-
-        Within each path, independent agents run concurrently via
-        asyncio.gather(). Hypothesis → case advisor → question planner always
-        run sequentially after the parallel group. Each specialist call is
-        wrapped in try/except for graceful degradation.
+        impersonation risk is low (< 0.4).
 
         Args:
             event: The transcript event to process.
@@ -111,103 +110,79 @@ class CopilotOrchestrator:
             self.case_id = f"case-{event.call_id}"
             self.call_id = event.call_id
 
+        # 2. Non-CARDMEMBER events: record in history, return previous state
+        if event.speaker != SpeakerType.CARDMEMBER:
+            return self._build_suggestion(event)
+
+        # 3. CARDMEMBER event: run full agent pipeline
         risk_flags: list[str] = []
-        suggested_questions: list[str] = []
-        retrieved_facts: list[str] = []
-        case_eligibility: list[dict] = []
-        case_advisory_summary: str = ""
 
-        triage_result = None
-        auth_result = None
-
-        # 2. Speaker-based fast path: run different agent sets per speaker
-        if event.speaker == SpeakerType.SYSTEM:
-            # SYSTEM events: only run retrieval (if not cached)
-            retrieval_result = await self._run_retrieval_safe(risk_flags)
-        elif event.speaker == SpeakerType.CCP:
-            # CCP events: skip triage, run auth (conditionally) + retrieval in parallel
-            prior_retrieval = self._retrieval_result
-            auth_events = prior_retrieval.auth_events if prior_retrieval else []
-            customer_profile = prior_retrieval.customer_profile if prior_retrieval else None
-
-            if self._should_run_auth(event):
-                auth_result, retrieval_result = await asyncio.gather(
-                    self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
-                    self._run_retrieval_safe(risk_flags),
-                )
-            else:
-                retrieval_result = await self._run_retrieval_safe(risk_flags)
+        # 3a. Parallel group: triage + auth (conditional) + retrieval
+        # Use sliding window: last 5 turns for context, allegation summary for dedup
+        window_size = 5
+        history = self.transcript_history
+        if len(history) > window_size:
+            conversation_window = [(e.speaker.value, e.text) for e in history[-window_size:]]
+            allegation_summary = self._format_allegations_for_hypothesis()
         else:
-            # CARDMEMBER events: full parallel group (triage + auth + retrieval)
-            # Use sliding window: last 5 turns for context, allegation summary for dedup
-            window_size = 5
-            history = self.transcript_history
-            if len(history) > window_size:
-                conversation_window = [(e.speaker.value, e.text) for e in history[-window_size:]]
-                allegation_summary = self._format_allegations_for_hypothesis()
-            else:
-                conversation_window = [(e.speaker.value, e.text) for e in history]
-                allegation_summary = None  # Short calls: full history, no summary needed
+            conversation_window = [(e.speaker.value, e.text) for e in history]
+            allegation_summary = None  # Short calls: full history, no summary needed
 
-            prior_retrieval = self._retrieval_result
-            auth_events = prior_retrieval.auth_events if prior_retrieval else []
-            customer_profile = prior_retrieval.customer_profile if prior_retrieval else None
+        prior_retrieval = self._retrieval_result
+        auth_events = prior_retrieval.auth_events if prior_retrieval else []
+        customer_profile = prior_retrieval.customer_profile if prior_retrieval else None
 
-            if self._should_run_auth(event):
-                triage_result, auth_result, retrieval_result = await asyncio.gather(
-                    self._run_triage_safe(
-                        event.text, risk_flags, conversation_window, allegation_summary
-                    ),
-                    self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
-                    self._run_retrieval_safe(risk_flags),
-                )
-            else:
-                triage_result, retrieval_result = await asyncio.gather(
-                    self._run_triage_safe(
-                        event.text, risk_flags, conversation_window, allegation_summary
-                    ),
-                    self._run_retrieval_safe(risk_flags),
-                )
+        auth_result = None
+        if self._should_run_auth(event):
+            triage_result, auth_result, retrieval_result = await asyncio.gather(
+                self._run_triage_safe(
+                    event.text, risk_flags, conversation_window, allegation_summary
+                ),
+                self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
+                self._run_retrieval_safe(risk_flags),
+            )
+        else:
+            triage_result, retrieval_result = await asyncio.gather(
+                self._run_triage_safe(
+                    event.text, risk_flags, conversation_window, allegation_summary
+                ),
+                self._run_retrieval_safe(risk_flags),
+            )
 
-        # 3. Process parallel results: retrieval
+        # 3b. Process parallel results: retrieval
         if retrieval_result is not None:
             self._retrieval_result = retrieval_result
 
-        # 4. Process parallel results: triage (CARDMEMBER only)
+        # 3c. Process parallel results: triage
         if triage_result is not None and triage_result.allegations:
             self.accumulated_allegations.extend(triage_result.allegations)
             self._persist_allegations(triage_result.allegations)
 
-        # Build running summary from accumulated allegations
-        running_summary = self._build_allegations_summary()
-
-        # 5. Process parallel results: auth (CARDMEMBER and CCP only)
+        # 3d. Process parallel results: auth
         if auth_result is not None:
             self.impersonation_risk = auth_result.impersonation_risk
             if auth_result.step_up_recommended:
                 risk_flags.append(f"Step-up auth recommended: {auth_result.step_up_method}")
             risk_flags.extend(auth_result.risk_factors)
 
-        # 6. Update missing fields from triage-extracted entities
+        # 4. Update missing fields from triage-extracted entities
         self._update_missing_fields()
 
-        # 7. Collect retrieved facts from retrieval result
+        # 5. Collect retrieved facts from retrieval result
         if self._retrieval_result is not None:
-            retrieved_facts = [self._retrieval_result.retrieval_summary]
             self.evidence_collected = [
                 f"txn:{len(self._retrieval_result.transactions)}",
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
-        # 8. Run hypothesis agent — skip for SYSTEM events (no new CM data)
-        if event.speaker != SpeakerType.SYSTEM:
-            hypothesis_result = await self._run_hypothesis_safe(
-                auth_result=auth_result, risk_flags=risk_flags
-            )
-            if hypothesis_result is not None:
-                self.hypothesis_scores = dict(hypothesis_result.scores)
+        # 6. Run hypothesis agent
+        hypothesis_result = await self._run_hypothesis_safe(
+            auth_result=auth_result, risk_flags=risk_flags
+        )
+        if hypothesis_result is not None:
+            self.hypothesis_scores = dict(hypothesis_result.scores)
 
-        # 9. Run case advisor — evaluate case opening eligibility.
+        # 7. Run case advisor — evaluate case opening eligibility.
         # Skipped on early turns (first 3) when there isn't enough information
         # to make meaningful eligibility assessments. Saves one LLM call per turn.
         case_advisory = None
@@ -215,45 +190,71 @@ class CopilotOrchestrator:
             case_advisory = await self._run_case_advisor_safe(risk_flags)
         unmet_criteria: list[str] = []
         if case_advisory is not None:
-            case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]
-            case_advisory_summary = case_advisory.summary
             # Collect unmet criteria to pass to question planner (not accumulated
             # in self.missing_fields — they change each turn and would bloat the list)
             for assessment in case_advisory.assessments:
                 for criterion in assessment.unmet_criteria:
                     unmet_criteria.append(f"[{assessment.case_type}] {criterion}")
 
-        # 10. Run question planner agent (after case advisor so it has unmet criteria)
+        # 8. Run question planner agent (after case advisor so it has unmet criteria)
+        running_summary = self._build_allegations_summary()
         planner_missing = unmet_criteria + self.missing_fields
         question_result = await self._run_question_planner_safe(
             running_summary, risk_flags, extra_missing=planner_missing
         )
-        if question_result is not None:
-            suggested_questions = question_result.questions
 
-        # 11. Track recent suggestions for dedup in subsequent turns
+        # 9. Track recent suggestions for dedup in subsequent turns
+        suggested_questions = question_result.questions if question_result else []
         self._recent_suggestions.append(suggested_questions)
         if len(self._recent_suggestions) > 3:
             self._recent_suggestions = self._recent_suggestions[-3:]
 
-        # 12. Build safety guidance
-        safety_guidance = self._build_safety_guidance()
+        # 10. Build and return the suggestion
+        return self._build_suggestion(
+            event,
+            risk_flags=risk_flags,
+            suggested_questions=suggested_questions,
+            case_advisory=case_advisory,
+        )
+
+    # -- Private helper methods --
+
+    def _build_suggestion(
+        self,
+        event: TranscriptEvent,
+        *,
+        risk_flags: list[str] | None = None,
+        suggested_questions: list[str] | None = None,
+        case_advisory: CaseAdvisory | None = None,
+    ) -> CopilotSuggestion:
+        """Assemble a CopilotSuggestion from current state.
+
+        Called after a CARDMEMBER pipeline run (with fresh results) or
+        directly for SYSTEM/CCP events (returning previous state).
+        """
+        case_eligibility: list[dict] = []
+        case_advisory_summary = ""
+        if case_advisory is not None:
+            case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]
+            case_advisory_summary = case_advisory.summary
+
+        retrieved_facts: list[str] = []
+        if self._retrieval_result is not None:
+            retrieved_facts = [self._retrieval_result.retrieval_summary]
 
         return CopilotSuggestion(
             call_id=event.call_id,
             timestamp_ms=event.timestamp_ms,
-            suggested_questions=suggested_questions,
-            risk_flags=risk_flags,
+            suggested_questions=suggested_questions or [],
+            risk_flags=risk_flags or [],
             retrieved_facts=retrieved_facts,
-            running_summary=running_summary,
-            safety_guidance=safety_guidance,
+            running_summary=self._build_allegations_summary(),
+            safety_guidance=self._build_safety_guidance(),
             hypothesis_scores=dict(self.hypothesis_scores),
             impersonation_risk=self.impersonation_risk,
             case_eligibility=case_eligibility,
             case_advisory_summary=case_advisory_summary,
         )
-
-    # -- Private helper methods --
 
     def _persist_allegations(self, allegations: list[AllegationExtraction]) -> None:
         """Persist extracted allegations as AllegationStatement evidence nodes.
@@ -394,16 +395,16 @@ class CopilotOrchestrator:
         return " ".join(parts)
 
     def _should_run_auth(self, event: TranscriptEvent) -> bool:
-        """Determine whether to invoke the auth agent on this turn.
+        """Determine whether to invoke the auth agent on this CARDMEMBER turn.
 
         Auth runs unconditionally on the first 3 turns (identity not yet
-        established), on SYSTEM events (may carry auth status updates), or
-        when impersonation risk is elevated (>= 0.4). Once identity is
-        established with low risk, auth is skipped to save latency.
+        established) or when impersonation risk is elevated (>= 0.4). Once
+        identity is established with low risk, auth is skipped to save latency.
+
+        Note: This method is only called for CARDMEMBER events — non-CARDMEMBER
+        events return early in process_event() before reaching this check.
         """
         if self._turn_count <= 3:
-            return True
-        if event.speaker == SpeakerType.SYSTEM:
             return True
         if self.impersonation_risk >= 0.4:
             return True

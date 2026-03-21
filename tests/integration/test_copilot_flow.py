@@ -198,7 +198,8 @@ class TestCopilotSuggestionOutput:
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
 
-        result = await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
+        result = await orch.process_event(sample_transcript_events[1])
         assert result.suggested_questions == _QUESTION_PLAN.questions
 
     @pytest.mark.usefixtures("_mock_specialists")
@@ -220,7 +221,8 @@ class TestCopilotSuggestionOutput:
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
 
-        result = await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
+        result = await orch.process_event(sample_transcript_events[1])
         assert result.hypothesis_scores["THIRD_PARTY_FRAUD"] == pytest.approx(0.60)
         assert result.hypothesis_scores["FIRST_PARTY_FRAUD"] == pytest.approx(0.10)
         assert result.hypothesis_scores["SCAM"] == pytest.approx(0.15)
@@ -235,7 +237,8 @@ class TestCopilotSuggestionOutput:
         orch = CopilotOrchestrator(gateway, mock_model_provider)
         orch._turn_count = 3  # Case advisor only runs after turn 3
 
-        result = await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
+        result = await orch.process_event(sample_transcript_events[1])
         assert len(result.case_eligibility) == 2
         assert result.case_eligibility[0]["case_type"] == "fraud"
         assert result.case_eligibility[0]["eligibility"] == "incomplete"
@@ -251,7 +254,8 @@ class TestCopilotSuggestionOutput:
         orch = CopilotOrchestrator(gateway, mock_model_provider)
         orch._turn_count = 3  # Case advisor only runs after turn 3
 
-        result = await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
+        result = await orch.process_event(sample_transcript_events[1])
         assert "Fraud case incomplete" in result.case_advisory_summary
         assert "Dispute case eligible" in result.case_advisory_summary
 
@@ -291,7 +295,8 @@ class TestRunningStateAccumulation:
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
 
-        await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
+        await orch.process_event(sample_transcript_events[1])
 
         assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] == pytest.approx(0.60)
         assert orch.hypothesis_scores["FIRST_PARTY_FRAUD"] == pytest.approx(0.10)
@@ -337,26 +342,33 @@ class TestRunningStateAccumulation:
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider)
 
-        await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
+        await orch.process_event(sample_transcript_events[1])
         assert orch.impersonation_risk == pytest.approx(0.15)
 
 
 class TestPipelineOptimizations:
     """Verify pipeline optimizations from L1-16 work end-to-end."""
 
-    async def test_system_event_fewer_agent_calls(
+    async def test_system_event_skips_all_agents(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """SYSTEM events should skip triage, auth, and hypothesis agents."""
+        """SYSTEM events should skip all agents — no LLM calls."""
         with (
             patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
             patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
-            patch(_PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN),
-            patch(_PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT),
+            patch(
+                _PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN
+            ) as m_question,
+            patch(
+                _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
+            ) as m_retrieval,
             patch(
                 _PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
             ) as m_hypo,
-            patch(_PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY),
+            patch(
+                _PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY
+            ) as m_advisor,
         ):
             gateway = gateway_factory(tmp_path)
             orch = CopilotOrchestrator(gateway, mock_model_provider)
@@ -364,10 +376,13 @@ class TestPipelineOptimizations:
             # Process SYSTEM event (index 2)
             await orch.process_event(sample_transcript_events[2])
 
-            # SYSTEM events skip triage, auth, and hypothesis
+            # SYSTEM events skip ALL agents
             m_triage.assert_not_awaited()
             m_auth.assert_not_awaited()
             m_hypo.assert_not_awaited()
+            m_retrieval.assert_not_awaited()
+            m_question.assert_not_awaited()
+            m_advisor.assert_not_awaited()
 
     async def test_multiple_events_retrieval_cached(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
