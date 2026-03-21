@@ -10,6 +10,7 @@ Agent — keeping the control flow explicit and auditable.
 
 import asyncio
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -394,6 +395,25 @@ class CopilotOrchestrator:
         parts.append("Never ask for full PAN or CVV.")
         return " ".join(parts)
 
+    def _log_agent_trace(
+        self, agent_name: str, action: str, duration_ms: float, status: str = "success"
+    ) -> None:
+        """Persist a per-agent trace record to the trace store for audit."""
+        try:
+            self.gateway.trace_store.log_invocation(
+                trace_id=str(uuid.uuid4()),
+                case_id=self.case_id or "unknown",
+                agent_id=f"copilot.{agent_name}",
+                action=action,
+                input_data=json.dumps({"turn": self._turn_count}),
+                output_data=json.dumps({"status": status}),
+                duration_ms=duration_ms,
+                timestamp=datetime.now(timezone.utc),
+                status=status,
+            )
+        except Exception:
+            pass  # Never let trace logging break the pipeline
+
     def _should_run_auth(self, event: TranscriptEvent) -> bool:
         """Determine whether to invoke the auth agent on this CARDMEMBER turn.
 
@@ -418,14 +438,20 @@ class CopilotOrchestrator:
         """
         if self._retrieval_result is not None:
             return self._retrieval_result
+        t0 = time.perf_counter()
         try:
-            return await run_retrieval(
+            result = await run_retrieval(
                 case_id=self.case_id,  # type: ignore[arg-type]
                 call_id=self.call_id,  # type: ignore[arg-type]
                 gateway=self.gateway,
                 model_provider=self.model_provider,
             )
+            self._log_agent_trace("retrieval", "run", (time.perf_counter() - t0) * 1000)
+            return result
         except Exception as exc:
+            self._log_agent_trace(
+                "retrieval", "run", (time.perf_counter() - t0) * 1000, status="error"
+            )
             risk_flags.append(f"Retrieval failed: {exc}")
             return None
 
@@ -437,14 +463,20 @@ class CopilotOrchestrator:
         allegation_summary: str | None = None,
     ) -> AllegationExtractionResult | None:
         """Run triage agent with error handling."""
+        t0 = time.perf_counter()
         try:
-            return await run_triage(
+            result = await run_triage(
                 transcript_text=text,
                 model_provider=self.model_provider,
                 conversation_history=conversation_history,
                 allegation_summary=allegation_summary,
             )
+            self._log_agent_trace("triage", "run", (time.perf_counter() - t0) * 1000)
+            return result
         except Exception as exc:
+            self._log_agent_trace(
+                "triage", "run", (time.perf_counter() - t0) * 1000, status="error"
+            )
             risk_flags.append(f"Triage failed: {exc}")
             return None
 
@@ -456,14 +488,18 @@ class CopilotOrchestrator:
         risk_flags: list[str],
     ) -> AuthAssessment | None:
         """Run auth assessment agent with error handling."""
+        t0 = time.perf_counter()
         try:
-            return await run_auth_assessment(
+            result = await run_auth_assessment(
                 transcript_text=text,
                 auth_events=auth_events,
                 customer_profile=customer_profile,
                 model_provider=self.model_provider,
             )
+            self._log_agent_trace("auth", "run", (time.perf_counter() - t0) * 1000)
+            return result
         except Exception as exc:
+            self._log_agent_trace("auth", "run", (time.perf_counter() - t0) * 1000, status="error")
             risk_flags.append(f"Auth assessment failed: {exc}")
             return None
 
@@ -487,8 +523,9 @@ class CopilotOrchestrator:
         # Flatten recent suggestions into a single dedup list
         recent_questions = [q for qs in self._recent_suggestions for q in qs]
         missing = extra_missing if extra_missing else list(self.missing_fields)
+        t0 = time.perf_counter()
         try:
-            return await run_question_planner(
+            result = await run_question_planner(
                 case_summary=case_summary,
                 missing_fields=missing,
                 hypothesis_scores=dict(self.hypothesis_scores),
@@ -496,7 +533,12 @@ class CopilotOrchestrator:
                 recent_turns=recent_turns if recent_turns else None,
                 recent_questions=recent_questions if recent_questions else None,
             )
+            self._log_agent_trace("question_planner", "run", (time.perf_counter() - t0) * 1000)
+            return result
         except Exception as exc:
+            self._log_agent_trace(
+                "question_planner", "run", (time.perf_counter() - t0) * 1000, status="error"
+            )
             risk_flags.append(f"Question planner failed: {exc}")
             return None
 
@@ -509,8 +551,9 @@ class CopilotOrchestrator:
 
         On failure, scores remain unchanged from the previous turn.
         """
+        t0 = time.perf_counter()
         try:
-            return await run_hypothesis(
+            result = await run_hypothesis(
                 allegations_summary=self._format_allegations_for_hypothesis(),
                 auth_summary=self._format_auth_for_hypothesis(auth_result),
                 evidence_summary=self._format_evidence_for_hypothesis(),
@@ -518,20 +561,31 @@ class CopilotOrchestrator:
                 conversation_summary=self._format_conversation_for_hypothesis(),
                 model_provider=self.model_provider,
             )
+            self._log_agent_trace("hypothesis", "run", (time.perf_counter() - t0) * 1000)
+            return result
         except Exception as exc:
+            self._log_agent_trace(
+                "hypothesis", "run", (time.perf_counter() - t0) * 1000, status="error"
+            )
             risk_flags.append(f"Hypothesis scoring failed: {exc}")
             return None
 
     async def _run_case_advisor_safe(self, risk_flags: list[str]) -> CaseAdvisory | None:
         """Run case advisor agent with error handling."""
+        t0 = time.perf_counter()
         try:
-            return await run_case_advisor(
+            result = await run_case_advisor(
                 allegations_summary=self._format_allegations_for_hypothesis(),
                 evidence_summary=self._format_evidence_for_hypothesis(),
                 hypothesis_scores=dict(self.hypothesis_scores),
                 conversation_summary=self._format_conversation_for_hypothesis(),
                 model_provider=self.model_provider,
             )
+            self._log_agent_trace("case_advisor", "run", (time.perf_counter() - t0) * 1000)
+            return result
         except Exception as exc:
+            self._log_agent_trace(
+                "case_advisor", "run", (time.perf_counter() - t0) * 1000, status="error"
+            )
             risk_flags.append(f"Case advisor failed: {exc}")
             return None
