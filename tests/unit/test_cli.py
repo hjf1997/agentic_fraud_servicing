@@ -17,8 +17,10 @@ from agentic_fraud_servicing.models.enums import AllegationType, CaseStatus
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 from agentic_fraud_servicing.ui.cli import (
     _format_case_pack_text,
+    _format_report_text,
     _format_suggestion_text,
     build_parser,
+    cmd_evaluate,
     cmd_investigate,
     cmd_simulate,
     cmd_view_case,
@@ -330,3 +332,318 @@ class TestCmdViewCase:
         assert exc_info.value.code == 1
         err = capsys.readouterr().err
         assert "case not found" in err
+
+
+# -- Evaluate subcommand tests --
+
+
+class TestBuildParserEvaluate:
+    """Test evaluate subcommand argument parsing."""
+
+    def test_evaluate_args(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "evaluate",
+                "-s",
+                "scam_techvault",
+                "-t",
+                "/tmp/t.json",
+                "-d",
+                "/tmp/db",
+                "-o",
+                "text",
+            ]
+        )
+        assert args.command == "evaluate"
+        assert args.scenario == "scam_techvault"
+        assert args.transcript == "/tmp/t.json"
+        assert args.db_dir == "/tmp/db"
+        assert args.output == "text"
+
+    def test_evaluate_defaults(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["evaluate", "-s", "test_scenario"])
+        assert args.transcript is None
+        assert args.db_dir is None
+        assert args.output == "json"
+
+
+class TestFormatReportText:
+    """Test text formatting for EvaluationReport."""
+
+    def test_contains_key_sections(self) -> None:
+        from agentic_fraud_servicing.evaluation.models import (
+            ConvergenceResult,
+            EvaluationReport,
+            LatencyReport,
+            PredictionResult,
+        )
+
+        report = EvaluationReport(
+            scenario_name="test_scenario",
+            overall_score=0.72,
+            latency=LatencyReport(
+                per_turn_latency_ms=[800.0, 1200.0],
+                p50_ms=800.0,
+                p95_ms=1200.0,
+                p99_ms=1200.0,
+                max_ms=1200.0,
+                compliance_rate=1.0,
+            ),
+            prediction=PredictionResult(
+                predicted_category="THIRD_PARTY_FRAUD",
+                ground_truth_category="THIRD_PARTY_FRAUD",
+                match=True,
+                confidence_delta=0.3,
+            ),
+            convergence=ConvergenceResult(
+                convergence_turn=3,
+                total_turns=8,
+                convergence_ratio=0.375,
+                correct_category="THIRD_PARTY_FRAUD",
+            ),
+            generated_at="2024-01-01T00:00:00Z",
+        )
+        text = _format_report_text(report)
+        assert "Evaluation Report" in text
+        assert "Scenario: test_scenario" in text
+        assert "Overall Score:" in text
+        assert "Per-Dimension Scores:" in text
+        assert "Key Metrics:" in text
+        assert "Prediction Match: YES" in text
+        assert "Convergence Turn: 3" in text
+        assert "Latency P95:" in text
+
+
+class TestCmdEvaluate:
+    """Test the evaluate subcommand handler."""
+
+    def _make_mock_scenario(self):
+        """Create a mock Scenario object."""
+        scenario = MagicMock()
+        scenario.case_id = "case-eval-001"
+        scenario.call_id = "call-eval-001"
+        scenario.seed_evidence_fn = MagicMock()
+        scenario.create_case_fn = MagicMock()
+        return scenario
+
+    def _make_mock_report(self):
+        """Create a minimal mock EvaluationReport."""
+        from agentic_fraud_servicing.evaluation.models import EvaluationReport
+
+        return EvaluationReport(
+            scenario_name="test_scenario",
+            overall_score=0.65,
+            generated_at="2024-01-01T00:00:00Z",
+        )
+
+    @pytest.mark.asyncio
+    async def test_evaluate_json_output(self, tmp_path, capsys) -> None:
+        """Evaluate prints EvaluationReport as JSON."""
+        scenario = self._make_mock_scenario()
+        report = self._make_mock_report()
+        suggestion = _make_suggestion()
+
+        mock_copilot = MagicMock()
+        mock_copilot.process_event = AsyncMock(return_value=suggestion)
+        mock_copilot.hypothesis_scores = {"THIRD_PARTY_FRAUD": 0.6}
+        mock_copilot.impersonation_risk = 0.1
+        mock_copilot.missing_fields = []
+        mock_copilot.evidence_collected = []
+        mock_copilot.accumulated_allegations = []
+
+        # Create a transcript file
+        transcript_file = tmp_path / "transcript.json"
+        transcript_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "call_id": "call-eval-001",
+                        "event_id": "e1",
+                        "timestamp_ms": 100,
+                        "speaker": "CCP",
+                        "text": "Hello",
+                    }
+                ]
+            )
+        )
+
+        args = argparse.Namespace(
+            scenario="test_scenario",
+            transcript=str(transcript_file),
+            db_dir=str(tmp_path / "db"),
+            output="json",
+        )
+
+        with (
+            patch("agentic_fraud_servicing.ui.cli._ensure_scripts_importable"),
+            patch("agentic_fraud_servicing.ui.cli.create_gateway"),
+            patch("agentic_fraud_servicing.ui.cli.create_provider"),
+            patch("agentic_fraud_servicing.ui.cli.CopilotOrchestrator", return_value=mock_copilot),
+            patch(
+                "agentic_fraud_servicing.ui.cli.generate_report",
+                new_callable=AsyncMock,
+                return_value=report,
+            ),
+            patch("agentic_fraud_servicing.ui.cli.save_report"),
+            patch.dict(
+                "sys.modules",
+                {
+                    "scripts": MagicMock(),
+                    "scripts.scenario_dispute_to_fraud": MagicMock(),
+                    "scripts.scenario_doordash_dashpass": MagicMock(),
+                    "scripts.scenario_doordash_dashpass_v2": MagicMock(),
+                    "scripts.scenario_doordash_fraud": MagicMock(),
+                    "scripts.scenario_highrisk_merchant": MagicMock(),
+                    "scripts.scenario_scam_techvault": MagicMock(),
+                    "scripts.simulation_data": MagicMock(
+                        get_scenario=MagicMock(return_value=scenario)
+                    ),
+                },
+            ),
+        ):
+            await cmd_evaluate(args)
+
+        out = capsys.readouterr().out
+        parsed = json.loads(out)
+        assert parsed["scenario_name"] == "test_scenario"
+        assert parsed["overall_score"] == 0.65
+
+    @pytest.mark.asyncio
+    async def test_evaluate_text_output(self, tmp_path, capsys) -> None:
+        """Evaluate prints text summary when --output text is used."""
+        scenario = self._make_mock_scenario()
+        report = self._make_mock_report()
+        suggestion = _make_suggestion()
+
+        mock_copilot = MagicMock()
+        mock_copilot.process_event = AsyncMock(return_value=suggestion)
+        mock_copilot.hypothesis_scores = {"THIRD_PARTY_FRAUD": 0.6}
+        mock_copilot.impersonation_risk = 0.1
+        mock_copilot.missing_fields = []
+        mock_copilot.evidence_collected = []
+        mock_copilot.accumulated_allegations = []
+
+        transcript_file = tmp_path / "transcript.json"
+        transcript_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "call_id": "call-eval-001",
+                        "event_id": "e1",
+                        "timestamp_ms": 100,
+                        "speaker": "CCP",
+                        "text": "Hello",
+                    }
+                ]
+            )
+        )
+
+        args = argparse.Namespace(
+            scenario="test_scenario",
+            transcript=str(transcript_file),
+            db_dir=str(tmp_path / "db"),
+            output="text",
+        )
+
+        with (
+            patch("agentic_fraud_servicing.ui.cli._ensure_scripts_importable"),
+            patch("agentic_fraud_servicing.ui.cli.create_gateway"),
+            patch("agentic_fraud_servicing.ui.cli.create_provider"),
+            patch("agentic_fraud_servicing.ui.cli.CopilotOrchestrator", return_value=mock_copilot),
+            patch(
+                "agentic_fraud_servicing.ui.cli.generate_report",
+                new_callable=AsyncMock,
+                return_value=report,
+            ),
+            patch("agentic_fraud_servicing.ui.cli.save_report"),
+            patch.dict(
+                "sys.modules",
+                {
+                    "scripts": MagicMock(),
+                    "scripts.scenario_dispute_to_fraud": MagicMock(),
+                    "scripts.scenario_doordash_dashpass": MagicMock(),
+                    "scripts.scenario_doordash_dashpass_v2": MagicMock(),
+                    "scripts.scenario_doordash_fraud": MagicMock(),
+                    "scripts.scenario_highrisk_merchant": MagicMock(),
+                    "scripts.scenario_scam_techvault": MagicMock(),
+                    "scripts.simulation_data": MagicMock(
+                        get_scenario=MagicMock(return_value=scenario)
+                    ),
+                },
+            ),
+        ):
+            await cmd_evaluate(args)
+
+        out = capsys.readouterr().out
+        assert "Evaluation Report" in out
+        assert "Overall Score:" in out
+
+    @pytest.mark.asyncio
+    async def test_evaluate_scenario_not_found(self, tmp_path) -> None:
+        """Evaluate exits with code 1 if scenario is not found."""
+        args = argparse.Namespace(
+            scenario="nonexistent",
+            transcript=None,
+            db_dir=str(tmp_path / "db"),
+            output="json",
+        )
+
+        with (
+            patch("agentic_fraud_servicing.ui.cli._ensure_scripts_importable"),
+            patch.dict(
+                "sys.modules",
+                {
+                    "scripts": MagicMock(),
+                    "scripts.scenario_dispute_to_fraud": MagicMock(),
+                    "scripts.scenario_doordash_dashpass": MagicMock(),
+                    "scripts.scenario_doordash_dashpass_v2": MagicMock(),
+                    "scripts.scenario_doordash_fraud": MagicMock(),
+                    "scripts.scenario_highrisk_merchant": MagicMock(),
+                    "scripts.scenario_scam_techvault": MagicMock(),
+                    "scripts.simulation_data": MagicMock(
+                        get_scenario=MagicMock(
+                            side_effect=KeyError("Unknown scenario: nonexistent")
+                        )
+                    ),
+                },
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await cmd_evaluate(args)
+        assert exc_info.value.code == 1
+
+    @pytest.mark.asyncio
+    async def test_evaluate_transcript_not_found(self, tmp_path) -> None:
+        """Evaluate exits with code 1 if transcript file is missing."""
+        scenario = self._make_mock_scenario()
+
+        args = argparse.Namespace(
+            scenario="test_scenario",
+            transcript="/nonexistent/transcript.json",
+            db_dir=str(tmp_path / "db"),
+            output="json",
+        )
+
+        with (
+            patch("agentic_fraud_servicing.ui.cli._ensure_scripts_importable"),
+            patch.dict(
+                "sys.modules",
+                {
+                    "scripts": MagicMock(),
+                    "scripts.scenario_dispute_to_fraud": MagicMock(),
+                    "scripts.scenario_doordash_dashpass": MagicMock(),
+                    "scripts.scenario_doordash_dashpass_v2": MagicMock(),
+                    "scripts.scenario_doordash_fraud": MagicMock(),
+                    "scripts.scenario_highrisk_merchant": MagicMock(),
+                    "scripts.scenario_scam_techvault": MagicMock(),
+                    "scripts.simulation_data": MagicMock(
+                        get_scenario=MagicMock(return_value=scenario)
+                    ),
+                },
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await cmd_evaluate(args)
+        assert exc_info.value.code == 1
