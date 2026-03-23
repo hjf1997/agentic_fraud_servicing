@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from agentic_fraud_servicing.evaluation.models import (
     EvaluationRun,
     QuestionAdherenceResult,
+    TurnMetric,
 )
 
 # --- Output model for LLM adherence scoring ---
@@ -136,7 +137,7 @@ async def evaluate_question_adherence(
     )
 
 
-def _find_next_ccp_turn(metrics: list, start_idx: int):
+def _find_next_ccp_turn(metrics: list[TurnMetric], start_idx: int) -> TurnMetric | None:
     """Scan forward from start_idx+1 for the next CCP speaker turn.
 
     Returns the TurnMetric or None if no CCP turn follows.

@@ -1,5 +1,18 @@
 """Enterprise evaluation framework for copilot quality assessment."""
 
+from agentic_fraud_servicing.evaluation.allegation_quality import (
+    evaluate_allegation_quality,
+)
+from agentic_fraud_servicing.evaluation.convergence_evaluator import (
+    evaluate_convergence,
+)
+from agentic_fraud_servicing.evaluation.decision_explainer import (
+    evaluate_decision_explanation,
+)
+from agentic_fraud_servicing.evaluation.evidence_utilization import (
+    evaluate_evidence_utilization,
+)
+from agentic_fraud_servicing.evaluation.latency_evaluator import evaluate_latency
 from agentic_fraud_servicing.evaluation.models import (
     AllegationQualityResult,
     ConvergenceResult,
@@ -14,8 +27,18 @@ from agentic_fraud_servicing.evaluation.models import (
     RiskFlagTimelinessResult,
     TurnMetric,
 )
+from agentic_fraud_servicing.evaluation.prediction_evaluator import (
+    evaluate_prediction,
+)
+from agentic_fraud_servicing.evaluation.question_adherence import (
+    evaluate_question_adherence,
+)
+from agentic_fraud_servicing.evaluation.risk_flag_evaluator import (
+    evaluate_risk_flag_timeliness,
+)
 
 __all__ = [
+    # Models
     "AllegationQualityResult",
     "ConvergenceResult",
     "DecisionExplanation",
@@ -28,4 +51,13 @@ __all__ = [
     "QuestionAdherenceResult",
     "RiskFlagTimelinessResult",
     "TurnMetric",
+    # Evaluator functions
+    "evaluate_allegation_quality",
+    "evaluate_convergence",
+    "evaluate_decision_explanation",
+    "evaluate_evidence_utilization",
+    "evaluate_latency",
+    "evaluate_prediction",
+    "evaluate_question_adherence",
+    "evaluate_risk_flag_timeliness",
 ]
