@@ -33,6 +33,7 @@ from agentic_fraud_servicing.evaluation.prediction_evaluator import (
 from agentic_fraud_servicing.evaluation.question_adherence import (
     evaluate_question_adherence,
 )
+from agentic_fraud_servicing.evaluation.report import generate_report, save_report
 from agentic_fraud_servicing.evaluation.risk_flag_evaluator import (
     evaluate_risk_flag_timeliness,
 )
@@ -60,4 +61,7 @@ __all__ = [
     "evaluate_prediction",
     "evaluate_question_adherence",
     "evaluate_risk_flag_timeliness",
+    # Report aggregator
+    "generate_report",
+    "save_report",
 ]
