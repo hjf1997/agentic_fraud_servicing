@@ -22,7 +22,7 @@ from agentic_fraud_servicing.evaluation.models import (
 )
 from agentic_fraud_servicing.evaluation.report import (
     _compute_overall_score,
-    _extract_dimension_score,
+    extract_dimension_score,
     generate_report,
     save_report,
 )
@@ -352,8 +352,6 @@ class TestWeightNormalization:
         assert abs(overall - 0.24 / 0.35) < 0.001
 
     def test_all_dimensions_none_returns_zero(self):
-        scores = {dim: None for dim in _compute_overall_score.__code__.co_varnames}
-        # Use actual weight keys
         scores = {
             dim: None
             for dim in [
@@ -376,13 +374,13 @@ class TestWeightNormalization:
 
 
 class TestExtractDimensionScore:
-    """Tests for _extract_dimension_score helper."""
+    """Tests for extract_dimension_score helper."""
 
     def test_latency_returns_compliance_rate(self):
-        assert _extract_dimension_score("latency", _LATENCY) == 1.0
+        assert extract_dimension_score("latency", _LATENCY) == 1.0
 
     def test_prediction_match_returns_one(self):
-        assert _extract_dimension_score("prediction", _PREDICTION) == 1.0
+        assert extract_dimension_score("prediction", _PREDICTION) == 1.0
 
     def test_prediction_mismatch_returns_zero(self):
         result = PredictionResult(
@@ -391,10 +389,10 @@ class TestExtractDimensionScore:
             match=False,
             confidence_delta=0.1,
         )
-        assert _extract_dimension_score("prediction", result) == 0.0
+        assert extract_dimension_score("prediction", result) == 0.0
 
     def test_convergence_with_ratio(self):
-        assert _extract_dimension_score("convergence", _CONVERGENCE) == 0.6
+        assert extract_dimension_score("convergence", _CONVERGENCE) == 0.6
 
     def test_convergence_never_converged(self):
         result = ConvergenceResult(
@@ -403,7 +401,7 @@ class TestExtractDimensionScore:
             convergence_ratio=None,
             correct_category="SCAM",
         )
-        assert _extract_dimension_score("convergence", result) == 0.0
+        assert extract_dimension_score("convergence", result) == 0.0
 
     def test_none_result_returns_none(self):
-        assert _extract_dimension_score("latency", None) is None
+        assert extract_dimension_score("latency", None) is None

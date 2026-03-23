@@ -50,7 +50,7 @@ _WEIGHTS: dict[str, float] = {
 }
 
 
-def _extract_dimension_score(dimension: str, result: object) -> float | None:
+def extract_dimension_score(dimension: str, result: object) -> float | None:
     """Extract a 0-1 score from an evaluator result for the given dimension."""
     if result is None:
         return None
@@ -171,7 +171,7 @@ async def generate_report(
             )
 
     # --- Compute overall score ---
-    dimension_scores = {dim: _extract_dimension_score(dim, results[dim]) for dim in _WEIGHTS}
+    dimension_scores = {dim: extract_dimension_score(dim, results[dim]) for dim in _WEIGHTS}
     overall_score = _compute_overall_score(dimension_scores)
 
     return EvaluationReport(

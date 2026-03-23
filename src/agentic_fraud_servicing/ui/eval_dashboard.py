@@ -10,6 +10,7 @@ Entry point: ``python -m agentic_fraud_servicing.ui.eval_dashboard``
 from __future__ import annotations
 
 import math
+import os
 
 import gradio as gr
 import matplotlib
@@ -998,8 +999,6 @@ def _load_scenario(scenario_name: str) -> tuple:
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
         return empty, None, None, empty, None, empty, None, empty, empty, empty, empty, empty, None
-
-    import os
 
     scenario_dir = os.path.join(BASE_DIR, scenario_name)
     report = load_evaluation_report(scenario_dir)

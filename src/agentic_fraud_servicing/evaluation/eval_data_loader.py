@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 from agentic_fraud_servicing.evaluation.models import EvaluationReport, EvaluationRun
-from agentic_fraud_servicing.evaluation.report import _extract_dimension_score
+from agentic_fraud_servicing.evaluation.report import extract_dimension_score
 
 
 def discover_eval_scenarios(base_dir: str = "data/evaluations") -> list[str]:
@@ -113,7 +113,7 @@ def load_transcript_for_eval(scenario_dir: str) -> list[dict]:
 def extract_dimension_scores(report: EvaluationReport) -> dict[str, float | None]:
     """Extract a 0-1 score for each of the 8 evaluation dimensions.
 
-    Uses the same scoring logic as report.py's _extract_dimension_score to
+    Uses the same scoring logic as report.py's extract_dimension_score to
     ensure consistency between the report aggregator and the dashboard display.
 
     Args:
@@ -136,6 +136,4 @@ def extract_dimension_scores(report: EvaluationReport) -> dict[str, float | None
         "decision_explanation": report.decision_explanation,
     }
 
-    return {
-        dim: _extract_dimension_score(dim, result) for dim, result in dimension_results.items()
-    }
+    return {dim: extract_dimension_score(dim, result) for dim, result in dimension_results.items()}
