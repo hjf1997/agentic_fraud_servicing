@@ -400,17 +400,320 @@ def _build_flagged_turns_html(report: EvaluationReport | None) -> str:
       </table>"""
 
 
+# -- Section 3: Prediction & Hypothesis Evolution --------------------------------
+
+
+def _build_hypothesis_chart(
+    run: EvaluationRun | None, report: EvaluationReport | None
+) -> plt.Figure | None:
+    """Build a line chart showing hypothesis score evolution across turns.
+
+    Four colored lines for each InvestigationCategory. Ground truth category
+    shown as a light horizontal band. Convergence turn marked with a vertical
+    dashed line.
+    """
+    if not run or not run.turn_metrics:
+        return None
+
+    category_colors = {
+        "THIRD_PARTY_FRAUD": AMEX_BLUE,
+        "FIRST_PARTY_FRAUD": "#D32F2F",
+        "SCAM": "#F57C00",
+        "DISPUTE": "#2E7D32",
+    }
+    categories = list(category_colors.keys())
+
+    turns = [m.turn_number for m in run.turn_metrics]
+    series: dict[str, list[float]] = {cat: [] for cat in categories}
+    for m in run.turn_metrics:
+        for cat in categories:
+            series[cat].append(m.hypothesis_scores.get(cat, 0.0))
+
+    fig, ax = plt.subplots(figsize=(8, 3.5))
+    fig.patch.set_facecolor(AMEX_WHITE)
+    ax.set_facecolor(AMEX_BG)
+
+    # Ground truth band
+    gt_category = run.ground_truth.get("investigation_category", "")
+    if gt_category in category_colors:
+        ax.axhspan(0.9, 1.0, color=category_colors[gt_category], alpha=0.10)
+        ax.text(
+            turns[-1] + 0.3,
+            0.95,
+            f"GT: {gt_category}",
+            fontsize=7,
+            color=category_colors[gt_category],
+            va="center",
+        )
+
+    # Convergence marker
+    if report and report.convergence and report.convergence.convergence_turn is not None:
+        ct = report.convergence.convergence_turn
+        ax.axvline(x=ct, color="#999", linestyle="--", linewidth=1.2, label=f"Converge @ {ct}")
+
+    # Score lines
+    for cat in categories:
+        ax.plot(
+            turns,
+            series[cat],
+            color=category_colors[cat],
+            linewidth=1.8,
+            label=cat.replace("_", " ").title(),
+            marker="o",
+            markersize=3,
+        )
+
+    ax.set_xlabel("Turn", fontsize=10, color=AMEX_NAVY)
+    ax.set_ylabel("Score", fontsize=10, color=AMEX_NAVY)
+    ax.set_title("Hypothesis Score Evolution", fontsize=12, color=AMEX_NAVY)
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_xticks(turns)
+    ax.legend(fontsize=7, loc="upper left", framealpha=0.9)
+
+    plt.tight_layout()
+    return fig
+
+
+def _build_prediction_html(report: EvaluationReport | None) -> str:
+    """Build HTML showing prediction vs ground truth with reasoning."""
+    if not report or not report.prediction:
+        return '<div class="card"><p>No prediction data available.</p></div>'
+
+    pred = report.prediction
+    match_icon = (
+        '<span style="color:#155724; font-size:1.4em;">&#10003; Match</span>'
+        if pred.match
+        else '<span style="color:#721C24; font-size:1.4em;">&#10007; Mismatch</span>'
+    )
+    delta_color = (
+        _score_color(1.0 - abs(pred.confidence_delta)) if pred.confidence_delta else "#666"
+    )
+
+    reasoning_html = ""
+    if pred.reasoning:
+        reasoning_html = f"""
+        <div style="margin-top:12px; padding:10px; background:{AMEX_BG};
+                    border-radius:6px; font-size:0.85em; color:#333;">
+          <strong style="color:{AMEX_NAVY};">Reasoning:</strong><br/>
+          {pred.reasoning}
+        </div>"""
+
+    return f"""<div class="card">
+      <h4 style="color:{AMEX_NAVY}; margin:0 0 12px 0;">Prediction Analysis</h4>
+      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+        <div>
+          <span style="font-size:0.8em; color:#666;">Predicted:</span><br/>
+          {_category_badge(pred.predicted_category)}
+        </div>
+        <div style="font-size:1.2em; color:#666;">&rarr;</div>
+        <div>
+          <span style="font-size:0.8em; color:#666;">Ground Truth:</span><br/>
+          {_category_badge(pred.ground_truth_category)}
+        </div>
+        <div>{match_icon}</div>
+      </div>
+      <div style="margin-top:10px;">
+        <span style="font-size:0.8em; color:#666;">Confidence Delta:</span>
+        <span style="font-weight:600; color:{delta_color};">
+          {pred.confidence_delta:.3f}</span>
+      </div>
+      {reasoning_html}
+    </div>"""
+
+
+# -- Section 4: Question Adherence -----------------------------------------------
+
+
+def _build_adherence_chart(report: EvaluationReport | None) -> plt.Figure | None:
+    """Build a bar chart of per-turn question adherence scores."""
+    if not report or not report.question_adherence:
+        return None
+
+    qa = report.question_adherence
+    if not qa.per_turn_scores:
+        return None
+
+    turns = [s.get("turn", i + 1) for i, s in enumerate(qa.per_turn_scores)]
+    scores = [s.get("score", 0.0) for s in qa.per_turn_scores]
+    colors = ["#2E7D32" if v >= 0.7 else "#F57C00" if v >= 0.4 else "#D32F2F" for v in scores]
+
+    fig, ax = plt.subplots(figsize=(8, 3.5))
+    fig.patch.set_facecolor(AMEX_WHITE)
+    ax.set_facecolor(AMEX_BG)
+
+    ax.bar(turns, scores, color=colors, width=0.7, edgecolor="none")
+    ax.axhline(y=0.7, color=AMEX_BLUE, linestyle="--", linewidth=1, alpha=0.5)
+
+    ax.set_xlabel("Turn", fontsize=10, color=AMEX_NAVY)
+    ax.set_ylabel("Adherence Score", fontsize=10, color=AMEX_NAVY)
+    ax.set_title("Per-Turn Question Adherence", fontsize=12, color=AMEX_NAVY)
+    ax.set_ylim(0, 1.05)
+    ax.set_xticks(turns)
+
+    # Overall rate annotation
+    rate_text = f"Overall: {qa.overall_adherence_rate:.0%}"
+    ax.annotate(
+        rate_text,
+        xy=(0.98, 0.95),
+        xycoords="axes fraction",
+        fontsize=10,
+        fontweight="bold",
+        color=AMEX_NAVY,
+        ha="right",
+        va="top",
+        bbox={"facecolor": AMEX_WHITE, "edgecolor": AMEX_BLUE, "boxstyle": "round,pad=0.3"},
+    )
+
+    plt.tight_layout()
+    return fig
+
+
+def _build_adherence_detail_html(report: EvaluationReport | None) -> str:
+    """Build HTML with expandable per-turn adherence details."""
+    if not report or not report.question_adherence:
+        return '<div class="card"><p>No question adherence data available.</p></div>'
+
+    qa = report.question_adherence
+
+    # Summary stats
+    stats_html = f"""
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+      <div class="metric-box">
+        <div class="metric-value" style="color:{_score_color(qa.overall_adherence_rate)};">
+          {qa.overall_adherence_rate:.0%}</div>
+        <div class="metric-label">Overall Adherence</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" style="color:{AMEX_BLUE};">{qa.turns_with_suggestions}</div>
+        <div class="metric-label">Turns w/ Suggestions</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" style="color:{AMEX_BLUE};">{qa.turns_with_adherence}</div>
+        <div class="metric-label">Turns w/ Adherence</div>
+      </div>
+    </div>"""
+
+    # Per-turn collapsible details
+    turns_html = ""
+    for entry in qa.per_turn_scores:
+        turn = entry.get("turn", "?")
+        score = entry.get("score", 0.0)
+        explanation = entry.get("explanation", "")
+        questions = entry.get("questions", [])
+        sc = _score_color(score)
+        sbg = _score_bg(score)
+
+        q_list = ""
+        if questions:
+            q_items = "".join(f"<li>{q}</li>" for q in questions)
+            q_list = f'<ul style="margin:4px 0; padding-left:20px;">{q_items}</ul>'
+
+        explanation_text = ""
+        if explanation:
+            explanation_text = (
+                f'<div style="margin-top:4px; font-size:0.85em; color:#555;">{explanation}</div>'
+            )
+
+        turns_html += f"""
+        <details style="margin-bottom:6px; border:1px solid #E0E4EA; border-radius:6px;">
+          <summary style="padding:8px 12px; cursor:pointer; background:{AMEX_BG};
+                         border-radius:6px; font-size:0.9em;">
+            <strong>Turn {turn}</strong>
+            <span style="float:right; background:{sbg}; color:{sc}; padding:2px 8px;
+                         border-radius:10px; font-size:0.85em; font-weight:600;">
+              {score:.2f}</span>
+          </summary>
+          <div style="padding:8px 12px; font-size:0.85em;">
+            {q_list}
+            {explanation_text}
+          </div>
+        </details>"""
+
+    return f"""<div class="card">
+      <h4 style="color:{AMEX_NAVY}; margin:0 0 12px 0;">Question Adherence Detail</h4>
+      {stats_html}
+      <div style="max-height:300px; overflow-y:auto;">{turns_html}</div>
+    </div>"""
+
+
+# -- Section 5: Allegation Extraction Quality ------------------------------------
+
+
+def _build_allegation_html(report: EvaluationReport | None) -> str:
+    """Build HTML showing allegation extraction precision/recall/F1 and item lists."""
+    if not report or not report.allegation_quality:
+        return '<div class="card"><p>No allegation quality data available.</p></div>'
+
+    aq = report.allegation_quality
+
+    def _metric_html(label: str, value: float) -> str:
+        """Render a single P/R/F1 metric box."""
+        color = _score_color(value)
+        bg = _score_bg(value)
+        return f"""<div class="metric-box" style="background:{bg};">
+          <div class="metric-value" style="color:{color};">{value:.2f}</div>
+          <div class="metric-label">{label}</div>
+        </div>"""
+
+    metrics_row = f"""
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px;
+                justify-content:space-around;">
+      {_metric_html("Precision", aq.precision)}
+      {_metric_html("Recall", aq.recall)}
+      {_metric_html("F1 Score", aq.f1_score)}
+    </div>"""
+
+    # Allegation item lists
+    def _item_list(items: list[str], color: str, bg: str, empty_msg: str) -> str:
+        if not items:
+            return f'<span style="color:#999; font-size:0.85em;">{empty_msg}</span>'
+        html = ""
+        for item in items:
+            html += (
+                f'<div style="padding:4px 8px; margin:3px 0; border-radius:4px; '
+                f'background:{bg}; color:{color}; font-size:0.85em;">{item}</div>'
+            )
+        return html
+
+    matched_html = _item_list(aq.matched, "#155724", "#D4EDDA", "None matched")
+    missed_html = _item_list(aq.missed, "#721C24", "#F8D7DA", "None missed")
+    fp_html = _item_list(aq.false_positives, "#856404", "#FFF3CD", "No false positives")
+
+    return f"""<div class="card">
+      <h4 style="color:{AMEX_NAVY}; margin:0 0 12px 0;">Allegation Extraction Quality</h4>
+      {metrics_row}
+
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+        <div>
+          <h5 style="color:#155724; margin:0 0 6px 0;">
+            Matched ({len(aq.matched)})</h5>
+          {matched_html}
+        </div>
+        <div>
+          <h5 style="color:#721C24; margin:0 0 6px 0;">
+            Missed ({len(aq.missed)})</h5>
+          {missed_html}
+        </div>
+        <div>
+          <h5 style="color:#856404; margin:0 0 6px 0;">
+            False Positives ({len(aq.false_positives)})</h5>
+          {fp_html}
+        </div>
+      </div>
+    </div>"""
+
+
 # -- Main load callback -----------------------------------------------------------
 
 
 def _load_scenario(scenario_name: str) -> tuple:
     """Load evaluation data and return component updates.
 
-    Returns a tuple of 4 items matching output components.
+    Returns a tuple of 10 items matching output components.
     """
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
-        return empty, None, None, empty
+        return empty, None, None, empty, None, empty, None, empty, empty, None
 
     import os
 
@@ -419,10 +722,21 @@ def _load_scenario(scenario_name: str) -> tuple:
     run = load_evaluation_run(scenario_dir)
 
     return (
+        # Section 1
         _build_summary_html(report, run),
         _build_radar_chart(report),
+        # Section 2
         _build_latency_chart(report),
         _build_latency_stats_html(report),
+        # Section 3
+        _build_hypothesis_chart(run, report),
+        _build_prediction_html(report),
+        # Section 4
+        _build_adherence_chart(report),
+        _build_adherence_detail_html(report),
+        # Section 5
+        _build_allegation_html(report),
+        None,  # placeholder for future sections
     )
 
 
@@ -475,6 +789,35 @@ def create_eval_dashboard_app() -> gr.Blocks:
             with gr.Column(scale=2):
                 latency_stats_html = gr.HTML()
 
+        # Section 3: Prediction & Hypothesis Evolution
+        gr.HTML(
+            '<div class="section-header" style="color:white;">'
+            "Prediction &amp; Hypothesis Evolution</div>"
+        )
+        with gr.Row():
+            with gr.Column(scale=3):
+                hypothesis_plot = gr.Plot(label="Hypothesis Scores")
+            with gr.Column(scale=2):
+                prediction_html = gr.HTML()
+
+        # Section 4: Question Adherence
+        gr.HTML('<div class="section-header" style="color:white;">Question Adherence</div>')
+        with gr.Row():
+            with gr.Column(scale=3):
+                adherence_plot = gr.Plot(label="Per-Turn Adherence")
+            with gr.Column(scale=2):
+                adherence_detail_html = gr.HTML()
+
+        # Section 5: Allegation Extraction Quality
+        gr.HTML(
+            '<div class="section-header" style="color:white;">Allegation Extraction Quality</div>'
+        )
+        with gr.Row():
+            with gr.Column(scale=3):
+                allegation_html = gr.HTML()
+            with gr.Column(scale=2):
+                allegation_placeholder = gr.Plot(label="")
+
         # Wire load callback
         load_btn.click(
             fn=_load_scenario,
@@ -484,6 +827,12 @@ def create_eval_dashboard_app() -> gr.Blocks:
                 radar_plot,
                 latency_plot,
                 latency_stats_html,
+                hypothesis_plot,
+                prediction_html,
+                adherence_plot,
+                adherence_detail_html,
+                allegation_html,
+                allegation_placeholder,
             ],
         )
 
