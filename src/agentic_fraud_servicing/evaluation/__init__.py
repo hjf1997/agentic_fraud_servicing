@@ -9,6 +9,15 @@ from agentic_fraud_servicing.evaluation.convergence_evaluator import (
 from agentic_fraud_servicing.evaluation.decision_explainer import (
     evaluate_decision_explanation,
 )
+
+# Data loader functions for evaluation dashboard
+from agentic_fraud_servicing.evaluation.eval_data_loader import (
+    discover_eval_scenarios,
+    extract_dimension_scores,
+    load_evaluation_report,
+    load_evaluation_run,
+    load_transcript_for_eval,
+)
 from agentic_fraud_servicing.evaluation.evidence_utilization import (
     evaluate_evidence_utilization,
 )
@@ -64,4 +73,10 @@ __all__ = [
     # Report aggregator
     "generate_report",
     "save_report",
+    # Data loader functions
+    "discover_eval_scenarios",
+    "extract_dimension_scores",
+    "load_evaluation_report",
+    "load_evaluation_run",
+    "load_transcript_for_eval",
 ]
