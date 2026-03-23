@@ -703,17 +703,301 @@ def _build_allegation_html(report: EvaluationReport | None) -> str:
     </div>"""
 
 
+# -- Section 6: Evidence Utilization ----------------------------------------------
+
+
+def _build_evidence_table_html(report: EvaluationReport | None) -> str:
+    """Build an HTML table showing evidence utilization with retrieved/referenced indicators."""
+    if not report or not report.evidence_utilization:
+        return '<div class="card"><p>No evidence utilization data available.</p></div>'
+
+    eu = report.evidence_utilization
+    ret_color = _score_color(eu.retrieval_coverage)
+    reas_color = _score_color(eu.reasoning_coverage)
+
+    # Coverage summary
+    summary = f"""
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px;
+                justify-content:space-around;">
+      <div class="metric-box">
+        <div class="metric-value" style="color:{ret_color};">{eu.retrieval_coverage:.0%}</div>
+        <div class="metric-label">Retrieval Coverage</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" style="color:{reas_color};">{eu.reasoning_coverage:.0%}</div>
+        <div class="metric-label">Reasoning Coverage</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" style="color:{AMEX_BLUE};">{eu.total_evidence_nodes}</div>
+        <div class="metric-label">Total Nodes</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" style="color:{AMEX_BLUE};">{eu.retrieved_nodes}</div>
+        <div class="metric-label">Retrieved</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" style="color:{AMEX_BLUE};">{eu.referenced_in_reasoning}</div>
+        <div class="metric-label">Referenced</div>
+      </div>
+    </div>"""
+
+    # Missed evidence table
+    if not eu.missed_evidence:
+        missed_html = (
+            '<p style="color:#155724; font-size:0.9em; margin-top:10px;">'
+            "All evidence nodes were utilized.</p>"
+        )
+    else:
+        rows = ""
+        for item in eu.missed_evidence:
+            node_id = item.get("node_id", "unknown")
+            node_type = item.get("node_type", "unknown")
+            source_type = item.get("source_type", "unknown")
+            rows += (
+                f'<tr style="background:#FFF3CD;">'
+                f'<td style="padding:5px 10px;">{node_id}</td>'
+                f'<td style="padding:5px 10px;">{node_type}</td>'
+                f'<td style="padding:5px 10px;">{source_type}</td>'
+                f'<td style="padding:5px 10px; color:#D32F2F;">&#10007;</td>'
+                f'<td style="padding:5px 10px; color:#D32F2F;">&#10007;</td>'
+                f"</tr>"
+            )
+        missed_html = f"""
+        <h4 style="color:{AMEX_NAVY}; margin:16px 0 8px 0;">
+          Missed Evidence ({len(eu.missed_evidence)})</h4>
+        <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+          <thead>
+            <tr style="background:{AMEX_BLUE}; color:#fff;">
+              <th style="padding:5px 10px; text-align:left;">Node ID</th>
+              <th style="padding:5px 10px; text-align:left;">Type</th>
+              <th style="padding:5px 10px; text-align:left;">Source</th>
+              <th style="padding:5px 10px; text-align:left;">Retrieved</th>
+              <th style="padding:5px 10px; text-align:left;">Referenced</th>
+            </tr>
+          </thead>
+          <tbody>{rows}</tbody>
+        </table>"""
+
+    return f"""<div class="card">
+      <h4 style="color:{AMEX_NAVY}; margin:0 0 12px 0;">Evidence Utilization</h4>
+      {summary}
+      {missed_html}
+    </div>"""
+
+
+# -- Section 7: Decision Explanation + Risk Flag Timeliness -----------------------
+
+
+def _build_decision_html(report: EvaluationReport | None) -> str:
+    """Build HTML showing decision reasoning chain, evidence, suggestions, and risk flags."""
+    parts: list[str] = []
+
+    # Decision explanation
+    if report and report.decision_explanation:
+        de = report.decision_explanation
+
+        # Reasoning chain
+        if de.reasoning_chain:
+            chain_html = de.reasoning_chain.replace("\n", "<br/>")
+            parts.append(
+                f'<div style="margin-bottom:14px;">'
+                f'<h4 style="color:{AMEX_NAVY}; margin:0 0 8px 0;">Reasoning Chain</h4>'
+                f'<div style="padding:10px; background:{AMEX_BG}; border-radius:6px; '
+                f'font-size:0.9em; line-height:1.6; color:#333;">{chain_html}</div>'
+                f"</div>"
+            )
+
+        # Influential evidence (top 3)
+        if de.influential_evidence:
+            items = ""
+            for ev in de.influential_evidence[:3]:
+                node_id = ev.get("node_id", ev.get("id", "?"))
+                node_type = ev.get("node_type", ev.get("type", "?"))
+                weight = ev.get("weight", "")
+                weight_str = f' <span style="color:#666;">({weight})</span>' if weight else ""
+                items += (
+                    f'<li style="margin:4px 0;"><strong>{node_id}</strong> '
+                    f'<span style="color:{AMEX_BLUE};">[{node_type}]</span>{weight_str}</li>'
+                )
+            parts.append(
+                f'<div style="margin-bottom:14px;">'
+                f'<h4 style="color:{AMEX_NAVY}; margin:0 0 8px 0;">Influential Evidence</h4>'
+                f'<ul style="margin:0; padding-left:20px;">{items}</ul>'
+                f"</div>"
+            )
+
+        # Improvement suggestions
+        if de.improvement_suggestions:
+            suggestions = ""
+            for i, s in enumerate(de.improvement_suggestions, 1):
+                suggestions += f'<li style="margin:4px 0;">{s}</li>'
+            parts.append(
+                f'<div style="margin-bottom:14px;">'
+                f'<h4 style="color:{AMEX_NAVY}; margin:0 0 8px 0;">Improvement Suggestions</h4>'
+                f'<ol style="margin:0; padding-left:20px; font-size:0.9em;">{suggestions}</ol>'
+                f"</div>"
+            )
+
+        # Overall quality notes
+        if de.overall_quality_notes:
+            notes_html = de.overall_quality_notes.replace("\n", "<br/>")
+            parts.append(
+                f'<div style="margin-bottom:14px;">'
+                f'<h4 style="color:{AMEX_NAVY}; margin:0 0 8px 0;">Quality Notes</h4>'
+                f'<div style="padding:10px; background:{AMEX_BG}; border-radius:6px; '
+                f'font-size:0.85em; color:#555;">{notes_html}</div>'
+                f"</div>"
+            )
+    else:
+        parts.append('<p style="color:#999;">No decision explanation data available.</p>')
+
+    # Risk flag timeliness
+    if report and report.risk_flag_timeliness:
+        rf = report.risk_flag_timeliness
+        parts.append(
+            f'<h4 style="color:{AMEX_NAVY}; margin:16px 0 8px 0;">Risk Flag Timeliness</h4>'
+        )
+
+        # Stats summary
+        parts.append(
+            f'<div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:10px;">'
+            f'<div class="metric-box">'
+            f'<div class="metric-value" style="color:{AMEX_BLUE};">'
+            f"{rf.flags_raised_count}</div>"
+            f'<div class="metric-label">Raised</div></div>'
+            f'<div class="metric-box">'
+            f'<div class="metric-value" style="color:{AMEX_BLUE};">'
+            f"{rf.flags_expected_count}</div>"
+            f'<div class="metric-label">Expected</div></div>'
+            f'<div class="metric-box">'
+            f'<div class="metric-value" style="color:{AMEX_BLUE};">'
+            f"{rf.average_delay_turns:.1f}</div>"
+            f'<div class="metric-label">Avg Delay (turns)</div></div>'
+            f"</div>"
+        )
+
+        # Per-flag timing table
+        if rf.per_flag_timing:
+            rows = ""
+            for entry in rf.per_flag_timing:
+                flag = entry.get("flag", entry.get("expected_flag", "?"))
+                raised = entry.get("raised_turn", "N/A")
+                available = entry.get("evidence_available_turn", "N/A")
+                delay = entry.get("delay_turns", "N/A")
+                delay_color = "#155724" if delay == 0 else "#856404" if delay != "N/A" else "#999"
+                rows += (
+                    f"<tr>"
+                    f'<td style="padding:5px 10px; font-size:0.85em;">{flag}</td>'
+                    f'<td style="padding:5px 10px; text-align:center;">{raised}</td>'
+                    f'<td style="padding:5px 10px; text-align:center;">{available}</td>'
+                    f'<td style="padding:5px 10px; text-align:center; color:{delay_color}; '
+                    f'font-weight:600;">{delay}</td>'
+                    f"</tr>"
+                )
+            parts.append(
+                f'<table style="width:100%; border-collapse:collapse; font-size:0.9em;">'
+                f"<thead>"
+                f'<tr style="background:{AMEX_BLUE}; color:#fff;">'
+                f'<th style="padding:5px 10px; text-align:left;">Flag</th>'
+                f'<th style="padding:5px 10px; text-align:center;">Raised Turn</th>'
+                f'<th style="padding:5px 10px; text-align:center;">Evidence Avail.</th>'
+                f'<th style="padding:5px 10px; text-align:center;">Delay</th>'
+                f"</tr></thead>"
+                f"<tbody>{rows}</tbody>"
+                f"</table>"
+            )
+    else:
+        parts.append(
+            '<p style="color:#999; margin-top:14px;">No risk flag timeliness data available.</p>'
+        )
+
+    return f'<div class="card">{chr(10).join(parts)}</div>'
+
+
+# -- Section 8: Transcript Replay -------------------------------------------------
+
+
+def _build_eval_transcript_html(run: EvaluationRun | None) -> str:
+    """Build HTML with chat bubbles and per-turn annotations for transcript replay."""
+    if not run or not run.turn_metrics:
+        return '<div class="card"><p>No transcript data available.</p></div>'
+
+    bubbles = ""
+    for m in run.turn_metrics:
+        speaker = m.speaker.upper() if m.speaker else "UNKNOWN"
+        text = m.text or ""
+
+        # Bubble styling by speaker
+        if speaker == "CCP":
+            bubble_style = (
+                f"background:{AMEX_BLUE}; color:#fff; margin-left:auto; "
+                "margin-right:0; text-align:right; border-radius:12px 12px 0 12px;"
+            )
+            label_style = "text-align:right;"
+        elif speaker in ("CARDMEMBER", "CM"):
+            bubble_style = (
+                "background:#E0E4EA; color:#333; margin-right:auto; "
+                "margin-left:0; border-radius:12px 12px 12px 0;"
+            )
+            label_style = "text-align:left;"
+        else:
+            bubble_style = (
+                f"background:{AMEX_LIGHT_BLUE}; color:{AMEX_NAVY}; "
+                "margin:0 auto; text-align:center; border-radius:12px;"
+            )
+            label_style = "text-align:center;"
+
+        # Top hypothesis for this turn
+        scores = m.hypothesis_scores
+        top_cat = ""
+        top_score = 0.0
+        if scores:
+            top_cat = max(scores, key=scores.get)
+            top_score = scores[top_cat]
+
+        n_allegations = len(m.allegations_extracted)
+
+        # Annotation row below bubble
+        annotation = (
+            f'<div style="font-size:0.75em; color:#888; {label_style} margin-bottom:10px;">'
+            f"Turn {m.turn_number}"
+        )
+        if top_cat:
+            annotation += (
+                f" &bull; {_category_badge(top_cat)}"
+                f' <span style="font-weight:600;">{top_score:.2f}</span>'
+            )
+        if n_allegations:
+            annotation += f" &bull; {n_allegations} allegation(s)"
+        annotation += f" &bull; {m.latency_ms:.0f}ms</div>"
+
+        bubbles += (
+            f'<div style="font-size:0.75em; color:#999; {label_style} '
+            f'margin-bottom:2px;"><strong>{speaker}</strong></div>'
+            f'<div style="max-width:75%; padding:10px 14px; {bubble_style} '
+            f'margin-bottom:4px; font-size:0.9em; line-height:1.4;">{text}</div>'
+            f"{annotation}"
+        )
+
+    return f"""<div class="card">
+      <h4 style="color:{AMEX_NAVY}; margin:0 0 12px 0;">Transcript Replay</h4>
+      <div style="max-height:600px; overflow-y:auto; padding:8px;">
+        {bubbles}
+      </div>
+    </div>"""
+
+
 # -- Main load callback -----------------------------------------------------------
 
 
 def _load_scenario(scenario_name: str) -> tuple:
     """Load evaluation data and return component updates.
 
-    Returns a tuple of 10 items matching output components.
+    Returns a tuple of 13 items matching output components.
     """
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
-        return empty, None, None, empty, None, empty, None, empty, empty, None
+        return empty, None, None, empty, None, empty, None, empty, empty, empty, empty, empty, None
 
     import os
 
@@ -736,7 +1020,13 @@ def _load_scenario(scenario_name: str) -> tuple:
         _build_adherence_detail_html(report),
         # Section 5
         _build_allegation_html(report),
-        None,  # placeholder for future sections
+        # Section 6
+        _build_evidence_table_html(report),
+        # Section 7
+        _build_decision_html(report),
+        # Section 8
+        _build_eval_transcript_html(run),
+        None,  # placeholder for hypothesis chart duplicate avoided
     )
 
 
@@ -812,11 +1102,23 @@ def create_eval_dashboard_app() -> gr.Blocks:
         gr.HTML(
             '<div class="section-header" style="color:white;">Allegation Extraction Quality</div>'
         )
-        with gr.Row():
-            with gr.Column(scale=3):
-                allegation_html = gr.HTML()
-            with gr.Column(scale=2):
-                allegation_placeholder = gr.Plot(label="")
+        allegation_html = gr.HTML()
+
+        # Section 6: Evidence Utilization
+        gr.HTML('<div class="section-header" style="color:white;">Evidence Utilization</div>')
+        evidence_html = gr.HTML()
+
+        # Section 7: Decision Explanation & Risk Flags
+        gr.HTML(
+            '<div class="section-header" style="color:white;">'
+            "Decision Explanation &amp; Risk Flags</div>"
+        )
+        decision_html = gr.HTML()
+
+        # Section 8: Transcript Replay
+        gr.HTML('<div class="section-header" style="color:white;">Transcript Replay</div>')
+        transcript_html = gr.HTML()
+        transcript_placeholder = gr.Plot(label="", visible=False)
 
         # Wire load callback
         load_btn.click(
@@ -832,7 +1134,10 @@ def create_eval_dashboard_app() -> gr.Blocks:
                 adherence_plot,
                 adherence_detail_html,
                 allegation_html,
-                allegation_placeholder,
+                evidence_html,
+                decision_html,
+                transcript_html,
+                transcript_placeholder,
             ],
         )
 
