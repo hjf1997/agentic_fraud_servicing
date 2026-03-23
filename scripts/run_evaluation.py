@@ -44,6 +44,11 @@ import scripts.scenario_scam_techvault  # noqa: E402, F401
 from agentic_fraud_servicing.config import get_settings  # noqa: E402
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator  # noqa: E402
 from agentic_fraud_servicing.evaluation.models import EvaluationRun, TurnMetric  # noqa: E402
+from agentic_fraud_servicing.evaluation.report import (  # noqa: E402
+    extract_dimension_score,
+    generate_report,
+    save_report,
+)
 from agentic_fraud_servicing.ingestion.redaction import redact_all  # noqa: E402
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_json  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
@@ -317,6 +322,23 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
     with open(eval_run_path, "w") as f:
         f.write(evaluation_run.model_dump_json(indent=2))
 
+    # ===================================================================
+    # Phase 3: Generate Evaluation Report (8-dimension quality assessment)
+    # ===================================================================
+    print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
+    print(f"{BOLD}{GREEN}Phase 3: Generating Evaluation Report{RESET}")
+    print(f"{BOLD}{GREEN}{'=' * 60}{RESET}")
+
+    report = None
+    report_path = None
+    try:
+        report = await generate_report(evaluation_run, model_provider)
+        report_path = save_report(report, output_dir)
+        print(f"  Report saved to: {report_path}")
+    except Exception as exc:
+        print(f"  {YELLOW}Warning: Report generation failed: {exc}{RESET}")
+        print(f"  {YELLOW}Evaluation run data was saved — report can be regenerated.{RESET}")
+
     # -- Summary --
     print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
     print(f"{BOLD}{GREEN}Evaluation Summary{RESET}")
@@ -331,11 +353,35 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
     else:
         print(f"  {YELLOW}No ground truth defined for this scenario{RESET}")
 
+    # Print report scores if available
+    if report is not None:
+        print(f"\n  {BOLD}Overall Quality Score: {report.overall_score:.2f}{RESET}")
+        print(f"  {BOLD}Per-Dimension Scores:{RESET}")
+        _dim_names = {
+            "latency": ("Latency Compliance", report.latency),
+            "prediction": ("Prediction Accuracy", report.prediction),
+            "question_adherence": ("Question Adherence", report.question_adherence),
+            "allegation_quality": ("Allegation Quality", report.allegation_quality),
+            "evidence_utilization": ("Evidence Utilization", report.evidence_utilization),
+            "convergence": ("Convergence Speed", report.convergence),
+            "risk_flag_timeliness": ("Risk Flag Timeliness", report.risk_flag_timeliness),
+            "decision_explanation": ("Decision Explanation", report.decision_explanation),
+        }
+        for dim_key, (label, result) in _dim_names.items():
+            score = extract_dimension_score(dim_key, result)
+            if score is not None:
+                color = GREEN if score >= 0.7 else YELLOW if score >= 0.4 else RED
+                print(f"    {label:25s} {color}{score:.2f}{RESET}")
+            else:
+                print(f"    {label:25s} {DIM}N/A{RESET}")
+
     elapsed = time.perf_counter() - wall_start
     minutes, seconds = divmod(elapsed, 60)
     print(f"\n{BOLD}{GREEN}Evaluation complete.{RESET}")
     print(f"  Elapsed time: {int(minutes)}m {seconds:.1f}s")
     print(f"  Results saved to: {eval_run_path}")
+    if report_path:
+        print(f"  Report saved to: {report_path}")
 
 
 def main() -> None:
