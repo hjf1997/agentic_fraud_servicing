@@ -17,9 +17,10 @@ import sys
 from datetime import datetime, timezone
 
 import matplotlib
-import matplotlib.pyplot as plt
 
 matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt  # noqa: E402
 
 # Ensure the project root is importable when running as a script
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
