@@ -115,6 +115,56 @@ tabs:
 python -m agentic_fraud_servicing.ui.gradio_app
 ```
 
+## Evaluation
+
+The evaluation layer replays pre-existing transcripts through the copilot
+pipeline and measures quality across 8 dimensions against known ground truth
+outcomes. This enables enterprise-grade assessment of copilot performance on
+real or synthetic fraud cases.
+
+### Running an Evaluation
+
+```bash
+# List available evaluation scenarios
+python scripts/run_evaluation.py --list
+
+# Run evaluation for a specific scenario (replays transcript + generates report)
+python scripts/run_evaluation.py --scenario <name>
+
+# Or use the CLI subcommand
+python -m agentic_fraud_servicing.ui.cli evaluate --scenario <name>
+python -m agentic_fraud_servicing.ui.cli evaluate --scenario <name> --output text
+```
+
+### Viewing Results
+
+Evaluation results can be viewed in three ways:
+
+```bash
+# Interactive Gradio dashboard (AMEX-branded, no LLM credentials needed)
+python -m agentic_fraud_servicing.ui.eval_dashboard
+
+# Static self-contained HTML report
+python scripts/export_eval_report.py --scenario <name>
+
+# Raw JSON data
+# data/evaluations/{scenario}/evaluation_run.json     (per-turn metrics)
+# data/evaluations/{scenario}/evaluation_report.json  (8-dimension scores)
+```
+
+### Evaluation Dimensions
+
+| Dimension | Description |
+|-----------|-------------|
+| Latency Compliance | Per-turn wall-clock time vs 1500ms target (p50/p95/p99) |
+| Prediction Accuracy | Copilot's highest hypothesis vs ground truth InvestigationCategory |
+| Question Adherence | Whether the CCP incorporated suggested questions |
+| Allegation Extraction Quality | Precision, recall, and F1 of extracted allegations |
+| Evidence Utilization | Retrieval and reasoning coverage of available evidence |
+| Convergence Speed | Turn at which the correct category becomes and stays dominant |
+| Risk Flag Timeliness | When flags were raised vs when evidence became available |
+| Decision Explanation | Reasoning chain quality, influential evidence, and improvement suggestions |
+
 ## Testing
 
 ```bash
@@ -145,9 +195,15 @@ src/agentic_fraud_servicing/
     gateway/                # Tool Gateway with auth, masking, and logging
         tools/              # Read, write, and compliance tool functions
     storage/                # SQLite stores for cases, evidence, and traces
-    ui/                     # CLI and Gradio web interface
+    evaluation/             # 8-dimension copilot quality evaluators and report
+    ui/                     # CLI, Gradio web interface, and dashboards
 scripts/
     sample_transcript.json  # Sample fraud call transcript for testing
+    run_simulation.py       # Full-scale E2E simulation with live LLM
+    run_evaluation.py       # Evaluation runner (transcript replay + reporting)
+    export_eval_report.py   # Static HTML report exporter for evaluations
+docs/
+    policies/               # Policy documents for Case Advisor agent
 tests/
     unit/                   # Unit tests (mocked LLM calls)
     integration/            # Integration tests (end-to-end flows)
