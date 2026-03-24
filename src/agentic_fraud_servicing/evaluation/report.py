@@ -1,10 +1,10 @@
-"""Report aggregator that orchestrates all 8 evaluators and produces an EvaluationReport.
+"""Report aggregator that orchestrates all 9 evaluators and produces an EvaluationReport.
 
 Runs pure-Python evaluators (latency, convergence, evidence utilization) unconditionally.
 LLM-powered evaluators (prediction, question adherence, allegation quality, risk flag
-timeliness, decision explanation) run only when a model_provider is supplied. Each evaluator
-call is wrapped in try/except for graceful degradation — failures produce None for that
-dimension.
+timeliness, decision explanation, note alignment) run only when a model_provider is
+supplied. Each evaluator call is wrapped in try/except for graceful degradation — failures
+produce None for that dimension.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from agentic_fraud_servicing.evaluation.evidence_utilization import (
 )
 from agentic_fraud_servicing.evaluation.latency_evaluator import evaluate_latency
 from agentic_fraud_servicing.evaluation.models import EvaluationReport, EvaluationRun
+from agentic_fraud_servicing.evaluation.note_alignment import evaluate_note_alignment
 from agentic_fraud_servicing.evaluation.prediction_evaluator import evaluate_prediction
 from agentic_fraud_servicing.evaluation.question_adherence import (
     evaluate_question_adherence,
@@ -40,13 +41,14 @@ if TYPE_CHECKING:
 # Dimension weights for overall score calculation.
 _WEIGHTS: dict[str, float] = {
     "latency": 0.10,
-    "prediction": 0.20,
+    "prediction": 0.18,
     "question_adherence": 0.10,
     "allegation_quality": 0.15,
     "evidence_utilization": 0.10,
-    "convergence": 0.15,
+    "convergence": 0.13,
     "risk_flag_timeliness": 0.10,
-    "decision_explanation": 0.10,
+    "decision_explanation": 0.04,
+    "note_alignment": 0.10,
 }
 
 
@@ -73,6 +75,8 @@ def extract_dimension_score(dimension: str, result: object) -> float | None:
         return result.flags_raised_count / max(result.flags_expected_count, 1)  # type: ignore[union-attr]
     if dimension == "decision_explanation":
         return 1.0 if result.reasoning_chain else 0.0  # type: ignore[union-attr]
+    if dimension == "note_alignment":
+        return result.overall_score  # type: ignore[union-attr]
 
     return None
 
@@ -115,6 +119,7 @@ async def generate_report(
         "convergence": None,
         "risk_flag_timeliness": None,
         "decision_explanation": None,
+        "note_alignment": None,
     }
 
     # --- Pure-Python evaluators (always run) ---
@@ -170,6 +175,16 @@ async def generate_report(
                 file=sys.stderr,
             )
 
+        try:
+            results["note_alignment"] = await evaluate_note_alignment(
+                run, model_provider
+            )
+        except Exception as exc:
+            print(
+                f"[report] note_alignment evaluator failed: {exc}",
+                file=sys.stderr,
+            )
+
     # --- Compute overall score ---
     dimension_scores = {dim: extract_dimension_score(dim, results[dim]) for dim in _WEIGHTS}
     overall_score = _compute_overall_score(dimension_scores)
@@ -185,6 +200,7 @@ async def generate_report(
         convergence=results["convergence"],
         risk_flag_timeliness=results["risk_flag_timeliness"],
         decision_explanation=results["decision_explanation"],
+        note_alignment=results["note_alignment"],
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
 

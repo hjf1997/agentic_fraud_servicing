@@ -15,6 +15,7 @@ from agentic_fraud_servicing.evaluation.models import (
     EvaluationRun,
     EvidenceUtilizationResult,
     LatencyReport,
+    NoteAlignmentResult,
     PredictionResult,
     QuestionAdherenceResult,
     RiskFlagTimelinessResult,
@@ -86,6 +87,14 @@ _DECISION_EXPLANATION = DecisionExplanation(
     reasoning_chain="The evidence clearly shows...",
     influential_evidence=[{"node_id": "n1"}],
     improvement_suggestions=["Probe earlier"],
+)
+
+_NOTE_ALIGNMENT = NoteAlignmentResult(
+    facts_coverage_score=0.8,
+    allegation_alignment_score=0.7,
+    category_action_score=0.9,
+    overall_score=0.8,
+    explanation="Good alignment overall.",
 )
 
 
@@ -161,12 +170,12 @@ class TestGenerateReport:
         """Overall score should be weighted average of 3 available dimensions only."""
         report = await generate_report(_make_run())
         # latency: compliance_rate=1.0, weight=0.10
-        # convergence: 1.0 - 0.4 = 0.6, weight=0.15
+        # convergence: 1.0 - 0.4 = 0.6, weight=0.13
         # evidence: (0.75+0.50)/2 = 0.625, weight=0.10
-        # total_weight = 0.10 + 0.15 + 0.10 = 0.35
-        # weighted_sum = 0.10*1.0 + 0.15*0.6 + 0.10*0.625 = 0.10 + 0.09 + 0.0625 = 0.2525
-        # overall = 0.2525 / 0.35 ≈ 0.7214
-        assert 0.70 < report.overall_score < 0.75
+        # total_weight = 0.10 + 0.13 + 0.10 = 0.33
+        # weighted_sum = 0.10*1.0 + 0.13*0.6 + 0.10*0.625 = 0.10 + 0.078 + 0.0625 = 0.2405
+        # overall = 0.2405 / 0.33 ≈ 0.7288
+        assert 0.72 < report.overall_score < 0.74
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +184,7 @@ class TestGenerateReport:
 
 
 class TestGenerateReportWithLlm:
-    """Tests for generate_report with a mock model_provider (all 8 evaluators)."""
+    """Tests for generate_report with a mock model_provider (all 9 evaluators)."""
 
     @pytest.fixture(autouse=True)
     def _patch_all_evaluators(self):
@@ -208,10 +217,15 @@ class TestGenerateReportWithLlm:
                 new_callable=AsyncMock,
                 return_value=_DECISION_EXPLANATION,
             ),
+            patch(
+                f"{_PATCH_BASE}.evaluate_note_alignment",
+                new_callable=AsyncMock,
+                return_value=_NOTE_ALIGNMENT,
+            ),
         ):
             yield
 
-    async def test_all_eight_dimensions_populated(self):
+    async def test_all_nine_dimensions_populated(self):
         provider = MagicMock()
         report = await generate_report(_make_run(), model_provider=provider)
         assert report.latency is not None
@@ -222,22 +236,24 @@ class TestGenerateReportWithLlm:
         assert report.allegation_quality is not None
         assert report.risk_flag_timeliness is not None
         assert report.decision_explanation is not None
+        assert report.note_alignment is not None
 
     async def test_overall_score_uses_all_weights(self):
         provider = MagicMock()
         report = await generate_report(_make_run(), model_provider=provider)
-        # All 8 weights sum to 1.0, so no re-normalization needed
+        # All 9 weights sum to 1.0, so no re-normalization needed
         # Manually compute expected score:
-        # latency: 1.0 * 0.10 = 0.10
-        # prediction: 1.0 * 0.20 = 0.20
-        # question_adherence: 0.8 * 0.10 = 0.08
+        # latency: 1.0 * 0.10 = 0.100
+        # prediction: 1.0 * 0.18 = 0.180
+        # question_adherence: 0.8 * 0.10 = 0.080
         # allegation_quality: 0.85 * 0.15 = 0.1275
         # evidence: 0.625 * 0.10 = 0.0625
-        # convergence: 0.6 * 0.15 = 0.09
+        # convergence: 0.6 * 0.13 = 0.078
         # risk_flag: 0.75 * 0.10 = 0.075
-        # decision: 1.0 * 0.10 = 0.10
-        # total = 0.835
-        assert 0.83 < report.overall_score < 0.84
+        # decision: 1.0 * 0.04 = 0.040
+        # note_alignment: 0.8 * 0.10 = 0.080
+        # total = 0.8230
+        assert 0.82 < report.overall_score < 0.83
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +305,11 @@ class TestGracefulDegradation:
                 new_callable=AsyncMock,
                 return_value=_DECISION_EXPLANATION,
             ),
+            patch(
+                f"{_PATCH_BASE}.evaluate_note_alignment",
+                new_callable=AsyncMock,
+                return_value=_NOTE_ALIGNMENT,
+            ),
         ):
             provider = MagicMock()
             report = await generate_report(_make_run(), model_provider=provider)
@@ -333,8 +354,8 @@ class TestSaveReport:
 class TestWeightNormalization:
     """Tests for weight re-normalization when some dimensions are None."""
 
-    def test_three_of_eight_dimensions(self):
-        """With 3/8 dimensions, weights should re-normalize to sum to 1.0."""
+    def test_three_of_nine_dimensions(self):
+        """With 3/9 dimensions, weights should re-normalize to sum to 1.0."""
         scores = {
             "latency": 1.0,
             "prediction": None,
@@ -344,12 +365,13 @@ class TestWeightNormalization:
             "convergence": 0.6,
             "risk_flag_timeliness": None,
             "decision_explanation": None,
+            "note_alignment": None,
         }
         overall = _compute_overall_score(scores)
-        # Weights: latency=0.10, evidence=0.10, convergence=0.15 → total=0.35
-        # Weighted: 0.10*1.0 + 0.10*0.5 + 0.15*0.6 = 0.10 + 0.05 + 0.09 = 0.24
-        # Normalized: 0.24 / 0.35 ≈ 0.6857
-        assert abs(overall - 0.24 / 0.35) < 0.001
+        # Weights: latency=0.10, evidence=0.10, convergence=0.13 → total=0.33
+        # Weighted: 0.10*1.0 + 0.10*0.5 + 0.13*0.6 = 0.10 + 0.05 + 0.078 = 0.228
+        # Normalized: 0.228 / 0.33 ≈ 0.6909
+        assert abs(overall - 0.228 / 0.33) < 0.001
 
     def test_all_dimensions_none_returns_zero(self):
         scores = {
@@ -363,6 +385,7 @@ class TestWeightNormalization:
                 "convergence",
                 "risk_flag_timeliness",
                 "decision_explanation",
+                "note_alignment",
             ]
         }
         assert _compute_overall_score(scores) == 0.0

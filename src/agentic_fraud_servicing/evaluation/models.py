@@ -14,6 +14,7 @@ Evaluator result models (output types for L1-18 evaluators):
 - ConvergenceResult: hypothesis convergence speed
 - RiskFlagTimelinessResult: risk flag timing vs evidence availability
 - DecisionExplanation: decision reasoning chain
+- NoteAlignmentResult: copilot output vs CCP notes alignment
 - EvaluationReport: full aggregated report across all dimensions
 """
 
@@ -147,6 +148,16 @@ class DecisionExplanation(BaseModel):
     overall_quality_notes: str = ""
 
 
+class NoteAlignmentResult(BaseModel):
+    """Copilot output vs CCP notes alignment scores."""
+
+    facts_coverage_score: float
+    allegation_alignment_score: float
+    category_action_score: float
+    overall_score: float
+    explanation: str = ""
+
+
 class EvaluationReport(BaseModel):
     """Full aggregated evaluation report across all dimensions."""
 
@@ -160,4 +171,5 @@ class EvaluationReport(BaseModel):
     convergence: ConvergenceResult | None = None
     risk_flag_timeliness: RiskFlagTimelinessResult | None = None
     decision_explanation: DecisionExplanation | None = None
+    note_alignment: NoteAlignmentResult | None = None
     generated_at: str = ""
