@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-VALID_LLM_PROVIDERS = ("openai", "bedrock")
+VALID_LLM_PROVIDERS = ("openai", "bedrock", "connectchain")
 
 
 class Settings:
@@ -34,6 +34,9 @@ class Settings:
             "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         )
         self.openai_api_key: str | None = os.environ.get("OPENAI_API_KEY")
+        self.connectchain_model_index: str | None = os.environ.get(
+            "CONNECTCHAIN_MODEL_INDEX"
+        )
 
         self._validate()
 
@@ -46,6 +49,11 @@ class Settings:
 
         if self.llm_provider == "openai" and not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER is 'openai'")
+
+        if self.llm_provider == "connectchain" and not self.connectchain_model_index:
+            raise ValueError(
+                "CONNECTCHAIN_MODEL_INDEX is required when LLM_PROVIDER is 'connectchain'"
+            )
 
 
 @lru_cache(maxsize=1)

@@ -85,4 +85,11 @@ def get_model_provider(settings: Settings) -> ModelProvider:
 
         return BedrockModelProvider(settings)
 
+    if settings.llm_provider == "connectchain":
+        from agentic_fraud_servicing.providers.connectchain_provider import (
+            ConnectChainModelProvider,
+        )
+
+        return ConnectChainModelProvider(settings)
+
     raise ValueError(f"Unknown LLM provider: {settings.llm_provider!r}")
