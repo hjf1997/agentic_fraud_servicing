@@ -534,8 +534,8 @@ def _build_adherence_chart(report: EvaluationReport | None) -> plt.Figure | None
     if not qa.per_turn_scores:
         return None
 
-    turns = [s.get("turn", i + 1) for i, s in enumerate(qa.per_turn_scores)]
-    scores = [s.get("score", 0.0) for s in qa.per_turn_scores]
+    turns = [s.get("turn_number", i + 1) for i, s in enumerate(qa.per_turn_scores)]
+    scores = [s.get("adherence_score", 0.0) for s in qa.per_turn_scores]
     colors = ["#2E7D32" if v >= 0.7 else "#F57C00" if v >= 0.4 else "#D32F2F" for v in scores]
 
     fig, ax = plt.subplots(figsize=(8, 3.5))
@@ -597,10 +597,10 @@ def _build_adherence_detail_html(report: EvaluationReport | None) -> str:
     # Per-turn collapsible details
     turns_html = ""
     for entry in qa.per_turn_scores:
-        turn = entry.get("turn", "?")
-        score = entry.get("score", 0.0)
+        turn = entry.get("turn_number", "?")
+        score = entry.get("adherence_score", 0.0)
         explanation = entry.get("explanation", "")
-        questions = entry.get("questions", [])
+        questions = entry.get("suggested_questions", [])
         sc = _score_color(score)
         sbg = _score_bg(score)
 
