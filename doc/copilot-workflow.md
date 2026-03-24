@@ -6,34 +6,59 @@ The Realtime Copilot processes live transcript events during fraud servicing cal
 
 ## Overview
 
+```mermaid
+flowchart TD
+    Event["TranscriptEvent"] --> Orch["CopilotOrchestrator<br/>.process_event()"]
+
+    Orch --> SpeakerCheck{Speaker?}
+
+    SpeakerCheck -->|CCP / SYSTEM| ReturnPrev["Return previous<br/>CopilotSuggestion<br/>(no LLM calls)"]
+    SpeakerCheck -->|CARDMEMBER| IntervalCheck
+
+    IntervalCheck{"Assessment turn?<br/>(every assess_interval<br/>CM turns, default=5)"} -->|"No (skip)"| ReturnPrev2["Return previous<br/>CopilotSuggestion<br/>(no LLM calls)"]
+    IntervalCheck -->|"Yes (CM turn 1, 6, 11, ...)"| Phase1
+
+    subgraph Phase1["Phase 1: Parallel — asyncio.gather()"]
+        direction LR
+        Triage["Triage Agent<br/>─────────────<br/>Extract 0-8 allegations<br/>per turn using 17-value<br/>AllegationDetailType"]
+        Auth["Auth Agent<br/>─────────────<br/>Impersonation risk<br/>score (0.0-1.0)<br/>+ step-up method"]
+        Retrieval["Retrieval Agent<br/>─────────────<br/>Fetch transactions,<br/>auth logs, customer<br/>profile (idempotent)"]
+    end
+
+    Phase1 --> StateUpdate["State Updates<br/>─────────────<br/>accumulated_allegations += new<br/>impersonation_risk updated<br/>_retrieval_result cached<br/>missing_fields pruned<br/>evidence_collected updated"]
+
+    subgraph Phase2a["Phase 2a: Parallel — asyncio.gather()"]
+        direction LR
+        Hyp["Hypothesis Agent<br/>─────────────<br/>Bayesian scoring:<br/>THIRD_PARTY_FRAUD<br/>FIRST_PARTY_FRAUD<br/>SCAM | DISPUTE"]
+        CaseAdv["Case Advisor<br/>─────────────<br/>Policy-aware<br/>eligibility check<br/>per case type<br/>+ unmet criteria"]
+    end
+
+    StateUpdate --> Phase2a
+    Phase2a --> ScoresUpdate["Update hypothesis_scores"]
+
+    ScoresUpdate --> QPlanner["Question Planner Agent<br/>─────────────<br/>1-3 suggested questions<br/>+ rationale + priority<br/>(deduplicates last 3 turns)"]
+
+    QPlanner --> Output["CopilotSuggestion<br/>─────────────<br/>suggested_questions<br/>risk_flags<br/>hypothesis_scores<br/>impersonation_risk<br/>case_eligibility<br/>running_summary<br/>safety_guidance<br/>retrieved_facts"]
+
+    Auth -.- AuthNote["Turns 1-3: always<br/>Turn 4+: only if risk ≥ 0.4"]
+    Retrieval -.- RetrNote["Runs once per session<br/>(cached thereafter)"]
+
+    style Phase1 fill:#e8f4fd,stroke:#1a73e8
+    style Phase2a fill:#e8f4fd,stroke:#1a73e8
+    style Output fill:#e6f4ea,stroke:#1e8e3e
+    style ReturnPrev fill:#fce8e6,stroke:#d93025
+    style ReturnPrev2 fill:#fce8e6,stroke:#d93025
+    style AuthNote fill:#fff3e0,stroke:#f57c00,stroke-dasharray: 5 5
+    style RetrNote fill:#fff3e0,stroke:#f57c00,stroke-dasharray: 5 5
 ```
-                          +------------------------+
-                          |    TranscriptEvent      |
-                          |  .call_id               |
-                          |  .speaker (SpeakerType) |
-                          |  .text                  |
-                          |  .timestamp_ms          |
-                          +------------+-----------+
-                                       |
-                                       v
-                          +------------------------+
-                          |  CopilotOrchestrator   |
-                          |    process_event()     |
-                          +------------+-----------+
-                                       |
-                            +----------+----------+
-                       CARDMEMBER            SYSTEM / CCP
-                            |                     |
-                            v                  Return previous
-                       Run pipeline            CopilotSuggestion
-```
 
-Only **CARDMEMBER** events trigger the agent pipeline. SYSTEM and CCP events are recorded in transcript history but return the previous suggestion state immediately (no LLM calls).
+Only **CARDMEMBER** events trigger the agent pipeline, and only on **assessment turns** — every `assess_interval` CM turns (default 5). CM turns 1, 6, 11, 16, ... run the full pipeline; all other turns return the previous suggestion immediately. CCP and SYSTEM events never trigger the pipeline.
 
-For CARDMEMBER events the pipeline is:
+For assessment turns the pipeline is:
 
-1. **Parallel**: Triage + Auth (conditional) + Retrieval
-2. **Sequential**: Hypothesis -> Case Advisor (after turn 3) -> Question Planner
+1. **Phase 1 (parallel)**: Triage + Auth (conditional) + Retrieval
+2. **Phase 2a (parallel, turn 4+)**: Hypothesis + Case Advisor — or Hypothesis only on turns 1-3
+3. **Phase 2b (sequential)**: Question Planner (needs both Phase 2a outputs)
 
 ---
 
@@ -123,7 +148,7 @@ For CARDMEMBER events the pipeline is:
 
 ---
 
-## Phase 2 — Sequential
+## Phase 2a — Hypothesis + Case Advisor (parallel on turn 4+)
 
 ### 4. Hypothesis Agent
 
@@ -150,17 +175,17 @@ For CARDMEMBER events the pipeline is:
 
 ---
 
-### 5. Case Advisor (after turn 3)
+### 5. Case Advisor (parallel with Hypothesis on turn 4+)
 
 **Role**: Policy-aware case opening eligibility assessment.
 
-**Condition**: Skipped on turns 1-3 (not enough info yet).
+**Condition**: Skipped on turns 1-3 (not enough info yet). On turn 4+, runs in parallel with Hypothesis Agent using the **previous turn's** hypothesis scores (acceptable since scores shift incrementally via the Bayesian prior design).
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
 | **INPUT** | `allegations_summary` | `str` | All accumulated allegations (same as hypothesis) |
 | **INPUT** | `evidence_summary` | `str` | Retrieved evidence JSON (same as hypothesis) |
-| **INPUT** | `hypothesis_scores` | `dict[str, float]` | Updated scores from hypothesis agent |
+| **INPUT** | `hypothesis_scores` | `dict[str, float]` | Previous turn's scores (Bayesian prior) |
 | **INPUT** | `conversation_summary` | `str` | Last 5 turns + total turn count |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
 
@@ -183,6 +208,8 @@ For CARDMEMBER events the pipeline is:
 - `unmet_criteria` passed to Question Planner as `extra_missing`
 
 ---
+
+## Phase 2b — Question Planner (sequential, after Phase 2a)
 
 ### 6. Question Planner
 
@@ -251,7 +278,7 @@ Retrieval --> transactions     ----+                                    |
 - **Hub-and-spoke**: The orchestrator explicitly controls which agents run and when. No free handoffs.
 - **Conditional auth**: Auth agent is skipped after turn 3 if impersonation risk drops below 0.4, saving an LLM call.
 - **Idempotent retrieval**: Retrieval runs once and caches. Safe to include in every `gather()` call.
-- **Case advisor gating**: Skipped on the first 3 turns when there isn't enough information for meaningful eligibility assessment.
+- **Case advisor gating + parallelism**: Skipped on turns 1-3. On turn 4+, runs in parallel with Hypothesis Agent using the previous turn's scores.
 - **Question dedup**: Planner receives the last 3 turns of suggested questions to avoid repetition.
 - **All agents traced**: Every invocation is logged to the trace store with agent name, duration, and status.
 - **Error isolation**: Each agent is wrapped in a `_run_*_safe` method. Failures append to `risk_flags` but never crash the pipeline.

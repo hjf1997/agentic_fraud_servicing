@@ -63,9 +63,15 @@ class CopilotOrchestrator:
         accumulated_allegations: All allegations extracted across turns.
     """
 
-    def __init__(self, gateway: ToolGateway, model_provider: ModelProvider) -> None:
+    def __init__(
+        self,
+        gateway: ToolGateway,
+        model_provider: ModelProvider,
+        assess_interval: int = 5,
+    ) -> None:
         self.gateway = gateway
         self.model_provider = model_provider
+        self.assess_interval: int = max(1, assess_interval)
         self.case_id: str | None = None
         self.call_id: str | None = None
         self.hypothesis_scores: dict[str, float] = {
@@ -82,6 +88,7 @@ class CopilotOrchestrator:
         self._retrieval_result: RetrievalResult | None = None
         self._recent_suggestions: list[list[str]] = []
         self._turn_count: int = 0
+        self._cm_turn_count: int = 0
 
     async def process_event(self, event: TranscriptEvent) -> CopilotSuggestion:
         """Process a single transcript event and return copilot suggestions.
@@ -115,7 +122,14 @@ class CopilotOrchestrator:
         if event.speaker != SpeakerType.CARDMEMBER:
             return self._build_suggestion(event)
 
-        # 3. CARDMEMBER event: run full agent pipeline
+        # 3. CARDMEMBER event: check assess_interval.
+        # Always run on the first CM turn. After that, run every assess_interval
+        # CM turns (e.g. interval=10 → run on CM turns 1, 11, 21, ...).
+        self._cm_turn_count += 1
+        if self._cm_turn_count > 1 and (self._cm_turn_count - 1) % self.assess_interval != 0:
+            return self._build_suggestion(event)
+
+        # 4. CARDMEMBER event: run full agent pipeline
         risk_flags: list[str] = []
 
         # 3a. Parallel group: triage + auth (conditional) + retrieval
