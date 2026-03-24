@@ -366,6 +366,7 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
             "convergence": ("Convergence Speed", report.convergence),
             "risk_flag_timeliness": ("Risk Flag Timeliness", report.risk_flag_timeliness),
             "decision_explanation": ("Decision Explanation", report.decision_explanation),
+            "note_alignment": ("CCP Note Alignment", report.note_alignment),
         }
         for dim_key, (label, result) in _dim_names.items():
             score = extract_dimension_score(dim_key, result)
