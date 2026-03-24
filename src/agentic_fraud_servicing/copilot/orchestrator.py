@@ -176,19 +176,23 @@ class CopilotOrchestrator:
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
-        # 6. Run hypothesis agent
-        hypothesis_result = await self._run_hypothesis_safe(
-            auth_result=auth_result, risk_flags=risk_flags
-        )
-        if hypothesis_result is not None:
-            self.hypothesis_scores = dict(hypothesis_result.scores)
-
-        # 7. Run case advisor — evaluate case opening eligibility.
-        # Skipped on early turns (first 3) when there isn't enough information
-        # to make meaningful eligibility assessments. Saves one LLM call per turn.
+        # 6-7. Run hypothesis agent and case advisor.
+        # On turns > 3, run both in PARALLEL — case advisor uses previous turn's
+        # hypothesis_scores (acceptable since scores shift incrementally).
         case_advisory = None
         if self._turn_count > 3:
-            case_advisory = await self._run_case_advisor_safe(risk_flags)
+            hypothesis_result, case_advisory = await asyncio.gather(
+                self._run_hypothesis_safe(
+                    auth_result=auth_result, risk_flags=risk_flags
+                ),
+                self._run_case_advisor_safe(risk_flags),
+            )
+        else:
+            hypothesis_result = await self._run_hypothesis_safe(
+                auth_result=auth_result, risk_flags=risk_flags
+            )
+        if hypothesis_result is not None:
+            self.hypothesis_scores = dict(hypothesis_result.scores)
         unmet_criteria: list[str] = []
         if case_advisory is not None:
             # Collect unmet criteria to pass to question planner (not accumulated
