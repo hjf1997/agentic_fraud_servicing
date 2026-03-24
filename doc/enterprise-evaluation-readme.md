@@ -135,81 +135,7 @@ Merchant(
 )
 ```
 
-#### 1e. Card Status
-
-```python
-from agentic_fraud_servicing.models.evidence import Card
-
-Card(
-    node_id="card-{scenario_prefix}-001",
-    case_id=case_id,
-    source_type=EvidenceSourceType.FACT,
-    created_at=_NOW,
-    card_id="card-<id>",
-    status="active",                 # or "blocked", "replaced", "closed"
-    recent_changes=[...],            # e.g. ["reported_lost_2d_ago", "pin_changed_5d_ago"]
-)
-```
-
-#### 1f. Delivery Proof (if available)
-
-```python
-from agentic_fraud_servicing.models.evidence import DeliveryProof
-
-DeliveryProof(
-    node_id="delivery-{scenario_prefix}-001",
-    case_id=case_id,
-    source_type=EvidenceSourceType.FACT,
-    created_at=_NOW,
-    tracking_id="<tracking>",
-    status="<status>",               # "delivered_signed", "delivered_unsigned", "in_transit", etc.
-    delivery_date=<datetime_or_none>,
-)
-```
-
-#### 1g. Allegation Statements
-
-For each claim the cardmember made (from CCP notes or transcript):
-
-```python
-from agentic_fraud_servicing.models.evidence import AllegationStatement
-from agentic_fraud_servicing.models.enums import AllegationDetailType
-
-AllegationStatement(
-    node_id="allegation-{scenario_prefix}-{seq}",
-    case_id=case_id,
-    source_type=EvidenceSourceType.ALLEGATION,  # claims are always ALLEGATION
-    created_at=_NOW,
-    text="<what the cardmember said — verbatim or paraphrased>",
-    detail_type=AllegationDetailType.<type>,     # see taxonomy below
-    classification="<free_text_classification>",
-)
-```
-
-**AllegationDetailType taxonomy** (17 values):
-
-Fraud tier:
-- `UNRECOGNIZED_TRANSACTION` — "I don't recognize this charge"
-- `CARD_NOT_PRESENT_FRAUD` — "I didn't make this online purchase"
-- `LOST_STOLEN_CARD` — "My card was lost/stolen"
-- `IDENTITY_VERIFICATION` — claims about identity not matching
-- `ACCOUNT_TAKEOVER` — "Someone changed my account details"
-- `LOCATION_CLAIM` — "I was in a different city/country"
-- `CARD_POSSESSION` — "I had my card with me the whole time"
-- `MERCHANT_FRAUD` — "The merchant is fraudulent"
-- `SPENDING_PATTERN` — "This doesn't match my spending pattern"
-
-Dispute tier:
-- `GOODS_NOT_RECEIVED` — "I never received the item"
-- `DUPLICATE_CHARGE` — "I was charged twice"
-- `RETURN_NOT_CREDITED` — "I returned the item but wasn't refunded"
-- `INCORRECT_AMOUNT` — "The amount is wrong"
-- `GOODS_NOT_AS_DESCRIBED` — "The item was not as described"
-- `RECURRING_AFTER_CANCEL` — "I cancelled but was still charged"
-- `SERVICES_NOT_RENDERED` — "The service was never provided"
-- `DEFECTIVE_MERCHANDISE` — "The product was defective"
-
-#### 1h. Evidence Edges
+#### 1e. Evidence Edges
 
 Create edges to capture relationships between evidence nodes:
 
@@ -222,12 +148,10 @@ from agentic_fraud_servicing.models.enums import EvidenceEdgeType
 
 Common edge patterns:
 - Transaction → AuthEvent (SUPPORTS): auth event proves how transaction was authenticated
-- AllegationStatement → Transaction (ALLEGATION): claim is about this transaction
-- AllegationStatement → AuthEvent (CONTRADICTS): claim contradicts auth evidence
-- DeliveryProof → Transaction (SUPPORTS): delivery confirms the purchase happened
+- Merchant → Transaction (SUPPORTS): merchant profile linked to transaction
 - InvestigatorNote → Transaction (DERIVED_FROM): note derived from transaction analysis
 
-#### 1i. Prior Case History (if any)
+#### 1f. Prior Case History (if any)
 
 If the HTML shows prior disputes, investigations, or notes on the same
 transaction or customer, create InvestigatorNote nodes with `source_type=FACT`:
@@ -392,7 +316,6 @@ from agentic_fraud_servicing.gateway.tools.write_tools import (
 )
 from agentic_fraud_servicing.models.case import AuditEntry, Case, TransactionRef
 from agentic_fraud_servicing.models.enums import (
-    AllegationDetailType,
     AllegationType,
     AuthMethod,
     CaseStatus,
@@ -401,11 +324,8 @@ from agentic_fraud_servicing.models.enums import (
     TransactionChannel,
 )
 from agentic_fraud_servicing.models.evidence import (
-    AllegationStatement,
     AuthEvent,
-    Card,
     Customer,
-    DeliveryProof,       # if applicable
     EvidenceEdge,
     InvestigatorNote,    # if prior history
     Merchant,
@@ -433,7 +353,7 @@ def _seed_evidence(gateway: ToolGateway, case_id: str) -> None:
     ctx = AuthContext(agent_id="evaluation", case_id=case_id, permissions={"write"})
 
     # --- Evidence nodes ---
-    # (paste Transaction, AuthEvent, Customer, Merchant, Card, etc. here)
+    # (paste Transaction, AuthEvent, Customer, Merchant, etc. here)
 
     # --- Evidence edges ---
     # (paste EvidenceEdge instances here)
@@ -517,29 +437,34 @@ Save the transcript to `scripts/transcripts/{scenario_name}.json`:
 
 ## Key Rules
 
-1. **Evidence source types**: System-verified data (transactions, auth events,
-   delivery proof, card status, merchant profiles) are always `FACT`. Customer
-   statements and claims are always `ALLEGATION`. Never mix them.
+1. **Only extract what is in the HTML**: Only populate fields that can be
+   confidently extracted from the case HTML. If a field is not present or
+   cannot be reliably inferred, leave it as `None` or omit it. Do NOT
+   hallucinate or fabricate any data — no invented amounts, dates, merchant
+   details, or customer attributes that are not explicitly shown in the HTML.
 
-2. **PII redaction**: Replace any real card numbers with fake AMEX test numbers
+2. **Evidence source types**: System-verified data (transactions, auth events,
+   customer profiles, merchant profiles) are always `FACT`.
+
+3. **PII redaction**: Replace any real card numbers with fake AMEX test numbers
    (e.g., `371449635398431`). Replace real SSNs, DOBs, and addresses with
    placeholders. The ingestion pipeline will redact these anyway, but don't
    include real PII in the script.
 
-3. **Timestamps**: Use relative timestamps (`_NOW - timedelta(days=N)`) rather
+4. **Timestamps**: Use relative timestamps (`_NOW - timedelta(days=N)`) rather
    than absolute dates. This keeps the scenario reproducible.
 
-4. **One scenario per case**: Each HTML page produces one scenario file and one
+5. **One scenario per case**: Each HTML page produces one scenario file and one
    transcript file. Do not combine multiple cases.
 
-5. **No LLM dialogue generation**: The `cm_system_prompt` should be empty string.
+6. **No LLM dialogue generation**: The `cm_system_prompt` should be empty string.
    The transcript comes from the real call, not from LLM simulators. The
    `max_turns` should be 0 (unused in evaluation mode).
 
-6. **Ground truth is required**: Every evaluation scenario must include the
+7. **Ground truth is required**: Every evaluation scenario must include the
    `GROUND_TRUTH` dict with the actual investigation outcome from the HTML.
 
-7. **AllegationType vs InvestigationCategory**: Use `AllegationType` (FRAUD,
+8. **AllegationType vs InvestigationCategory**: Use `AllegationType` (FRAUD,
    DISPUTE, SCAM) for `Case.allegation_type` — this is what the CM claims.
    Use `InvestigationCategory` values (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD,
    SCAM, DISPUTE) for `GROUND_TRUTH["investigation_category"]` — this is the
