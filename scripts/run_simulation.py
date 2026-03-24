@@ -64,7 +64,7 @@ from agentic_fraud_servicing.models.enums import (  # noqa: E402
 from agentic_fraud_servicing.models.evidence import AllegationStatement, EvidenceEdge  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
 from agentic_fraud_servicing.providers.bedrock_provider import BedrockModelProvider  # noqa: E402
-from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
+from agentic_fraud_servicing.ui.helpers import create_gateway, load_transcript_file  # noqa: E402
 from scripts.simulation_data import (  # noqa: E402
     DisputeAction,
     Scenario,
@@ -389,18 +389,71 @@ async def _process_dispute_action(
 
 
 # ---------------------------------------------------------------------------
+# Phase 2 modes
+# ---------------------------------------------------------------------------
+
+
+async def _phase2_replay(
+    transcript_path: str,
+    copilot: CopilotOrchestrator,
+    scenario: Scenario,
+    gateway,
+) -> CopilotSuggestion | None:
+    """Phase 2 (Mode 1): Replay an existing transcript through the copilot.
+
+    Loads events from a transcript JSON file and feeds them sequentially to the
+    copilot orchestrator. No LLM CCP/CM generation — the conversation already
+    exists in the transcript.
+
+    Returns the last CopilotSuggestion produced.
+    """
+    events = load_transcript_file(transcript_path)
+    print(f"  Loaded {len(events)} events from {transcript_path}")
+
+    last_suggestion = None
+    for i, event in enumerate(events, 1):
+        _print_turn(i, event.speaker.value, event.text)
+
+        t0 = time.perf_counter()
+        last_suggestion = await copilot.process_event(event)
+        copilot_dur = (time.perf_counter() - t0) * 1000
+        _print_copilot_brief(last_suggestion)
+
+        _persist_trace(
+            gateway,
+            scenario.case_id,
+            "transcript",
+            "conversation_turn",
+            json.dumps({"turn": i, "speaker": event.speaker.value}),
+            json.dumps({"turn": i, "speaker": event.speaker.value, "text": event.text}),
+        )
+        _persist_trace(
+            gateway,
+            scenario.case_id,
+            "copilot_suggestion",
+            "suggestion",
+            json.dumps({"turn": i}),
+            last_suggestion.model_dump_json(),
+            duration_ms=copilot_dur,
+        )
+
+    return last_suggestion
+
+
+# ---------------------------------------------------------------------------
 # Main simulation
 # ---------------------------------------------------------------------------
 
 
-async def run_scenario(scenario: Scenario) -> None:
+async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -> None:
     """Run a full end-to-end simulation for the given scenario."""
     wall_start = time.perf_counter()
 
     # -- Banner --
+    mode_label = "Transcript Replay" if transcript_path else "Live Bedrock LLM"
     print(f"\n{BOLD}{CYAN}{'=' * 60}{RESET}")
     print(f"{BOLD}{CYAN}  AMEX Fraud Servicing — Full E2E Simulation{RESET}")
-    print(f"{BOLD}{CYAN}  (Live Bedrock LLM){RESET}")
+    print(f"{BOLD}{CYAN}  ({mode_label}){RESET}")
     print(f"{BOLD}{CYAN}{'=' * 60}{RESET}")
     print(f"\n{BOLD}Scenario: {scenario.title}{RESET}")
     print(f"{DIM}{scenario.description}{RESET}")
@@ -426,24 +479,26 @@ async def run_scenario(scenario: Scenario) -> None:
         print(f"{RED}Check AWS credentials and Bedrock model configuration.{RESET}")
         sys.exit(1)
 
-    # Create a faster/cheaper Haiku provider for CM/CCP dialogue simulators.
-    # Specialist agents (triage, hypothesis, etc.) still use the main provider.
-    if settings.llm_provider == "bedrock":
-        from copy import copy
+    # Create simulator provider and CM agent only for generate mode (no transcript)
+    simulator_provider = None
+    scenario_cm_agent = None
+    if not transcript_path:
+        # Faster/cheaper Haiku provider for CM/CCP dialogue simulators.
+        # Specialist agents (triage, hypothesis, etc.) still use the main provider.
+        if settings.llm_provider == "bedrock":
+            from copy import copy
 
-        haiku_settings = copy(settings)
-        haiku_settings.aws_bedrock_model_id = _HAIKU_MODEL_ID
-        simulator_provider = BedrockModelProvider(haiku_settings)
-        print(f"  {DIM}Simulator model (CM/CCP): {_HAIKU_MODEL_ID}{RESET}")
-    else:
-        simulator_provider = model_provider
+            haiku_settings = copy(settings)
+            haiku_settings.aws_bedrock_model_id = _HAIKU_MODEL_ID
+            simulator_provider = BedrockModelProvider(haiku_settings)
+            print(f"  {DIM}Simulator model (CM/CCP): {_HAIKU_MODEL_ID}{RESET}")
+        else:
+            simulator_provider = model_provider
+        scenario_cm_agent = Agent(name="cm_simulator", instructions=scenario.cm_system_prompt)
 
     db_dir = f"data/simulation/{scenario.name}"
     gateway = create_gateway(db_dir)
     print(f"\n{DIM}Gateway created with SQLite stores in {db_dir}/{RESET}")
-
-    # Create CM agent for this scenario
-    scenario_cm_agent = Agent(name="cm_simulator", instructions=scenario.cm_system_prompt)
 
     # ===================================================================
     # Phase 1: Seed Evidence
@@ -462,147 +517,42 @@ async def run_scenario(scenario: Scenario) -> None:
     )
 
     # ===================================================================
-    # Phase 2: Copilot — Live Call Simulation
+    # Phase 2: Copilot
     # ===================================================================
-    _print_header("Phase 2: Copilot — Live Call Simulation via Bedrock")
-
     copilot = CopilotOrchestrator(gateway, model_provider)
     # Set case_id/call_id directly so the retrieval agent queries the
     # correct case — the auto-generated ID from call_id doesn't match
     # the seeded evidence.
     copilot.case_id = scenario.case_id
     copilot.call_id = scenario.call_id
-    conversation_history: list[tuple[str, str]] = []
-    last_suggestion = None
-    turn = 0
 
-    # -- Turn 1: CCP greeting (no copilot context yet) --
-    turn += 1
-    try:
-        t0 = time.perf_counter()
-        ccp_text = await generate_ccp_turn(
-            conversation_history="[Call begins. Greet the caller.]",
-            copilot_context="No copilot data yet — this is the start of the call.",
-            model_provider=simulator_provider,
+    if transcript_path:
+        # -- Mode 1: Replay existing transcript --
+        _print_header("Phase 2: Copilot — Transcript Replay")
+        print(f"  {DIM}Replaying: {transcript_path}{RESET}")
+        last_suggestion = await _phase2_replay(
+            transcript_path, copilot, scenario, gateway
         )
-        ccp_dur = (time.perf_counter() - t0) * 1000
-    except Exception as exc:
-        print(f"\n{RED}CCP generation failed on turn {turn}: {exc}{RESET}")
-        sys.exit(1)
+    else:
+        # -- Mode 2: Generate conversation via LLM --
+        _print_header("Phase 2: Copilot — Live Call Simulation via Bedrock")
+        conversation_history: list[tuple[str, str]] = []
+        last_suggestion = None
+        turn = 0
 
-    conversation_history.append(("CCP", ccp_text))
-    _print_turn(turn, "CCP", ccp_text)
-
-    # CCP turns are NOT processed by the copilot — suggestions are only
-    # generated after CARDMEMBER and SYSTEM turns.
-    _persist_trace(
-        gateway,
-        scenario.case_id,
-        "transcript",
-        "conversation_turn",
-        json.dumps({"turn": turn, "speaker": "CCP"}),
-        json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
-        duration_ms=ccp_dur,
-    )
-
-    # -- Conversation loop --
-    while turn < scenario.max_turns:
-        # CM turn
+        # -- Turn 1: CCP greeting (no copilot context yet) --
         turn += 1
-        history_text = "\n".join(f"{spk}: {txt}" for spk, txt in conversation_history)
         try:
             t0 = time.perf_counter()
-            cm_text = await generate_cm_turn(scenario_cm_agent, history_text, simulator_provider)
-            cm_dur = (time.perf_counter() - t0) * 1000
-        except Exception as exc:
-            print(f"\n{RED}CM generation failed on turn {turn}: {exc}{RESET}")
-            break
-
-        conversation_history.append(("CARDMEMBER", cm_text))
-        _print_turn(turn, "CARDMEMBER", cm_text)
-
-        t0 = time.perf_counter()
-        raw_event = _make_event(scenario.call_id, turn, "CARDMEMBER", cm_text)
-        event = parse_transcript_event(raw_event)
-        last_suggestion = await copilot.process_event(event)
-        copilot_dur = (time.perf_counter() - t0) * 1000
-        _print_copilot_brief(last_suggestion)
-
-        # Persist CM turn transcript and copilot suggestion
-        _persist_trace(
-            gateway,
-            scenario.case_id,
-            "transcript",
-            "conversation_turn",
-            json.dumps({"turn": turn, "speaker": "CARDMEMBER"}),
-            json.dumps({"turn": turn, "speaker": "CARDMEMBER", "text": cm_text}),
-            duration_ms=cm_dur,
-        )
-        _persist_trace(
-            gateway,
-            scenario.case_id,
-            "copilot_suggestion",
-            "suggestion",
-            json.dumps({"turn": turn}),
-            last_suggestion.model_dump_json(),
-            duration_ms=copilot_dur,
-        )
-
-        # Inject SYSTEM events at key points
-        if turn == 4 and scenario.system_event_auth:
-            # Auth verification event
-            turn, last_suggestion = await _inject_system_event(
-                turn,
-                scenario.system_event_auth,
-                scenario,
-                copilot,
-                conversation_history,
-                gateway,
+            ccp_text = await generate_ccp_turn(
+                conversation_history="[Call begins. Greet the caller.]",
+                copilot_context="No copilot data yet — this is the start of the call.",
+                model_provider=simulator_provider,
             )
-
-            # Evidence event — injected right after auth when early mode is on
-            if scenario.inject_evidence_early and scenario.system_event_evidence:
-                turn, last_suggestion = await _inject_system_event(
-                    turn,
-                    scenario.system_event_evidence,
-                    scenario,
-                    copilot,
-                    conversation_history,
-                    gateway,
-                )
-
-        if turn == 10 and not scenario.inject_evidence_early and scenario.system_event_evidence:
-            turn, last_suggestion = await _inject_system_event(
-                turn,
-                scenario.system_event_evidence,
-                scenario,
-                copilot,
-                conversation_history,
-                gateway,
-            )
-
-        # Process dispute actions triggered at this turn
-        for action in scenario.dispute_actions:
-            if turn == action.trigger_turn:
-                turn, last_suggestion = await _process_dispute_action(
-                    action, turn, scenario, copilot, conversation_history, gateway
-                )
-
-        # Check if we have enough turns left for a CCP response
-        if turn >= scenario.max_turns:
-            break
-
-        # CCP turn (with copilot context)
-        turn += 1
-        copilot_ctx = _format_copilot_context(last_suggestion)
-        history_text = "\n".join(f"{spk}: {txt}" for spk, txt in conversation_history)
-        try:
-            t0 = time.perf_counter()
-            ccp_text = await generate_ccp_turn(history_text, copilot_ctx, simulator_provider)
             ccp_dur = (time.perf_counter() - t0) * 1000
         except Exception as exc:
             print(f"\n{RED}CCP generation failed on turn {turn}: {exc}{RESET}")
-            break
+            sys.exit(1)
 
         conversation_history.append(("CCP", ccp_text))
         _print_turn(turn, "CCP", ccp_text)
@@ -618,6 +568,120 @@ async def run_scenario(scenario: Scenario) -> None:
             json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
             duration_ms=ccp_dur,
         )
+
+        # -- Conversation loop --
+        while turn < scenario.max_turns:
+            # CM turn
+            turn += 1
+            history_text = "\n".join(f"{spk}: {txt}" for spk, txt in conversation_history)
+            try:
+                t0 = time.perf_counter()
+                cm_text = await generate_cm_turn(scenario_cm_agent, history_text, simulator_provider)
+                cm_dur = (time.perf_counter() - t0) * 1000
+            except Exception as exc:
+                print(f"\n{RED}CM generation failed on turn {turn}: {exc}{RESET}")
+                break
+
+            conversation_history.append(("CARDMEMBER", cm_text))
+            _print_turn(turn, "CARDMEMBER", cm_text)
+
+            t0 = time.perf_counter()
+            raw_event = _make_event(scenario.call_id, turn, "CARDMEMBER", cm_text)
+            event = parse_transcript_event(raw_event)
+            last_suggestion = await copilot.process_event(event)
+            copilot_dur = (time.perf_counter() - t0) * 1000
+            _print_copilot_brief(last_suggestion)
+
+            # Persist CM turn transcript and copilot suggestion
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "transcript",
+                "conversation_turn",
+                json.dumps({"turn": turn, "speaker": "CARDMEMBER"}),
+                json.dumps({"turn": turn, "speaker": "CARDMEMBER", "text": cm_text}),
+                duration_ms=cm_dur,
+            )
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "copilot_suggestion",
+                "suggestion",
+                json.dumps({"turn": turn}),
+                last_suggestion.model_dump_json(),
+                duration_ms=copilot_dur,
+            )
+
+            # Inject SYSTEM events at key points
+            if turn == 4 and scenario.system_event_auth:
+                # Auth verification event
+                turn, last_suggestion = await _inject_system_event(
+                    turn,
+                    scenario.system_event_auth,
+                    scenario,
+                    copilot,
+                    conversation_history,
+                    gateway,
+                )
+
+                # Evidence event — injected right after auth when early mode is on
+                if scenario.inject_evidence_early and scenario.system_event_evidence:
+                    turn, last_suggestion = await _inject_system_event(
+                        turn,
+                        scenario.system_event_evidence,
+                        scenario,
+                        copilot,
+                        conversation_history,
+                        gateway,
+                    )
+
+            if turn == 10 and not scenario.inject_evidence_early and scenario.system_event_evidence:
+                turn, last_suggestion = await _inject_system_event(
+                    turn,
+                    scenario.system_event_evidence,
+                    scenario,
+                    copilot,
+                    conversation_history,
+                    gateway,
+                )
+
+            # Process dispute actions triggered at this turn
+            for action in scenario.dispute_actions:
+                if turn == action.trigger_turn:
+                    turn, last_suggestion = await _process_dispute_action(
+                        action, turn, scenario, copilot, conversation_history, gateway
+                    )
+
+            # Check if we have enough turns left for a CCP response
+            if turn >= scenario.max_turns:
+                break
+
+            # CCP turn (with copilot context)
+            turn += 1
+            copilot_ctx = _format_copilot_context(last_suggestion)
+            history_text = "\n".join(f"{spk}: {txt}" for spk, txt in conversation_history)
+            try:
+                t0 = time.perf_counter()
+                ccp_text = await generate_ccp_turn(history_text, copilot_ctx, simulator_provider)
+                ccp_dur = (time.perf_counter() - t0) * 1000
+            except Exception as exc:
+                print(f"\n{RED}CCP generation failed on turn {turn}: {exc}{RESET}")
+                break
+
+            conversation_history.append(("CCP", ccp_text))
+            _print_turn(turn, "CCP", ccp_text)
+
+            # CCP turns are NOT processed by the copilot — suggestions are only
+            # generated after CARDMEMBER and SYSTEM turns.
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "transcript",
+                "conversation_turn",
+                json.dumps({"turn": turn, "speaker": "CCP"}),
+                json.dumps({"turn": turn, "speaker": "CCP", "text": ccp_text}),
+                duration_ms=ccp_dur,
+            )
 
     # -- Final copilot state --
     print(f"\n{BOLD}Final Copilot State:{RESET}")
@@ -739,6 +803,13 @@ def main() -> None:
         help=f"Scenario to run. Available: {', '.join(list_scenarios())}",
     )
     parser.add_argument(
+        "--transcript",
+        "-t",
+        default=None,
+        help="Path to transcript JSON file. When provided, replays the transcript "
+        "instead of generating conversation via LLM.",
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="List available scenarios and exit.",
@@ -763,7 +834,7 @@ def main() -> None:
         original_stdout = sys.stdout
         sys.stdout = TeeWriter(original_stdout, log_file)
         try:
-            asyncio.run(run_scenario(scenario))
+            asyncio.run(run_scenario(scenario, transcript_path=args.transcript))
         finally:
             sys.stdout = original_stdout
 
