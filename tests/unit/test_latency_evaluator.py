@@ -8,8 +8,16 @@ from agentic_fraud_servicing.evaluation.models import EvaluationRun, TurnMetric
 
 def _make_run(latencies: list[float]) -> EvaluationRun:
     """Helper to build an EvaluationRun from a list of latency values."""
+    # Include a dummy copilot_suggestion so turns are treated as assessed
+    _dummy_suggestion = {"call_id": "test", "timestamp_ms": 0}
     metrics = [
-        TurnMetric(turn_number=i + 1, speaker="CARDMEMBER", text=f"Turn {i + 1}", latency_ms=lat)
+        TurnMetric(
+            turn_number=i + 1,
+            speaker="CARDMEMBER",
+            text=f"Turn {i + 1}",
+            latency_ms=lat,
+            copilot_suggestion=_dummy_suggestion,
+        )
         for i, lat in enumerate(latencies)
     ]
     return EvaluationRun(
@@ -115,6 +123,58 @@ class TestSingleTurn:
         report = evaluate_latency(_make_run([2000.0]))
         assert report.compliance_rate == 0.0
         assert report.flagged_turns == [1]
+
+
+class TestNonAssessedTurnsFiltered:
+    """Non-assessed turns (copilot_suggestion=None) should be excluded."""
+
+    def test_non_assessed_turns_excluded(self):
+        """Mix of assessed CM turns and non-assessed CCP turns."""
+        metrics = [
+            TurnMetric(
+                turn_number=1,
+                speaker="CCP",
+                text="Hello",
+                latency_ms=5.0,
+                copilot_suggestion=None,
+            ),
+            TurnMetric(
+                turn_number=2,
+                speaker="CARDMEMBER",
+                text="I have a charge",
+                latency_ms=800.0,
+                copilot_suggestion={"call_id": "test", "timestamp_ms": 0},
+            ),
+            TurnMetric(
+                turn_number=3,
+                speaker="CCP",
+                text="Let me check",
+                latency_ms=3.0,
+                copilot_suggestion=None,
+            ),
+            TurnMetric(
+                turn_number=4,
+                speaker="CARDMEMBER",
+                text="It was $500",
+                latency_ms=1200.0,
+                copilot_suggestion={"call_id": "test", "timestamp_ms": 0},
+            ),
+        ]
+        run = EvaluationRun(
+            scenario_name="test",
+            ground_truth={},
+            turn_metrics=metrics,
+            total_turns=4,
+            total_latency_ms=2008.0,
+            start_time="2026-01-01T00:00:00Z",
+            end_time="2026-01-01T00:01:00Z",
+        )
+        report = evaluate_latency(run)
+        # Only 2 assessed turns (turns 2 and 4)
+        assert len(report.per_turn_latency_ms) == 2
+        assert report.per_turn_latency_ms == [800.0, 1200.0]
+        assert report.assessed_turns == [2, 4]
+        assert report.compliance_rate == 1.0  # both under 1500ms
 
 
 class TestComplianceTarget:

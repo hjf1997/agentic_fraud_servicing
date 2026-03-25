@@ -303,7 +303,8 @@ def _build_latency_chart(report: EvaluationReport | None) -> plt.Figure | None:
     if not values:
         return None
 
-    turns = list(range(1, len(values) + 1))
+    # Use assessed turn numbers if available, otherwise fall back to 1..N
+    turns = latency.assessed_turns if latency.assessed_turns else list(range(1, len(values) + 1))
     threshold = latency.compliance_target_ms
     colors = ["#D32F2F" if v > threshold else "#2E7D32" for v in values]
 
@@ -320,7 +321,7 @@ def _build_latency_chart(report: EvaluationReport | None) -> plt.Figure | None:
         label=f"Target: {threshold:.0f}ms",
     )
 
-    ax.set_xlabel("Turn", fontsize=10, color=AMEX_NAVY)
+    ax.set_xlabel("Turn (assessed only)", fontsize=10, color=AMEX_NAVY)
     ax.set_ylabel("Latency (ms)", fontsize=10, color=AMEX_NAVY)
     ax.set_title("Per-Turn Copilot Latency", fontsize=12, color=AMEX_NAVY)
     ax.legend(fontsize=9)
@@ -424,11 +425,17 @@ def _build_hypothesis_chart(
     }
     categories = list(category_colors.keys())
 
-    turns = [m.turn_number for m in run.turn_metrics]
-    series: dict[str, list[float]] = {cat: [] for cat in categories}
+    # Separate assessed turns (with copilot_suggestion) from non-assessed
+    assessed_turns = []
+    assessed_series: dict[str, list[float]] = {cat: [] for cat in categories}
     for m in run.turn_metrics:
-        for cat in categories:
-            series[cat].append(m.hypothesis_scores.get(cat, 0.0))
+        if m.copilot_suggestion is not None:
+            assessed_turns.append(m.turn_number)
+            for cat in categories:
+                assessed_series[cat].append(m.hypothesis_scores.get(cat, 0.0))
+
+    if not assessed_turns:
+        return None
 
     fig, ax = plt.subplots(figsize=(8, 3.5))
     fig.patch.set_facecolor(AMEX_WHITE)
@@ -439,7 +446,7 @@ def _build_hypothesis_chart(
     if gt_category in category_colors:
         ax.axhspan(0.9, 1.0, color=category_colors[gt_category], alpha=0.10)
         ax.text(
-            turns[-1] + 0.3,
+            assessed_turns[-1] + 0.3,
             0.95,
             f"GT: {gt_category}",
             fontsize=7,
@@ -452,11 +459,11 @@ def _build_hypothesis_chart(
         ct = report.convergence.convergence_turn
         ax.axvline(x=ct, color="#999", linestyle="--", linewidth=1.2, label=f"Converge @ {ct}")
 
-    # Score lines
+    # Score lines — only assessed turns
     for cat in categories:
         ax.plot(
-            turns,
-            series[cat],
+            assessed_turns,
+            assessed_series[cat],
             color=category_colors[cat],
             linewidth=1.8,
             label=cat.replace("_", " ").title(),
@@ -464,11 +471,11 @@ def _build_hypothesis_chart(
             markersize=3,
         )
 
-    ax.set_xlabel("Turn", fontsize=10, color=AMEX_NAVY)
+    ax.set_xlabel("Turn (assessed only)", fontsize=10, color=AMEX_NAVY)
     ax.set_ylabel("Score", fontsize=10, color=AMEX_NAVY)
     ax.set_title("Hypothesis Score Evolution", fontsize=12, color=AMEX_NAVY)
     ax.set_ylim(-0.02, 1.05)
-    ax.set_xticks(turns)
+    ax.set_xticks(assessed_turns)
     ax.legend(fontsize=7, loc="upper left", framealpha=0.9)
 
     plt.tight_layout()
@@ -959,18 +966,23 @@ def _build_eval_transcript_html(run: EvaluationRun | None) -> str:
         n_allegations = len(m.allegations_extracted)
 
         # Annotation row below bubble
+        is_assessed = m.copilot_suggestion is not None
         annotation = (
             f'<div style="font-size:0.75em; color:#888; {label_style} margin-bottom:10px;">'
             f"Turn {m.turn_number}"
         )
-        if top_cat:
-            annotation += (
-                f" &bull; {_category_badge(top_cat)}"
-                f' <span style="font-weight:600;">{top_score:.2f}</span>'
-            )
-        if n_allegations:
-            annotation += f" &bull; {n_allegations} allegation(s)"
-        annotation += f" &bull; {m.latency_ms:.0f}ms</div>"
+        if is_assessed:
+            if top_cat:
+                annotation += (
+                    f" &bull; {_category_badge(top_cat)}"
+                    f' <span style="font-weight:600;">{top_score:.2f}</span>'
+                )
+            if n_allegations:
+                annotation += f" &bull; {n_allegations} allegation(s)"
+            annotation += f" &bull; {m.latency_ms:.0f}ms"
+        else:
+            annotation += ' &bull; <span style="color:#bbb;">not assessed</span>'
+        annotation += "</div>"
 
         bubbles += (
             f'<div style="font-size:0.75em; color:#999; {label_style} '

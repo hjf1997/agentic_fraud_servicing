@@ -95,6 +95,7 @@ def _make_report(**overrides) -> EvaluationReport:
 
 def _make_run() -> EvaluationRun:
     """Build a minimal EvaluationRun with 3 turns."""
+    _dummy_suggestion = {"call_id": "test", "timestamp_ms": 0}
     metrics = [
         TurnMetric(
             turn_number=i + 1,
@@ -108,6 +109,8 @@ def _make_run() -> EvaluationRun:
                 "DISPUTE": 0.2 - i * 0.05,
             },
             allegations_extracted=[{"detail_type": "CARD_NOT_PRESENT_FRAUD"}] if i == 1 else [],
+            # Only CARDMEMBER turns (i==1) have copilot suggestions (assessed turns)
+            copilot_suggestion=_dummy_suggestion if i == 1 else None,
         )
         for i in range(3)
     ]

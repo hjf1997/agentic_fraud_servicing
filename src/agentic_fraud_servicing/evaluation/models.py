@@ -75,6 +75,7 @@ class LatencyReport(BaseModel):
     compliance_target_ms: float = 1500.0
     compliance_rate: float
     flagged_turns: list[int] = Field(default_factory=list)
+    assessed_turns: list[int] = Field(default_factory=list)
 
 
 class PredictionResult(BaseModel):

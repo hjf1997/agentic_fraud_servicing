@@ -35,7 +35,11 @@ def evaluate_latency(run: EvaluationRun) -> LatencyReport:
     Returns:
         LatencyReport with percentiles, compliance rate, and flagged turns.
     """
-    if not run.turn_metrics:
+    # Only include assessed turns (those with a copilot_suggestion) so that
+    # CCP/SYSTEM turns with near-zero latency don't dilute the statistics.
+    assessed = [tm for tm in run.turn_metrics if tm.copilot_suggestion is not None]
+
+    if not assessed:
         return LatencyReport(
             per_turn_latency_ms=[],
             p50_ms=0.0,
@@ -46,14 +50,14 @@ def evaluate_latency(run: EvaluationRun) -> LatencyReport:
             flagged_turns=[],
         )
 
-    latencies = [tm.latency_ms for tm in run.turn_metrics]
+    latencies = [tm.latency_ms for tm in assessed]
     sorted_latencies = sorted(latencies)
 
     target = 1500.0
     compliant_count = sum(1 for lat in latencies if lat <= target)
     compliance_rate = compliant_count / len(latencies)
 
-    flagged_turns = [tm.turn_number for tm in run.turn_metrics if tm.latency_ms > target]
+    flagged_turns = [tm.turn_number for tm in assessed if tm.latency_ms > target]
 
     return LatencyReport(
         per_turn_latency_ms=latencies,
@@ -63,4 +67,5 @@ def evaluate_latency(run: EvaluationRun) -> LatencyReport:
         max_ms=sorted_latencies[-1],
         compliance_rate=compliance_rate,
         flagged_turns=flagged_turns,
+        assessed_turns=[tm.turn_number for tm in assessed],
     )
