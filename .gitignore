@@ -21,6 +21,10 @@ venv/
 *.swp
 *.swo
 *~
+*.iml
+.project
+.classpath
+.settings/
 
 # macOS
 .DS_Store
@@ -43,3 +47,12 @@ logs/
 !logs/.gitkeep
 .env
 .claude-loop-state
+
+# Claude Code
+.claude/
+
+# Dependencies
+lib/
+
+# Test output
+/test/
