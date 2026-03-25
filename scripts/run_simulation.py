@@ -265,10 +265,11 @@ async def _inject_system_event(
     copilot: "CopilotOrchestrator",
     conversation_history: list[tuple[str, str]],
     gateway,
-) -> tuple[int, CopilotSuggestion]:
+) -> tuple[int, CopilotSuggestion | None]:
     """Inject a SYSTEM event into the conversation, process via copilot, and persist.
 
-    Returns the updated turn number and the copilot suggestion produced.
+    Returns the updated turn number and the copilot suggestion (None on
+    non-assessment turns).
     """
     turn += 1
     conversation_history.append(("SYSTEM", text))
@@ -277,7 +278,6 @@ async def _inject_system_event(
     raw_event = _make_event(scenario.call_id, turn, "SYSTEM", text)
     event = parse_transcript_event(raw_event)
     suggestion = await copilot.process_event(event)
-    _print_copilot_brief(suggestion)
 
     _persist_trace(
         gateway,
@@ -287,14 +287,16 @@ async def _inject_system_event(
         json.dumps({"turn": turn, "speaker": "SYSTEM"}),
         json.dumps({"turn": turn, "speaker": "SYSTEM", "text": text}),
     )
-    _persist_trace(
-        gateway,
-        scenario.case_id,
-        "copilot_suggestion",
-        "suggestion",
-        json.dumps({"turn": turn}),
-        suggestion.model_dump_json(),
-    )
+    if suggestion is not None:
+        _print_copilot_brief(suggestion)
+        _persist_trace(
+            gateway,
+            scenario.case_id,
+            "copilot_suggestion",
+            "suggestion",
+            json.dumps({"turn": turn}),
+            suggestion.model_dump_json(),
+        )
     return turn, suggestion
 
 
@@ -411,13 +413,13 @@ async def _phase2_replay(
     print(f"  Loaded {len(events)} events from {transcript_path}")
 
     last_suggestion = None
+    total = len(events)
     for i, event in enumerate(events, 1):
         _print_turn(i, event.speaker.value, event.text)
 
         t0 = time.perf_counter()
-        last_suggestion = await copilot.process_event(event)
+        suggestion = await copilot.process_event(event, is_last=(i == total))
         copilot_dur = (time.perf_counter() - t0) * 1000
-        _print_copilot_brief(last_suggestion)
 
         _persist_trace(
             gateway,
@@ -427,15 +429,19 @@ async def _phase2_replay(
             json.dumps({"turn": i, "speaker": event.speaker.value}),
             json.dumps({"turn": i, "speaker": event.speaker.value, "text": event.text}),
         )
-        _persist_trace(
-            gateway,
-            scenario.case_id,
-            "copilot_suggestion",
-            "suggestion",
-            json.dumps({"turn": i}),
-            last_suggestion.model_dump_json(),
-            duration_ms=copilot_dur,
-        )
+
+        if suggestion is not None:
+            last_suggestion = suggestion
+            _print_copilot_brief(suggestion)
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "copilot_suggestion",
+                "suggestion",
+                json.dumps({"turn": i}),
+                suggestion.model_dump_json(),
+                duration_ms=copilot_dur,
+            )
 
     return last_suggestion
 
@@ -588,11 +594,10 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
             t0 = time.perf_counter()
             raw_event = _make_event(scenario.call_id, turn, "CARDMEMBER", cm_text)
             event = parse_transcript_event(raw_event)
-            last_suggestion = await copilot.process_event(event)
+            suggestion = await copilot.process_event(event)
             copilot_dur = (time.perf_counter() - t0) * 1000
-            _print_copilot_brief(last_suggestion)
 
-            # Persist CM turn transcript and copilot suggestion
+            # Persist CM turn transcript
             _persist_trace(
                 gateway,
                 scenario.case_id,
@@ -602,20 +607,23 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
                 json.dumps({"turn": turn, "speaker": "CARDMEMBER", "text": cm_text}),
                 duration_ms=cm_dur,
             )
-            _persist_trace(
-                gateway,
-                scenario.case_id,
-                "copilot_suggestion",
-                "suggestion",
-                json.dumps({"turn": turn}),
-                last_suggestion.model_dump_json(),
-                duration_ms=copilot_dur,
-            )
+            if suggestion is not None:
+                last_suggestion = suggestion
+                _print_copilot_brief(suggestion)
+                _persist_trace(
+                    gateway,
+                    scenario.case_id,
+                    "copilot_suggestion",
+                    "suggestion",
+                    json.dumps({"turn": turn}),
+                    suggestion.model_dump_json(),
+                    duration_ms=copilot_dur,
+                )
 
             # Inject SYSTEM events at key points
             if turn == 4 and scenario.system_event_auth:
                 # Auth verification event
-                turn, last_suggestion = await _inject_system_event(
+                turn, _sys_suggestion = await _inject_system_event(
                     turn,
                     scenario.system_event_auth,
                     scenario,
@@ -623,10 +631,12 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
                     conversation_history,
                     gateway,
                 )
+                if _sys_suggestion is not None:
+                    last_suggestion = _sys_suggestion
 
                 # Evidence event — injected right after auth when early mode is on
                 if scenario.inject_evidence_early and scenario.system_event_evidence:
-                    turn, last_suggestion = await _inject_system_event(
+                    turn, _sys_suggestion = await _inject_system_event(
                         turn,
                         scenario.system_event_evidence,
                         scenario,
@@ -634,9 +644,11 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
                         conversation_history,
                         gateway,
                     )
+                    if _sys_suggestion is not None:
+                        last_suggestion = _sys_suggestion
 
             if turn == 10 and not scenario.inject_evidence_early and scenario.system_event_evidence:
-                turn, last_suggestion = await _inject_system_event(
+                turn, _sys_suggestion = await _inject_system_event(
                     turn,
                     scenario.system_event_evidence,
                     scenario,
@@ -644,13 +656,17 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
                     conversation_history,
                     gateway,
                 )
+                if _sys_suggestion is not None:
+                    last_suggestion = _sys_suggestion
 
             # Process dispute actions triggered at this turn
             for action in scenario.dispute_actions:
                 if turn == action.trigger_turn:
-                    turn, last_suggestion = await _process_dispute_action(
+                    turn, _disp_suggestion = await _process_dispute_action(
                         action, turn, scenario, copilot, conversation_history, gateway
                     )
+                    if _disp_suggestion is not None:
+                        last_suggestion = _disp_suggestion
 
             # Check if we have enough turns left for a CCP response
             if turn >= scenario.max_turns:

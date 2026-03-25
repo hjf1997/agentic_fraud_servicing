@@ -830,7 +830,7 @@ class TestSpeakerFastPath:
         event = _make_event(text="Call connected", speaker=SpeakerType.SYSTEM)
         result = await orch.process_event(event)
 
-        assert isinstance(result, CopilotSuggestion)
+        assert result is None
         mock_triage.assert_not_awaited()
         mock_auth.assert_not_awaited()
         mock_hypothesis.assert_not_awaited()
@@ -847,7 +847,7 @@ class TestSpeakerFastPath:
     async def test_system_event_returns_previous_hypothesis_scores(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """SYSTEM events return the previous hypothesis scores unchanged."""
+        """SYSTEM events return None and do not alter hypothesis scores."""
         orch = _make_orchestrator()
         orch.hypothesis_scores = {
             "THIRD_PARTY_FRAUD": 0.6,
@@ -858,8 +858,9 @@ class TestSpeakerFastPath:
         event = _make_event(text="Identity verified", speaker=SpeakerType.SYSTEM)
         result = await orch.process_event(event)
 
-        assert result.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.6
-        assert result.hypothesis_scores["FIRST_PARTY_FRAUD"] == 0.1
+        assert result is None
+        assert orch.hypothesis_scores["THIRD_PARTY_FRAUD"] == 0.6
+        assert orch.hypothesis_scores["FIRST_PARTY_FRAUD"] == 0.1
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
@@ -875,7 +876,7 @@ class TestSpeakerFastPath:
         event = _make_event(text="Can you confirm the transaction date?", speaker=SpeakerType.CCP)
         result = await orch.process_event(event)
 
-        assert isinstance(result, CopilotSuggestion)
+        assert result is None
         mock_triage.assert_not_awaited()
         mock_auth.assert_not_awaited()
         mock_hypothesis.assert_not_awaited()

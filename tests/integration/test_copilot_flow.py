@@ -15,6 +15,7 @@ from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, CaseTypeAssessment
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
+from agentic_fraud_servicing.models.enums import SpeakerType
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult
 from agentic_fraud_servicing.models.allegations import (
@@ -183,11 +184,12 @@ class TestCopilotSuggestionOutput:
     async def test_process_event_returns_copilot_suggestion(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """Each process_event call should return a CopilotSuggestion instance."""
+        """CARDMEMBER process_event should return a CopilotSuggestion instance."""
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
-        result = await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — CCP/SYSTEM returns None
+        result = await orch.process_event(sample_transcript_events[1])
         assert isinstance(result, CopilotSuggestion)
 
     @pytest.mark.usefixtures("_mock_specialists")
@@ -210,7 +212,8 @@ class TestCopilotSuggestionOutput:
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
-        result = await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — CCP/SYSTEM returns None
+        result = await orch.process_event(sample_transcript_events[1])
         assert "PAN" in result.safety_guidance or "CVV" in result.safety_guidance
 
     @pytest.mark.usefixtures("_mock_specialists")
@@ -309,7 +312,8 @@ class TestRunningStateAccumulation:
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
-        result = await orch.process_event(sample_transcript_events[0])
+        # Use CARDMEMBER event (index 1) — CCP/SYSTEM returns None
+        result = await orch.process_event(sample_transcript_events[1])
         expected_keys = {"THIRD_PARTY_FRAUD", "FIRST_PARTY_FRAUD", "SCAM", "DISPUTE"}
         assert set(result.hypothesis_scores.keys()) == expected_keys
 
@@ -502,6 +506,8 @@ class TestLiveTest:
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, provider, assess_interval=1)
 
-        result = await orch.process_event(events[0])
+        # Find first CARDMEMBER event — CCP/SYSTEM returns None
+        cm_event = next(e for e in events if e.speaker == SpeakerType.CARDMEMBER)
+        result = await orch.process_event(cm_event)
         assert isinstance(result, CopilotSuggestion)
         assert result.call_id == "call-demo-001"

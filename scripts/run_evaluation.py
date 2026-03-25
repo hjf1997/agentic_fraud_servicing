@@ -230,9 +230,10 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
     total_latency_ms = 0.0
     prev_allegation_count = 0
 
+    total_events = len(events)
     for i, event in enumerate(events, 1):
         t0 = time.perf_counter()
-        suggestion = await copilot.process_event(event)
+        suggestion = await copilot.process_event(event, is_last=(i == total_events))
         latency_ms = (time.perf_counter() - t0) * 1000
         total_latency_ms += latency_ms
 
@@ -246,7 +247,7 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
             speaker=event.speaker.value,
             text=event.text,
             latency_ms=latency_ms,
-            copilot_suggestion=suggestion.model_dump(mode="json"),
+            copilot_suggestion=suggestion.model_dump(mode="json") if suggestion else None,
             hypothesis_scores=dict(copilot.hypothesis_scores),
             allegations_extracted=[a.model_dump(mode="json") for a in new_allegations],
         )
@@ -257,14 +258,15 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
         color = CYAN if event.speaker.value == "CCP" else YELLOW
         if event.speaker.value == "SYSTEM":
             color = DIM
+        assessed = "" if suggestion is None else " [assessed]"
         print(
             f"  {BOLD}[Turn {i}/{len(events)}]{RESET} "
             f"{color}{event.speaker.value}{RESET} "
             f"| {latency_ms:7.0f}ms "
-            f"| top: {top}"
+            f"| top: {top}{assessed}"
         )
 
-        # Persist transcript turn and copilot suggestion
+        # Persist transcript turn
         _persist_trace(
             gateway,
             scenario.case_id,
@@ -274,15 +276,16 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
             json.dumps({"turn": i, "speaker": event.speaker.value, "text": event.text}),
             duration_ms=latency_ms,
         )
-        _persist_trace(
-            gateway,
-            scenario.case_id,
-            "copilot_suggestion",
-            "suggestion",
-            json.dumps({"turn": i}),
-            suggestion.model_dump_json(),
-            duration_ms=latency_ms,
-        )
+        if suggestion is not None:
+            _persist_trace(
+                gateway,
+                scenario.case_id,
+                "copilot_suggestion",
+                "suggestion",
+                json.dumps({"turn": i}),
+                suggestion.model_dump_json(),
+                duration_ms=latency_ms,
+            )
 
     # -- Final copilot state --
     copilot_final_state = {

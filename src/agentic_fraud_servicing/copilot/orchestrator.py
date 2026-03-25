@@ -90,15 +90,17 @@ class CopilotOrchestrator:
         self._turn_count: int = 0
         self._cm_turn_count: int = 0
 
-    async def process_event(self, event: TranscriptEvent) -> CopilotSuggestion:
+    async def process_event(
+        self, event: TranscriptEvent, *, is_last: bool = False
+    ) -> CopilotSuggestion | None:
         """Process a single transcript event and return copilot suggestions.
 
-        Only CARDMEMBER events trigger the agent pipeline — these are the
-        only turns that introduce new information to analyze. SYSTEM and CCP
-        events are recorded in transcript history but return the previous
-        suggestion state immediately (no LLM calls).
+        Only CARDMEMBER events on assessment turns trigger the agent pipeline.
+        CCP/SYSTEM events and non-assessment CARDMEMBER turns return None.
+        When ``is_last=True``, the pipeline always runs regardless of the
+        interval — this ensures a final assessment on the last conversation turn.
 
-        For CARDMEMBER events the pipeline is:
+        For assessment turns the pipeline is:
         1. Parallel: triage (claim extraction) + auth (conditional) + retrieval
         2. Sequential: hypothesis → case advisor (after turn 3) → question planner
 
@@ -107,9 +109,10 @@ class CopilotOrchestrator:
 
         Args:
             event: The transcript event to process.
+            is_last: If True, force assessment regardless of interval.
 
         Returns:
-            CopilotSuggestion combining all specialist results.
+            CopilotSuggestion on assessment turns, None otherwise.
         """
         # 1. Append event, increment turn count, set case_id/call_id on first event
         self._turn_count += 1
@@ -118,16 +121,20 @@ class CopilotOrchestrator:
             self.case_id = f"case-{event.call_id}"
             self.call_id = event.call_id
 
-        # 2. Non-CARDMEMBER events: record in history, return previous state
+        # 2. Non-CARDMEMBER events: record in history, no assessment needed
         if event.speaker != SpeakerType.CARDMEMBER:
-            return self._build_suggestion(event)
+            return None
 
         # 3. CARDMEMBER event: check assess_interval.
-        # Always run on the first CM turn. After that, run every assess_interval
-        # CM turns (e.g. interval=10 → run on CM turns 1, 11, 21, ...).
+        # Always run on the first CM turn and the last turn. After that, run
+        # every assess_interval CM turns (e.g. interval=5 → CM turns 1, 6, 11, ...).
         self._cm_turn_count += 1
-        if self._cm_turn_count > 1 and (self._cm_turn_count - 1) % self.assess_interval != 0:
-            return self._build_suggestion(event)
+        if (
+            not is_last
+            and self._cm_turn_count > 1
+            and (self._cm_turn_count - 1) % self.assess_interval != 0
+        ):
+            return None
 
         # 4. CARDMEMBER event: run full agent pipeline
         risk_flags: list[str] = []

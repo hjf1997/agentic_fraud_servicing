@@ -138,7 +138,7 @@ async def _build_evaluation_run(
 ) -> EvaluationRun:
     """Run the copilot on sample events and build an EvaluationRun."""
     gateway = gateway_factory(tmp_path)
-    orch = CopilotOrchestrator(gateway, mock_model_provider)
+    orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
     turn_metrics: list[TurnMetric] = []
     start_time = time.perf_counter()
@@ -219,11 +219,13 @@ class TestEvaluationRunConstruction:
     async def test_turn_metrics_have_copilot_suggestion(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """Every TurnMetric should have a copilot_suggestion dict."""
+        """CARDMEMBER TurnMetrics should have a copilot_suggestion dict."""
         run = await _build_evaluation_run(
             sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
         )
-        for tm in run.turn_metrics:
+        cm_metrics = [tm for tm in run.turn_metrics if tm.speaker == "CARDMEMBER"]
+        assert len(cm_metrics) > 0
+        for tm in cm_metrics:
             assert tm.copilot_suggestion is not None
             assert isinstance(tm.copilot_suggestion, dict)
 
