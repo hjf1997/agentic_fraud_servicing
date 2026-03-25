@@ -37,6 +37,9 @@ class Settings:
         self.connectchain_model_index: str | None = os.environ.get(
             "CONNECTCHAIN_MODEL_INDEX"
         )
+        self.azure_openai_api_version: str | None = os.environ.get(
+            "AZURE_OPENAI_API_VERSION"
+        )
 
         self._validate()
 

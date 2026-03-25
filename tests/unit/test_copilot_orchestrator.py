@@ -144,7 +144,7 @@ def _make_orchestrator() -> CopilotOrchestrator:
     """Create a CopilotOrchestrator with mock gateway and provider."""
     gateway = MagicMock()
     model_provider = MagicMock()
-    return CopilotOrchestrator(gateway=gateway, model_provider=model_provider)
+    return CopilotOrchestrator(gateway=gateway, model_provider=model_provider, assess_interval=1)
 
 
 # Patch paths for the 6 specialist run_* functions

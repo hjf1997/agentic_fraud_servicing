@@ -2,27 +2,31 @@
 
 Uses AMEX's ConnectChain enterprise framework to obtain EAS auth tokens and
 Azure OpenAI endpoint configuration, then delegates to the standard
-OpenAIChatCompletionsModel from the Agents SDK. This keeps all agent code
-unchanged — ConnectChain only handles authentication and endpoint resolution.
+OpenAIChatCompletionsModel from the Agents SDK via an AsyncAzureOpenAI client.
+This keeps all agent code unchanged — ConnectChain only handles authentication
+and endpoint resolution.
 """
 
 from __future__ import annotations
 
 from agents import OpenAIChatCompletionsModel
 from agents.models.interface import Model, ModelProvider
-from openai import AsyncOpenAI
+from openai import AsyncAzureOpenAI
 
 from agentic_fraud_servicing.config import Settings
 from agentic_fraud_servicing.providers.base import ProviderError
 
+# Default Azure OpenAI API version. Override via AZURE_OPENAI_API_VERSION env var.
+_DEFAULT_API_VERSION = "2024-08-01-preview"
+
 
 class ConnectChainModelProvider(ModelProvider):
-    """ModelProvider that uses ConnectChain for auth and endpoint resolution.
+    """ModelProvider that uses ConnectChain for auth and Azure OpenAI endpoint.
 
-    Extracts the EAS token and Azure OpenAI base URL from ConnectChain's
-    configuration, then creates a standard AsyncOpenAI client. All models
-    returned are OpenAIChatCompletionsModel instances — identical to the
-    OpenAI provider.
+    Extracts the EAS token, Azure OpenAI base URL, deployment name, and API
+    version from ConnectChain's configuration, then creates an AsyncAzureOpenAI
+    client. All models returned are OpenAIChatCompletionsModel instances using
+    the Azure chat completions endpoint.
 
     Args:
         settings: Application settings containing connectchain_model_index.
@@ -51,34 +55,51 @@ class ConnectChainModelProvider(ModelProvider):
         try:
             token = get_token_from_env()
             lc_llm = get_connectchain_model(settings.connectchain_model_index)
-            base_url = getattr(lc_llm, "openai_api_base", None)
-            model_name = getattr(lc_llm, "model_name", None)
+            # Extract Azure OpenAI config from the LangChain LLM object
+            azure_endpoint = (
+                getattr(lc_llm, "azure_endpoint", None)
+                or getattr(lc_llm, "openai_api_base", None)
+            )
+            deployment = (
+                getattr(lc_llm, "deployment_name", None)
+                or getattr(lc_llm, "engine", None)
+                or getattr(lc_llm, "model_name", None)
+            )
+            api_version = (
+                getattr(lc_llm, "openai_api_version", None)
+                or settings.azure_openai_api_version
+                or _DEFAULT_API_VERSION
+            )
         except Exception as exc:
             raise ProviderError(
                 f"ConnectChain initialization failed: {exc}",
                 request_type="init",
             ) from exc
 
-        if not base_url:
+        if not azure_endpoint:
             raise ProviderError(
-                "Could not extract openai_api_base from ConnectChain model. "
+                "Could not extract Azure OpenAI endpoint from ConnectChain model. "
                 "Check connectchain.config.yml.",
                 request_type="init",
             )
 
-        self._client = AsyncOpenAI(api_key=token, base_url=base_url)
-        self._default_model = model_name or "gpt-4o"
+        self._client = AsyncAzureOpenAI(
+            api_key=token,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
+        )
+        self._default_model = deployment or "gpt-4o"
 
     def get_model(self, model_name: str | None) -> Model:
-        """Return an OpenAIChatCompletionsModel using ConnectChain credentials.
+        """Return an OpenAIChatCompletionsModel using Azure OpenAI credentials.
 
         Args:
-            model_name: Model identifier. If None, uses the model name from
-                ConnectChain config.
+            model_name: Azure deployment name. If None, uses the deployment
+                from ConnectChain config.
 
         Returns:
             An OpenAIChatCompletionsModel wrapping the ConnectChain-authenticated
-            AsyncOpenAI client.
+            AsyncAzureOpenAI client.
         """
         if model_name is None:
             model_name = self._default_model

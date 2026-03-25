@@ -185,7 +185,7 @@ class TestCopilotSuggestionOutput:
     ):
         """Each process_event call should return a CopilotSuggestion instance."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         result = await orch.process_event(sample_transcript_events[0])
         assert isinstance(result, CopilotSuggestion)
@@ -196,7 +196,7 @@ class TestCopilotSuggestionOutput:
     ):
         """Suggested questions should come from the question planner mock."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
         result = await orch.process_event(sample_transcript_events[1])
@@ -208,7 +208,7 @@ class TestCopilotSuggestionOutput:
     ):
         """Safety guidance must include the PAN/CVV warning."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         result = await orch.process_event(sample_transcript_events[0])
         assert "PAN" in result.safety_guidance or "CVV" in result.safety_guidance
@@ -219,7 +219,7 @@ class TestCopilotSuggestionOutput:
     ):
         """Hypothesis scores in suggestion should come from the hypothesis agent mock."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
         result = await orch.process_event(sample_transcript_events[1])
@@ -234,7 +234,7 @@ class TestCopilotSuggestionOutput:
     ):
         """CopilotSuggestion.case_eligibility should be populated from case advisor mock."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
         orch._turn_count = 3  # Case advisor only runs after turn 3
 
         # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
@@ -251,7 +251,7 @@ class TestCopilotSuggestionOutput:
     ):
         """CopilotSuggestion.case_advisory_summary should be populated from case advisor mock."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
         orch._turn_count = 3  # Case advisor only runs after turn 3
 
         # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
@@ -269,7 +269,7 @@ class TestRunningStateAccumulation:
     ):
         """case_id and call_id should be set after the first event."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         await orch.process_event(sample_transcript_events[0])
         assert orch.call_id == "call-test-001"
@@ -281,7 +281,7 @@ class TestRunningStateAccumulation:
     ):
         """Transcript history should grow with each processed event."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         for i, event in enumerate(sample_transcript_events):
             await orch.process_event(event)
@@ -293,7 +293,7 @@ class TestRunningStateAccumulation:
     ):
         """Hypothesis scores should match the hypothesis agent output (not formulaic)."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
         await orch.process_event(sample_transcript_events[1])
@@ -307,7 +307,7 @@ class TestRunningStateAccumulation:
     ):
         """CopilotSuggestion hypothesis_scores must contain all 4 category keys."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         result = await orch.process_event(sample_transcript_events[0])
         expected_keys = {"THIRD_PARTY_FRAUD", "FIRST_PARTY_FRAUD", "SCAM", "DISPUTE"}
@@ -323,7 +323,7 @@ class TestRunningStateAccumulation:
         speakers via the speaker-based fast path.
         """
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         # sample_transcript_events[1] is CARDMEMBER — triage runs
         await orch.process_event(sample_transcript_events[1])
@@ -340,7 +340,7 @@ class TestRunningStateAccumulation:
     ):
         """Impersonation risk should match the auth assessment mock value."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
         await orch.process_event(sample_transcript_events[1])
@@ -371,7 +371,7 @@ class TestPipelineOptimizations:
             ) as m_advisor,
         ):
             gateway = gateway_factory(tmp_path)
-            orch = CopilotOrchestrator(gateway, mock_model_provider)
+            orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
             # Process SYSTEM event (index 2)
             await orch.process_event(sample_transcript_events[2])
@@ -399,7 +399,7 @@ class TestPipelineOptimizations:
             patch(_PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY),
         ):
             gateway = gateway_factory(tmp_path)
-            orch = CopilotOrchestrator(gateway, mock_model_provider)
+            orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
             # Process 3 events
             for event in sample_transcript_events[:3]:
@@ -429,7 +429,7 @@ class TestPipelineOptimizations:
             ) as m_advisor,
         ):
             gateway = gateway_factory(tmp_path)
-            orch = CopilotOrchestrator(gateway, mock_model_provider)
+            orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
             # Advance past early-turn gates so all 6 agents run:
             # turn > 3 for case advisor, impersonation_risk >= 0.4 for auth
             orch._turn_count = 3
@@ -452,7 +452,7 @@ class TestPipelineOptimizations:
     ):
         """CopilotSuggestion must have all expected fields with correct types."""
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, mock_model_provider)
+        orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
 
         result = await orch.process_event(sample_transcript_events[1])
 
@@ -500,7 +500,7 @@ class TestLiveTest:
 
         events = load_transcript_file(_SAMPLE_TRANSCRIPT)
         gateway = gateway_factory(tmp_path)
-        orch = CopilotOrchestrator(gateway, provider)
+        orch = CopilotOrchestrator(gateway, provider, assess_interval=1)
 
         result = await orch.process_event(events[0])
         assert isinstance(result, CopilotSuggestion)
