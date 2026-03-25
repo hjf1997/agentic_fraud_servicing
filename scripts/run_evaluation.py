@@ -222,7 +222,7 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
     events = parse_transcript_json(transcript_json)
     print(f"  Loaded {len(events)} transcript events")
 
-    copilot = CopilotOrchestrator(gateway, model_provider)
+    copilot = CopilotOrchestrator(gateway, model_provider, assess_interval=1)
     copilot.case_id = scenario.case_id
     copilot.call_id = scenario.call_id
 
