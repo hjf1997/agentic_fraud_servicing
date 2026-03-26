@@ -196,6 +196,15 @@ class TransactionChannel(str, Enum):
     MAIL = "MAIL"
 
 
+class TransactionOutcome(str, Enum):
+    """Outcome of a transaction authorization request."""
+
+    APPROVED = "APPROVED"
+    DENIED = "DENIED"
+    CHARGEBACK = "CHARGEBACK"
+    PENDING = "PENDING"
+
+
 class AllegationDetailType(str, Enum):
     """Tier 1 allegation detail types for granular extraction.
 

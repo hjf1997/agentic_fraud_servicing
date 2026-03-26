@@ -18,6 +18,7 @@ from agentic_fraud_servicing.models.enums import (
     EvidenceNodeType,
     EvidenceSourceType,
     TransactionChannel,
+    TransactionOutcome,
 )
 
 # ---------------------------------------------------------------------------
@@ -56,6 +57,7 @@ class Transaction(EvidenceNode):
     transaction_date: datetime
     auth_method: AuthMethod | None = None
     channel: TransactionChannel | None = None
+    outcome: TransactionOutcome | None = None
 
 
 class AuthEvent(EvidenceNode):

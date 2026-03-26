@@ -47,7 +47,7 @@ For each transaction in the case:
 ```python
 from agentic_fraud_servicing.models.evidence import Transaction
 from agentic_fraud_servicing.models.enums import (
-    AuthMethod, TransactionChannel, EvidenceSourceType
+    AuthMethod, TransactionChannel, TransactionOutcome, EvidenceSourceType
 )
 
 Transaction(
@@ -61,6 +61,7 @@ Transaction(
     transaction_date=<date_from_html>,           # datetime object
     auth_method=AuthMethod.<method>,             # CHIP, SWIPE, CONTACTLESS, CNP, MANUAL
     channel=TransactionChannel.<channel>,        # POS, ONLINE, ATM, PHONE, MAIL
+    outcome=TransactionOutcome.<outcome>,        # APPROVED, DENIED, CHARGEBACK, PENDING
 )
 ```
 
@@ -76,6 +77,12 @@ Transaction(
 - "online", "web", "e-commerce" → `TransactionChannel.ONLINE`
 - "ATM" → `TransactionChannel.ATM`
 - "phone order", "MOTO" → `TransactionChannel.PHONE`
+
+**Outcome mapping** from HTML terminology:
+- "approved", "authorized", "settled", "posted" → `TransactionOutcome.APPROVED`
+- "denied", "declined", "rejected" → `TransactionOutcome.DENIED`
+- "chargeback", "reversed", "charged back", "credit issued" → `TransactionOutcome.CHARGEBACK`
+- "pending", "processing", "in progress", "held" → `TransactionOutcome.PENDING`
 
 #### 1b. AuthEvent(s)
 
@@ -322,6 +329,7 @@ from agentic_fraud_servicing.models.enums import (
     EvidenceEdgeType,
     EvidenceSourceType,
     TransactionChannel,
+    TransactionOutcome,
 )
 from agentic_fraud_servicing.models.evidence import (
     AuthEvent,
