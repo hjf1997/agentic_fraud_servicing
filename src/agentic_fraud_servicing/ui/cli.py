@@ -208,14 +208,10 @@ async def cmd_evaluate(args: argparse.Namespace) -> None:
     # Ensure scripts package is importable (scenario modules live there)
     _ensure_scripts_importable()
 
-    # Import scenario modules to trigger registration
-    import scripts.scenario_dispute_to_fraud  # noqa: F401
-    import scripts.scenario_doordash_dashpass  # noqa: F401
-    import scripts.scenario_doordash_dashpass_v2  # noqa: F401
-    import scripts.scenario_doordash_fraud  # noqa: F401
-    import scripts.scenario_highrisk_merchant  # noqa: F401
-    import scripts.scenario_scam_techvault  # noqa: F401
-    from scripts.simulation_data import get_scenario
+    # Auto-discover and register all scenario_*.py modules
+    from scripts.simulation_data import discover_scenarios, get_scenario
+
+    discover_scenarios()
 
     # Load scenario
     try:

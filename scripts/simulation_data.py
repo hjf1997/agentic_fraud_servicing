@@ -184,3 +184,24 @@ def get_scenario(name: str) -> Scenario:
 def list_scenarios() -> list[str]:
     """Return sorted list of registered scenario names."""
     return sorted(_SCENARIOS.keys())
+
+
+def discover_scenarios() -> None:
+    """Auto-import all scenario_*.py modules in the scripts/ directory.
+
+    Each module calls register_scenario() at import time, so importing is
+    sufficient to populate the registry. This eliminates the need for
+    manual ``import scripts.scenario_xxx`` lines.
+    """
+    import importlib
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).parent
+    for path in sorted(scripts_dir.glob("scenario_*.py")):
+        module_name = f"scripts.{path.stem}"
+        if module_name not in _IMPORTED_SCENARIOS:
+            importlib.import_module(module_name)
+            _IMPORTED_SCENARIOS.add(module_name)
+
+
+_IMPORTED_SCENARIOS: set[str] = set()

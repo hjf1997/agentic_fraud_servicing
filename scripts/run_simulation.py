@@ -34,15 +34,13 @@ if _PROJECT_ROOT not in sys.path:
 # Agents SDK when using Bedrock provider instead of OpenAI.
 os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 
-# Import scenario modules to trigger registration
+# Auto-discover and register all scenario_*.py modules
 from agents import Agent  # noqa: E402
 
-import scripts.scenario_dispute_to_fraud  # noqa: E402, F401
-import scripts.scenario_doordash_dashpass  # noqa: E402, F401
-import scripts.scenario_doordash_dashpass_v2  # noqa: E402, F401
-import scripts.scenario_doordash_fraud  # noqa: E402, F401
-import scripts.scenario_highrisk_merchant  # noqa: E402, F401
-import scripts.scenario_scam_techvault  # noqa: E402, F401
+from scripts.simulation_data import discover_scenarios  # noqa: E402
+
+discover_scenarios()
+
 from agentic_fraud_servicing.config import get_settings  # noqa: E402
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator  # noqa: E402
 from agentic_fraud_servicing.gateway.tool_gateway import AuthContext  # noqa: E402
