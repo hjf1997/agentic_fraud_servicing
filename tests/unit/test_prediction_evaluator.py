@@ -15,6 +15,9 @@ from agentic_fraud_servicing.evaluation.prediction_evaluator import (
 )
 
 
+_DUMMY_SUGGESTION = {"call_id": "test", "timestamp_ms": 0}
+
+
 def _make_run(
     ground_truth_category: str = "FIRST_PARTY_FRAUD",
     hypothesis_scores: dict[str, float] | None = None,
@@ -37,6 +40,7 @@ def _make_run(
             text=f"Turn {i + 1}",
             latency_ms=500.0,
             hypothesis_scores=scores if i == num_turns - 1 else {},
+            copilot_suggestion=_DUMMY_SUGGESTION,
         )
         for i in range(num_turns)
     ]

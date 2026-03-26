@@ -17,6 +17,9 @@ from agentic_fraud_servicing.evaluation.models import (
 )
 
 
+_DUMMY_SUGGESTION = {"call_id": "test", "timestamp_ms": 0}
+
+
 def _make_turn(
     turn_number: int,
     speaker: str = "CARDMEMBER",
@@ -29,6 +32,7 @@ def _make_turn(
         text=f"Turn {turn_number}",
         latency_ms=500.0,
         allegations_extracted=allegations or [],
+        copilot_suggestion=_DUMMY_SUGGESTION,
     )
 
 

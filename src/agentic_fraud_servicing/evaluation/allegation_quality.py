@@ -106,9 +106,11 @@ async def evaluate_allegation_quality(
             f1_score=0.0,
         )
 
-    # Collect unique extracted allegation detail_types across all turns
+    # Collect unique extracted allegation detail_types from assessed turns only
     extracted_set: set[str] = set()
     for turn in run.turn_metrics:
+        if turn.copilot_suggestion is None:
+            continue
         for allegation in turn.allegations_extracted:
             detail_type = allegation.get("detail_type", "")
             if detail_type:

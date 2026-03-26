@@ -53,9 +53,22 @@ def evaluate_convergence(run: EvaluationRun) -> ConvergenceResult:
             turn_scores=[],
         )
 
-    # Build per-turn score records
+    # Only include assessed turns (those with a copilot_suggestion) so that
+    # CCP/SYSTEM turns with empty hypothesis_scores don't break convergence detection.
+    assessed = [tm for tm in run.turn_metrics if tm.copilot_suggestion is not None]
+
+    if not assessed:
+        return ConvergenceResult(
+            convergence_turn=None,
+            total_turns=len(run.turn_metrics),
+            convergence_ratio=None,
+            correct_category=correct_category,
+            turn_scores=[],
+        )
+
+    # Build per-turn score records from assessed turns only
     turn_scores: list[dict] = []
-    for tm in run.turn_metrics:
+    for tm in assessed:
         record: dict = {"turn_number": tm.turn_number}
         for cat in _CATEGORIES:
             record[cat] = tm.hypothesis_scores.get(cat, 0.0)

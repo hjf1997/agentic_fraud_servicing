@@ -4,6 +4,9 @@ from agentic_fraud_servicing.evaluation.convergence_evaluator import evaluate_co
 from agentic_fraud_servicing.evaluation.models import EvaluationRun, TurnMetric
 
 
+_DUMMY_SUGGESTION = {"call_id": "test", "timestamp_ms": 0}
+
+
 def _make_run(
     ground_truth: dict,
     score_sequence: list[dict[str, float]],
@@ -16,6 +19,7 @@ def _make_run(
             text=f"Turn {i + 1}",
             latency_ms=100.0,
             hypothesis_scores=scores,
+            copilot_suggestion=_DUMMY_SUGGESTION,
         )
         for i, scores in enumerate(score_sequence)
     ]

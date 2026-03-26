@@ -163,10 +163,11 @@ async def evaluate_prediction(
             reasoning=f"Failed to map ground truth: {exc}",
         )
 
-    # Extract predicted category from hypothesis scores
+    # Extract predicted category from the last assessed turn's hypothesis scores
     scores: dict[str, float] = {}
-    if run.turn_metrics:
-        scores = run.turn_metrics[-1].hypothesis_scores
+    assessed = [tm for tm in run.turn_metrics if tm.copilot_suggestion is not None]
+    if assessed:
+        scores = assessed[-1].hypothesis_scores
     if not scores and run.copilot_final_state:
         scores = run.copilot_final_state.get("hypothesis_scores", {})
 
