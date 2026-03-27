@@ -958,6 +958,52 @@ def _build_decision_html(report: EvaluationReport | None) -> str:
     return f'<div class="card">{chr(10).join(parts)}</div>'
 
 
+# -- Section 8: CCP Note Alignment ------------------------------------------------
+
+
+def _build_note_alignment_html(report: EvaluationReport | None) -> str:
+    """Build HTML showing CCP note alignment scores and explanation."""
+    if not report or not report.note_alignment:
+        return '<div class="card"><p>No CCP note alignment data available.</p></div>'
+
+    na = report.note_alignment
+
+    dims = [
+        ("Facts Coverage", na.facts_coverage_score),
+        ("Allegation Alignment", na.allegation_alignment_score),
+        ("Category & Action", na.category_action_score),
+        ("Overall", na.overall_score),
+    ]
+
+    metrics_html = ""
+    for label, score in dims:
+        color = _score_color(score)
+        metrics_html += (
+            f'<div class="metric-box">'
+            f'<div class="metric-value" style="color:{color};">{score:.2f}</div>'
+            f'<div class="metric-label">{label}</div>'
+            f"</div>"
+        )
+
+    explanation_html = ""
+    if na.explanation:
+        explanation_html = (
+            f'<div style="margin-top:14px; padding:10px; background:{AMEX_BG}; '
+            f'border-radius:6px; font-size:0.85em; line-height:1.6; color:#333;">'
+            f'<strong style="color:{AMEX_NAVY};">Explanation:</strong><br/>'
+            f'{na.explanation.replace(chr(10), "<br/>")}'
+            f"</div>"
+        )
+
+    return f"""<div class="card">
+      <h4 style="color:{AMEX_NAVY}; margin:0 0 12px 0;">CCP Note Alignment</h4>
+      <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:space-around;">
+        {metrics_html}
+      </div>
+      {explanation_html}
+    </div>"""
+
+
 # -- Section 8: Transcript Replay -------------------------------------------------
 
 
@@ -1046,7 +1092,7 @@ def _load_scenario(scenario_name: str) -> tuple:
     """
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
-        return empty, None, None, empty, None, empty, None, empty, empty, empty, empty, empty, None
+        return empty, None, None, empty, None, empty, None, empty, empty, empty, empty, empty, empty, None
 
     scenario_dir = os.path.join(BASE_DIR, scenario_name)
     report = load_evaluation_report(scenario_dir)
@@ -1072,6 +1118,8 @@ def _load_scenario(scenario_name: str) -> tuple:
         # Section 7
         _build_decision_html(report),
         # Section 8
+        _build_note_alignment_html(report),
+        # Section 9
         _build_eval_transcript_html(run),
         None,  # placeholder for hypothesis chart duplicate avoided
     )
@@ -1162,7 +1210,13 @@ def create_eval_dashboard_app() -> gr.Blocks:
         )
         decision_html = gr.HTML()
 
-        # Section 8: Transcript Replay
+        # Section 8: CCP Note Alignment
+        gr.HTML(
+            '<div class="section-header" style="color:white;">CCP Note Alignment</div>'
+        )
+        note_alignment_html = gr.HTML()
+
+        # Section 9: Transcript Replay
         gr.HTML('<div class="section-header" style="color:white;">Transcript Replay</div>')
         transcript_html = gr.HTML()
         transcript_placeholder = gr.Plot(label="", visible=False)
@@ -1183,6 +1237,7 @@ def create_eval_dashboard_app() -> gr.Blocks:
                 allegation_html,
                 evidence_html,
                 decision_html,
+                note_alignment_html,
                 transcript_html,
                 transcript_placeholder,
             ],
