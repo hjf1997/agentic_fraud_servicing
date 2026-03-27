@@ -389,14 +389,16 @@ def _build_flagged_turns_html(report: EvaluationReport | None) -> str:
         return ""
 
     lat = report.latency
+    assessed = getattr(lat, "assessed_turns", None) or []
+    # Map assessed turn number -> index in per_turn_latency_ms
+    turn_to_idx = {t: i for i, t in enumerate(assessed)}
     rows = ""
-    for turn_idx in lat.flagged_turns:
-        latency_val = (
-            lat.per_turn_latency_ms[turn_idx] if turn_idx < len(lat.per_turn_latency_ms) else 0.0
-        )
+    for turn_num in lat.flagged_turns:
+        idx = turn_to_idx.get(turn_num)
+        latency_val = lat.per_turn_latency_ms[idx] if idx is not None else 0.0
         rows += (
             f"<tr>"
-            f"<td style='padding:5px 10px;'>Turn {turn_idx + 1}</td>"
+            f"<td style='padding:5px 10px;'>Turn {turn_num}</td>"
             f"<td style='padding:5px 10px; color:#D32F2F; font-weight:600;'>"
             f"{latency_val:.0f}ms</td>"
             f"</tr>"
