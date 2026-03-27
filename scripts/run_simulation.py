@@ -275,7 +275,10 @@ async def _inject_system_event(
 
     raw_event = _make_event(scenario.call_id, turn, "SYSTEM", text)
     event = parse_transcript_event(raw_event)
+
+    t0 = time.perf_counter()
     suggestion = await copilot.process_event(event)
+    copilot_dur = (time.perf_counter() - t0) * 1000
 
     _persist_trace(
         gateway,
@@ -294,6 +297,7 @@ async def _inject_system_event(
             "suggestion",
             json.dumps({"turn": turn}),
             suggestion.model_dump_json(),
+            duration_ms=copilot_dur,
         )
     return turn, suggestion
 

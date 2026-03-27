@@ -299,12 +299,24 @@ def _build_latency_chart(report: EvaluationReport | None) -> plt.Figure | None:
         return None
 
     latency = report.latency
-    values = latency.per_turn_latency_ms
-    if not values:
+    raw_values = latency.per_turn_latency_ms
+    if not raw_values:
         return None
 
     # Use assessed turn numbers if available, otherwise fall back to 1..N
-    turns = latency.assessed_turns if latency.assessed_turns else list(range(1, len(values) + 1))
+    raw_turns = latency.assessed_turns if latency.assessed_turns else list(range(1, len(raw_values) + 1))
+
+    # Only show turns with non-zero latency (turns with 0ms have no real data)
+    turns = []
+    values = []
+    for t, v in zip(raw_turns, raw_values):
+        if v > 0:
+            turns.append(t)
+            values.append(v)
+
+    if not values:
+        return None
+
     threshold = latency.compliance_target_ms
     colors = ["#D32F2F" if v > threshold else "#2E7D32" for v in values]
 
@@ -326,6 +338,8 @@ def _build_latency_chart(report: EvaluationReport | None) -> plt.Figure | None:
     ax.set_title("Per-Turn Copilot Latency", fontsize=12, color=AMEX_NAVY)
     ax.legend(fontsize=9)
     ax.set_xticks(turns)
+    if len(turns) > 15:
+        ax.tick_params(axis="x", labelsize=7, labelrotation=45)
 
     plt.tight_layout()
     return fig
@@ -819,13 +833,18 @@ def _build_decision_html(report: EvaluationReport | None) -> str:
         if de.influential_evidence:
             items = ""
             for ev in de.influential_evidence[:3]:
-                node_id = ev.get("node_id", ev.get("id", "?"))
-                node_type = ev.get("node_type", ev.get("type", "?"))
-                weight = ev.get("weight", "")
-                weight_str = f' <span style="color:#666;">({weight})</span>' if weight else ""
+                evidence = ev.get("evidence", "?")
+                influence = ev.get("influence", "")
+                description = ev.get("description", "")
+                influence_str = (
+                    f' <span style="color:{AMEX_BLUE};">[{influence}]</span>' if influence else ""
+                )
+                desc_str = (
+                    f' <span style="color:#666;">{description}</span>' if description else ""
+                )
                 items += (
-                    f'<li style="margin:4px 0;"><strong>{node_id}</strong> '
-                    f'<span style="color:{AMEX_BLUE};">[{node_type}]</span>{weight_str}</li>'
+                    f'<li style="margin:4px 0;"><strong>{evidence}</strong>'
+                    f'{influence_str}{desc_str}</li>'
                 )
             parts.append(
                 f'<div style="margin-bottom:14px;">'

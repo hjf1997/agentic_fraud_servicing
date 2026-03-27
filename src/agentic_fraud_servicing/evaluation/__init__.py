@@ -46,6 +46,7 @@ from agentic_fraud_servicing.evaluation.report import (
     extract_dimension_score,
     generate_report,
     save_report,
+    save_run,
 )
 from agentic_fraud_servicing.evaluation.risk_flag_evaluator import (
     evaluate_risk_flag_timeliness,
@@ -78,6 +79,7 @@ __all__ = [
     "extract_dimension_score",
     "generate_report",
     "save_report",
+    "save_run",
     # Data loader functions
     "discover_eval_scenarios",
     "extract_dimension_scores",

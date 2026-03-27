@@ -45,6 +45,7 @@ from agentic_fraud_servicing.evaluation.report import (  # noqa: E402
     extract_dimension_score,
     generate_report,
     save_report,
+    save_run,
 )
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_json  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
@@ -277,6 +278,7 @@ async def run_evaluation(scenario_name: str, data_dir: str, transcript_path: str
     print(f"{BOLD}{GREEN}{'=' * 60}{RESET}")
 
     output_dir = f"data/evaluations/{scenario_name}"
+    save_run(evaluation_run, output_dir)
     report = None
     report_path = None
     try:

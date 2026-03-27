@@ -220,3 +220,20 @@ def save_report(report: EvaluationReport, output_dir: str) -> str:
     file_path = out_path / "evaluation_report.json"
     file_path.write_text(report.model_dump_json(indent=2))
     return str(file_path)
+
+
+def save_run(run: EvaluationRun, output_dir: str) -> str:
+    """Write evaluation run JSON to output_dir/evaluation_run.json.
+
+    Args:
+        run: The EvaluationRun to persist.
+        output_dir: Directory path for the output file.
+
+    Returns:
+        Absolute path of the written file.
+    """
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    file_path = out_path / "evaluation_run.json"
+    file_path.write_text(run.model_dump_json(indent=2))
+    return str(file_path)

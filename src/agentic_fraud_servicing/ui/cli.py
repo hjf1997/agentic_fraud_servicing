@@ -23,6 +23,7 @@ from agentic_fraud_servicing.evaluation.report import (
     extract_dimension_score,
     generate_report,
     save_report,
+    save_run,
 )
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_json
 from agentic_fraud_servicing.investigator.orchestrator import InvestigatorOrchestrator
@@ -166,6 +167,7 @@ def _format_report_text(report) -> str:
         "convergence": ("Convergence Speed", report.convergence),
         "risk_flag_timeliness": ("Risk Flag Timeliness", report.risk_flag_timeliness),
         "decision_explanation": ("Decision Explanation", report.decision_explanation),
+        "note_alignment": ("CCP Note Alignment", report.note_alignment),
     }
     for dim_key, (label, result) in _dims.items():
         score = extract_dimension_score(dim_key, result)
@@ -322,6 +324,7 @@ async def cmd_evaluate(args: argparse.Namespace) -> None:
 
     output_dir = f"data/evaluations/{args.scenario}"
     os.makedirs(output_dir, exist_ok=True)
+    save_run(evaluation_run, output_dir)
     save_report(report, output_dir)
 
     # Output
