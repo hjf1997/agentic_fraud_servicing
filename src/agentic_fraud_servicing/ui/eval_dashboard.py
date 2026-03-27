@@ -304,7 +304,7 @@ def _build_latency_chart(report: EvaluationReport | None) -> plt.Figure | None:
         return None
 
     # Use assessed turn numbers if available, otherwise fall back to 1..N
-    raw_turns = latency.assessed_turns if latency.assessed_turns else list(range(1, len(raw_values) + 1))
+    raw_turns = getattr(latency, "assessed_turns", None) or list(range(1, len(raw_values) + 1))
 
     # Only show turns with non-zero latency (turns with 0ms have no real data)
     turns = []
