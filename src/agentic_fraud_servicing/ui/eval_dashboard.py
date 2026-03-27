@@ -345,7 +345,9 @@ def _build_latency_chart(report: EvaluationReport | None) -> plt.Figure | None:
     return fig
 
 
-def _build_latency_stats_html(report: EvaluationReport | None) -> str:
+def _build_latency_stats_html(
+    report: EvaluationReport | None, run: "EvaluationRun | None" = None
+) -> str:
     """Build HTML showing latency statistics: p50, p95, p99, max, compliance."""
     if not report or not report.latency:
         return '<div class="card"><p>No latency data available.</p></div>'
@@ -379,23 +381,36 @@ def _build_latency_stats_html(report: EvaluationReport | None) -> str:
         </div>
       </div>
 
-      {_build_flagged_turns_html(report)}
+      {_build_flagged_turns_html(report, run)}
     </div>"""
 
 
-def _build_flagged_turns_html(report: EvaluationReport | None) -> str:
+def _build_flagged_turns_html(
+    report: EvaluationReport | None, run: "EvaluationRun | None" = None
+) -> str:
     """Build an HTML table of turns exceeding the latency threshold."""
     if not report or not report.latency or not report.latency.flagged_turns:
         return ""
 
     lat = report.latency
+
+    # Build turn_number -> latency_ms mapping
+    # Prefer assessed_turns from report; fall back to EvaluationRun turn_metrics
     assessed = getattr(lat, "assessed_turns", None) or []
-    # Map assessed turn number -> index in per_turn_latency_ms
-    turn_to_idx = {t: i for i, t in enumerate(assessed)}
+    if assessed and len(assessed) == len(lat.per_turn_latency_ms):
+        turn_to_latency = dict(zip(assessed, lat.per_turn_latency_ms))
+    elif run and run.turn_metrics:
+        turn_to_latency = {
+            m.turn_number: m.latency_ms
+            for m in run.turn_metrics
+            if m.copilot_suggestion is not None
+        }
+    else:
+        turn_to_latency = {}
+
     rows = ""
     for turn_num in lat.flagged_turns:
-        idx = turn_to_idx.get(turn_num)
-        latency_val = lat.per_turn_latency_ms[idx] if idx is not None else 0.0
+        latency_val = turn_to_latency.get(turn_num, 0.0)
         rows += (
             f"<tr>"
             f"<td style='padding:5px 10px;'>Turn {turn_num}</td>"
@@ -1043,7 +1058,7 @@ def _load_scenario(scenario_name: str) -> tuple:
         _build_radar_chart(report),
         # Section 2
         _build_latency_chart(report),
-        _build_latency_stats_html(report),
+        _build_latency_stats_html(report, run),
         # Section 3
         _build_hypothesis_chart(run, report),
         _build_prediction_html(report),
