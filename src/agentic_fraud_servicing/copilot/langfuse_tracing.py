@@ -52,6 +52,19 @@ def init_langfuse(settings: Settings):
         _instrumentor = OpenAIAgentsInstrumentor()
         _instrumentor.instrument()
 
+        # The OpenInference processor hooks into the Agents SDK's built-in
+        # tracing. If OPENAI_AGENTS_DISABLE_TRACING=1 was set (e.g. to
+        # suppress "API key not set" warnings when using Bedrock), tracing
+        # is globally disabled and no processors get called. Re-enable it
+        # so prompts/completions are captured by the OpenInference → LangFuse
+        # pipeline.
+        try:
+            from agents.tracing import set_tracing_disabled
+
+            set_tracing_disabled(False)
+        except Exception:
+            pass
+
         client = get_client()
         if not client.auth_check():
             logger.warning("LangFuse auth check failed — disabling instrumentation")

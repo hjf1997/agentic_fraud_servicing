@@ -150,7 +150,7 @@ class CopilotOrchestrator:
                 from langfuse import propagate_attributes
 
                 _lf_obs_ctx = lf.start_as_current_observation(
-                    as_type="span", name="copilot_turn",
+                    as_type="agent", name="copilot_turn",
                 )
                 _lf_obs_ctx.__enter__()
                 _lf_prop_ctx = propagate_attributes(
@@ -221,7 +221,7 @@ class CopilotOrchestrator:
         if lf is not None:
             try:
                 _lf_p1 = lf.start_as_current_observation(
-                    as_type="span", name="phase1_parallel",
+                    as_type="chain", name="phase1_parallel",
                 )
                 _lf_p1.__enter__()
             except Exception:
@@ -292,7 +292,7 @@ class CopilotOrchestrator:
         if lf is not None:
             try:
                 _lf_p2a = lf.start_as_current_observation(
-                    as_type="span", name="phase2a_hypothesis_advisor",
+                    as_type="chain", name="phase2a_hypothesis_advisor",
                 )
                 _lf_p2a.__enter__()
             except Exception:
@@ -331,7 +331,7 @@ class CopilotOrchestrator:
         if lf is not None:
             try:
                 _lf_p2b = lf.start_as_current_observation(
-                    as_type="span", name="phase2b_question_planner",
+                    as_type="chain", name="phase2b_question_planner",
                 )
                 _lf_p2b.__enter__()
             except Exception:

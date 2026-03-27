@@ -342,8 +342,13 @@ class BedrockModel(Model):
 
         Converts SDK input items to Bedrock message format, calls converse()
         in a thread (boto3 is synchronous), then converts the response back
-        to SDK output items.
+        to SDK output items. Emits an Agents SDK ``generation_span`` so the
+        OpenInference instrumentor (and thus LangFuse) captures the full
+        prompt, completion, model, and token usage — matching what the
+        built-in OpenAI model does automatically.
         """
+        from agents.tracing import generation_span
+
         # Build Bedrock request kwargs
         kwargs: dict[str, Any] = {"modelId": self._model_id}
 
@@ -370,25 +375,54 @@ class BedrockModel(Model):
         if tool_config:
             kwargs["toolConfig"] = tool_config
 
-        # Call Bedrock (synchronous boto3 in a thread)
-        try:
-            bedrock_response = await asyncio.to_thread(self._client.converse, **kwargs)
-        except Exception as exc:
-            raise ProviderError(
-                f"Bedrock converse() failed: {exc}",
-                model_id=self._model_id,
-                request_type="get_response",
-            ) from exc
+        # Open an SDK generation span so the OpenInference processor captures
+        # the prompt/completion for LangFuse (same mechanism the built-in
+        # OpenAI model uses).
+        with generation_span(
+            model=self._model_id,
+            disabled=tracing.is_disabled(),
+        ) as span:
+            # Record input (system + messages in Bedrock format)
+            if tracing.include_data():
+                span.span_data.input = (
+                    [{"role": "system", "content": sys_text}] + messages
+                    if sys_text
+                    else messages
+                )
 
-        # Convert response — extract JSON from markdown fences if needed
-        output_items = _convert_bedrock_response_to_output(bedrock_response)
-        if output_schema is not None:
-            output_items = _extract_json_from_output(output_items)
+            # Call Bedrock (synchronous boto3 in a thread)
+            try:
+                bedrock_response = await asyncio.to_thread(
+                    self._client.converse, **kwargs
+                )
+            except Exception as exc:
+                raise ProviderError(
+                    f"Bedrock converse() failed: {exc}",
+                    model_id=self._model_id,
+                    request_type="get_response",
+                ) from exc
 
-        # Extract usage
-        usage_data = bedrock_response.get("usage", {})
-        input_tokens = usage_data.get("inputTokens", 0)
-        output_tokens = usage_data.get("outputTokens", 0)
+            # Convert response — extract JSON from markdown fences if needed
+            output_items = _convert_bedrock_response_to_output(bedrock_response)
+            if output_schema is not None:
+                output_items = _extract_json_from_output(output_items)
+
+            # Extract usage
+            usage_data = bedrock_response.get("usage", {})
+            input_tokens = usage_data.get("inputTokens", 0)
+            output_tokens = usage_data.get("outputTokens", 0)
+
+            # Record output and usage on the span
+            if tracing.include_data():
+                bedrock_output = bedrock_response.get("output", {})
+                output_content = bedrock_output.get("message", {}).get("content", [])
+                span.span_data.output = output_content
+            span.span_data.usage = {
+                "requests": 1,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+            }
 
         return ModelResponse(
             output=output_items,
@@ -445,7 +479,11 @@ class BedrockModelProvider(ModelProvider):
                 test_session.get_credentials()
                 session_kwargs["profile_name"] = settings.aws_profile
             except Exception:
-                pass  # Fall back to env-based credentials
+                # Profile not found — clear AWS_PROFILE from env so the
+                # fallback boto3.Session doesn't re-read it and fail again.
+                import os
+
+                os.environ.pop("AWS_PROFILE", None)
         session = boto3.Session(**session_kwargs)
         self._client = session.client("bedrock-runtime")
         self._default_model_id = settings.aws_bedrock_model_id
