@@ -283,3 +283,64 @@ Retrieval --> transactions     ----+                                    |
 - **Question dedup**: Planner receives the last 3 turns of suggested questions to avoid repetition.
 - **All agents traced**: Every invocation is logged to the trace store with agent name, duration, and status.
 - **Error isolation**: Each agent is wrapped in a `_run_*_safe` method. Failures append to `risk_flags` but never crash the pipeline.
+
+---
+
+## Observability (LangFuse)
+
+Optional LangFuse integration provides full LLM observability on top of the built-in SQLite trace store.
+
+### Setup
+
+Set three environment variables (in `.env` or shell):
+
+```bash
+# Option 1: LangFuse Cloud (for testing)
+LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+
+# Option 2: Self-hosted (for enterprise)
+LANGFUSE_BASE_URL=http://localhost:3000
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+When `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, LangFuse is enabled automatically at app startup. When unset, the system operates normally without LangFuse.
+
+### What's Captured
+
+**Auto-instrumented** (via `openinference-instrumentation-openai-agents`):
+- Every `Runner.run()` LLM call across all 6 agents: prompts, completions, tokens, model, latency
+- Tool invocations with arguments and return values
+- Agent handoffs
+
+**Orchestrator-added context** (via `propagate_attributes` + `start_as_current_observation`):
+- `session_id` — groups all turns for one case
+- Phase spans: `phase1_parallel`, `phase2a_hypothesis_advisor`, `phase2b_question_planner`
+- Turn metadata: `cm_turn`, `assess_interval`
+
+### Trace Hierarchy
+
+```
+Trace: "copilot_turn" (session_id=case_id)
+├─ Span: "phase1_parallel"
+│  ├─ auto: triage → LLM generation + tool calls
+│  ├─ auto: auth → LLM generation
+│  └─ auto: retrieval → LLM generation + tool calls
+├─ Span: "phase2a_hypothesis_advisor"
+│  ├─ auto: hypothesis → LLM generation
+│  └─ auto: case_advisor → LLM generation
+└─ Span: "phase2b_question_planner"
+   └─ auto: question_planner → LLM generation
+```
+
+### Self-hosted Deployment
+
+```bash
+git clone https://github.com/langfuse/langfuse.git
+cd langfuse
+docker compose up -d
+```
+
+Then set `LANGFUSE_BASE_URL=http://localhost:3000` and create API keys in the LangFuse UI under Settings → API Keys.

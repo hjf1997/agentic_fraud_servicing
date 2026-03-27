@@ -7,6 +7,7 @@ to avoid duplicating setup code between CLI and Gradio.
 from pathlib import Path
 
 from agentic_fraud_servicing.config import get_settings
+from agentic_fraud_servicing.copilot.langfuse_tracing import init_langfuse
 from agentic_fraud_servicing.gateway.tool_gateway import ToolGateway
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_json
 from agentic_fraud_servicing.investigator.case_writer import CasePack
@@ -16,6 +17,10 @@ from agentic_fraud_servicing.providers.base import ModelProvider, get_model_prov
 from agentic_fraud_servicing.storage.case_store import CaseStore
 from agentic_fraud_servicing.storage.evidence_store import EvidenceStore
 from agentic_fraud_servicing.storage.trace_store import TraceStore
+
+
+# Initialize LangFuse observability (no-op if env vars not set)
+init_langfuse(get_settings())
 
 
 def create_gateway(db_dir: str | Path) -> ToolGateway:

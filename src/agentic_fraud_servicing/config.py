@@ -41,6 +41,16 @@ class Settings:
             "AZURE_OPENAI_API_VERSION"
         )
 
+        # LangFuse observability (optional — disabled if keys not set)
+        # Cloud: https://us.cloud.langfuse.com (US) or https://cloud.langfuse.com (EU)
+        # Self-hosted: http://langfuse.internal:3000 or http://localhost:3000
+        self.langfuse_base_url: str | None = os.environ.get("LANGFUSE_BASE_URL")
+        self.langfuse_public_key: str | None = os.environ.get("LANGFUSE_PUBLIC_KEY")
+        self.langfuse_secret_key: str | None = os.environ.get("LANGFUSE_SECRET_KEY")
+        self.langfuse_enabled: bool = (
+            self.langfuse_public_key is not None and self.langfuse_secret_key is not None
+        )
+
         self._validate()
 
     def _validate(self) -> None:

@@ -7,6 +7,8 @@ degradation on specialist failure, and running state accumulation.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, CaseTypeAssessment
 from agentic_fraud_servicing.copilot.orchestrator import (
     _INITIAL_MISSING_FIELDS,
@@ -19,6 +21,15 @@ from agentic_fraud_servicing.models.allegations import (
 from agentic_fraud_servicing.models.case import CopilotSuggestion
 from agentic_fraud_servicing.models.enums import AllegationDetailType, SpeakerType
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
+
+@pytest.fixture(autouse=True)
+def _disable_langfuse():
+    """Disable LangFuse in all orchestrator tests."""
+    with patch(
+        "agentic_fraud_servicing.copilot.orchestrator.get_langfuse", return_value=None
+    ):
+        yield
+
 
 # -- Fixtures --
 

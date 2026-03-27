@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
+from agentic_fraud_servicing.copilot.langfuse_tracing import get_langfuse
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_hypothesis
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan, run_question_planner
@@ -140,6 +141,60 @@ class CopilotOrchestrator:
         # 4. CARDMEMBER event: run full agent pipeline
         risk_flags: list[str] = []
 
+        # -- LangFuse observability: open a trace for this assessment turn --
+        lf = get_langfuse()
+        _lf_obs_ctx = None
+        _lf_prop_ctx = None
+        if lf is not None:
+            try:
+                from langfuse import propagate_attributes
+
+                _lf_obs_ctx = lf.start_as_current_observation(
+                    as_type="span", name="copilot_turn",
+                )
+                _lf_obs_ctx.__enter__()
+                _lf_prop_ctx = propagate_attributes(
+                    session_id=self.case_id or "unknown",
+                    tags=["copilot"],
+                    metadata={
+                        "cm_turn": str(self._cm_turn_count),
+                        "assess_interval": str(self.assess_interval),
+                    },
+                )
+                _lf_prop_ctx.__enter__()
+            except Exception:
+                _lf_obs_ctx = None
+                _lf_prop_ctx = None
+
+        try:
+            return await self._run_pipeline(event, risk_flags)
+        finally:
+            if _lf_prop_ctx is not None:
+                try:
+                    _lf_prop_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
+            if _lf_obs_ctx is not None:
+                try:
+                    _lf_obs_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
+            if lf is not None:
+                try:
+                    lf.flush()
+                except Exception:
+                    pass
+
+    async def _run_pipeline(
+        self, event: TranscriptEvent, risk_flags: list[str]
+    ) -> CopilotSuggestion:
+        """Execute the full agent pipeline for an assessment turn.
+
+        Separated from process_event so the LangFuse trace context wraps the
+        entire pipeline cleanly via try/finally.
+        """
+        lf = get_langfuse()
+
         # 3a. Parallel group: triage + auth (conditional) + retrieval
         # Build window: [CONTEXT] turns (trailing from previous assessment) +
         # [NEW] turns (all turns since last assessment). This ensures no CM
@@ -161,6 +216,17 @@ class CopilotOrchestrator:
         auth_events = prior_retrieval.auth_events if prior_retrieval else []
         customer_profile = prior_retrieval.customer_profile if prior_retrieval else None
 
+        # -- Phase 1: triage + auth (conditional) + retrieval --
+        _lf_p1 = None
+        if lf is not None:
+            try:
+                _lf_p1 = lf.start_as_current_observation(
+                    as_type="span", name="phase1_parallel",
+                )
+                _lf_p1.__enter__()
+            except Exception:
+                _lf_p1 = None
+
         auth_result = None
         if self._should_run_auth(event):
             triage_result, auth_result, retrieval_result = await asyncio.gather(
@@ -180,6 +246,12 @@ class CopilotOrchestrator:
                 ),
                 self._run_retrieval_safe(risk_flags),
             )
+
+        if _lf_p1 is not None:
+            try:
+                _lf_p1.__exit__(None, None, None)
+            except Exception:
+                pass
 
         # 3b. Process parallel results: retrieval
         if retrieval_result is not None:
@@ -216,6 +288,16 @@ class CopilotOrchestrator:
         # 6-7. Run hypothesis agent and case advisor.
         # On turns > 3, run both in PARALLEL — case advisor uses previous turn's
         # hypothesis_scores (acceptable since scores shift incrementally).
+        _lf_p2a = None
+        if lf is not None:
+            try:
+                _lf_p2a = lf.start_as_current_observation(
+                    as_type="span", name="phase2a_hypothesis_advisor",
+                )
+                _lf_p2a.__enter__()
+            except Exception:
+                _lf_p2a = None
+
         case_advisory = None
         if self._turn_count > 3:
             hypothesis_result, case_advisory = await asyncio.gather(
@@ -228,6 +310,12 @@ class CopilotOrchestrator:
             hypothesis_result = await self._run_hypothesis_safe(
                 auth_result=auth_result, risk_flags=risk_flags
             )
+
+        if _lf_p2a is not None:
+            try:
+                _lf_p2a.__exit__(None, None, None)
+            except Exception:
+                pass
         if hypothesis_result is not None:
             self.hypothesis_scores = dict(hypothesis_result.scores)
         unmet_criteria: list[str] = []
@@ -239,12 +327,28 @@ class CopilotOrchestrator:
                     unmet_criteria.append(f"[{assessment.case_type}] {criterion}")
 
         # 8. Run question planner agent (after case advisor so it has unmet criteria)
+        _lf_p2b = None
+        if lf is not None:
+            try:
+                _lf_p2b = lf.start_as_current_observation(
+                    as_type="span", name="phase2b_question_planner",
+                )
+                _lf_p2b.__enter__()
+            except Exception:
+                _lf_p2b = None
+
         running_summary = self._build_allegations_summary()
         planner_missing = unmet_criteria + self.missing_fields
         question_result = await self._run_question_planner_safe(
             running_summary, risk_flags, extra_missing=planner_missing,
             recent_turns=conversation_window,
         )
+
+        if _lf_p2b is not None:
+            try:
+                _lf_p2b.__exit__(None, None, None)
+            except Exception:
+                pass
 
         # 9. Track recent suggestions for dedup in subsequent turns
         suggested_questions = question_result.questions if question_result else []
