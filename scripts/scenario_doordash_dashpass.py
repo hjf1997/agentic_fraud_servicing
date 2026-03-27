@@ -82,6 +82,7 @@ def _seed_evidence(gateway: ToolGateway, case_id: str) -> None:
             transaction_date=_THREE_DAYS_AGO,
             auth_method=AuthMethod.CNP,
             channel=TransactionChannel.ONLINE,
+            is_disputed=True,
         ),
     )
 

@@ -151,6 +151,34 @@ class TestLookupTransactions:
         assert traces[0]["action"] == "lookup_transactions"
         assert traces[0]["agent_id"] == "test-agent"
 
+    def test_disputed_flag_in_returned_transactions(self, gateway, stores, read_ctx):
+        """Disputed transactions should have is_disputed=True in returned dicts."""
+        _, es, _ = stores
+        txn = Transaction(
+            node_id="txn-disp",
+            case_id="case-1",
+            source_type=EvidenceSourceType.FACT,
+            created_at=NOW,
+            amount=100.0,
+            merchant_name="Test",
+            transaction_date=NOW,
+            is_disputed=True,
+        )
+        es.add_node(txn)
+
+        result = lookup_transactions(gateway, read_ctx, "case-1")
+        assert len(result) == 1
+        assert result[0]["is_disputed"] is True
+
+    def test_undisputed_default(self, gateway, stores, read_ctx):
+        """Default transactions should have is_disputed=False."""
+        _, es, _ = stores
+        _add_transaction(es, "case-1", "txn-1")
+
+        result = lookup_transactions(gateway, read_ctx, "case-1")
+        assert len(result) == 1
+        assert result[0]["is_disputed"] is False
+
 
 # --- query_auth_logs tests ---
 

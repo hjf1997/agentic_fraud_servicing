@@ -47,6 +47,7 @@ from agentic_fraud_servicing.gateway.tool_gateway import AuthContext  # noqa: E4
 from agentic_fraud_servicing.gateway.tools.write_tools import (  # noqa: E402
     append_evidence_edge,
     append_evidence_node,
+    mark_transactions_disputed,
 )
 from agentic_fraud_servicing.ingestion.redaction import redact_all  # noqa: E402
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event  # noqa: E402
@@ -360,6 +361,9 @@ async def _process_dispute_action(
                 created_at=now,
             ),
         )
+
+    # 2b. Mark the transactions as disputed at the evidence node level
+    mark_transactions_disputed(gateway, ctx, scenario.case_id, action.transaction_node_ids)
 
     # 3. Look up transaction details to build the SYSTEM event text
     all_nodes = gateway.evidence_store.get_nodes_by_case(scenario.case_id)

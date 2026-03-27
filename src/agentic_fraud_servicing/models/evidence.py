@@ -58,6 +58,7 @@ class Transaction(EvidenceNode):
     auth_method: AuthMethod | None = None
     channel: TransactionChannel | None = None
     outcome: TransactionOutcome | None = None
+    is_disputed: bool = False
 
 
 class AuthEvent(EvidenceNode):

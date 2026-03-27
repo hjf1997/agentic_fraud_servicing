@@ -210,6 +210,34 @@ class TestGetConnectedNodes:
         store.close()
 
 
+class TestUpdateNode:
+    """Tests for update_node."""
+
+    def test_update_node_success(self, tmp_path):
+        """update_node should replace the stored JSON data for an existing node."""
+        store = EvidenceStore(str(tmp_path / "test.db"))
+        txn = _make_transaction()
+        store.add_node(txn)
+
+        # Mutate and update
+        txn.is_disputed = True
+        store.update_node(txn)
+
+        nodes = store.get_nodes_by_case("CASE-001")
+        assert len(nodes) == 1
+        assert nodes[0]["is_disputed"] is True
+        store.close()
+
+    def test_update_node_not_found_raises(self, tmp_path):
+        """update_node with a nonexistent node_id should raise RuntimeError."""
+        store = EvidenceStore(str(tmp_path / "test.db"))
+        txn = _make_transaction(node_id="NONEXISTENT")
+
+        with pytest.raises(RuntimeError, match="not found"):
+            store.update_node(txn)
+        store.close()
+
+
 class TestErrorWrapping:
     """Tests for sqlite3 error wrapping as RuntimeError."""
 

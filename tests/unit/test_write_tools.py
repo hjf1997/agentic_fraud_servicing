@@ -13,6 +13,7 @@ from agentic_fraud_servicing.gateway.tools.write_tools import (
     append_evidence_edge,
     append_evidence_node,
     create_case,
+    mark_transactions_disputed,
     update_case_status,
 )
 from agentic_fraud_servicing.models.case import Case
@@ -232,3 +233,42 @@ class TestAppendEvidenceEdge:
         assert len(traces) == 1
         assert traces[0]["action"] == "append_evidence_edge"
         assert traces[0]["status"] == "success"
+
+
+# --- mark_transactions_disputed tests ---
+
+
+class TestMarkTransactionsDisputed:
+    def test_marks_specified_transactions(self, gateway, stores, write_ctx):
+        """Only the specified transaction should be marked as disputed."""
+        _, es, _ = stores
+        append_evidence_node(gateway, write_ctx, _make_transaction("txn-1"))
+        append_evidence_node(gateway, write_ctx, _make_transaction("txn-2"))
+        append_evidence_node(gateway, write_ctx, _make_transaction("txn-3"))
+
+        updated = mark_transactions_disputed(gateway, write_ctx, "case-1", ["txn-2"])
+        assert updated == 1
+
+        nodes = es.get_nodes_by_case("case-1")
+        for n in nodes:
+            if n["node_id"] == "txn-2":
+                assert n["is_disputed"] is True
+            else:
+                assert n["is_disputed"] is False
+
+    def test_auth_failure_raises(self, gateway, no_write_ctx):
+        """Raises GatewayAuthError when ctx lacks 'write' permission."""
+        with pytest.raises(GatewayAuthError, match="Permission 'write' not granted"):
+            mark_transactions_disputed(gateway, no_write_ctx, "case-1", ["txn-1"])
+
+    def test_logs_call_to_trace_store(self, gateway, stores, write_ctx):
+        """The call is logged to the trace store."""
+        _, es, ts = stores
+        append_evidence_node(gateway, write_ctx, _make_transaction("txn-1"))
+
+        mark_transactions_disputed(gateway, write_ctx, "case-1", ["txn-1"])
+
+        traces = ts.get_traces_by_case("case-1")
+        # 2 traces: one for append_evidence_node, one for mark_transactions_disputed
+        mark_trace = next(t for t in traces if t["action"] == "mark_transactions_disputed")
+        assert mark_trace is not None

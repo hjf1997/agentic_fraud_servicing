@@ -9,8 +9,8 @@ import time
 
 from agentic_fraud_servicing.gateway.tool_gateway import AuthContext, ToolGateway
 from agentic_fraud_servicing.models.case import Case
-from agentic_fraud_servicing.models.enums import CaseStatus
-from agentic_fraud_servicing.models.evidence import EvidenceEdge, EvidenceNode
+from agentic_fraud_servicing.models.enums import CaseStatus, EvidenceNodeType
+from agentic_fraud_servicing.models.evidence import EvidenceEdge, EvidenceNode, Transaction
 
 
 def create_case(gateway: ToolGateway, ctx: AuthContext, case: Case) -> None:
@@ -161,3 +161,60 @@ def append_evidence_edge(gateway: ToolGateway, ctx: AuthContext, edge: EvidenceE
             duration_ms=duration_ms,
             status=status,
         )
+
+
+def mark_transactions_disputed(
+    gateway: ToolGateway,
+    ctx: AuthContext,
+    case_id: str,
+    transaction_node_ids: list[str],
+) -> int:
+    """Mark specific transactions as disputed in the evidence store.
+
+    Fetches transaction nodes by node_id, sets is_disputed=True, and
+    updates each node. Returns the count of successfully updated nodes.
+
+    Args:
+        gateway: ToolGateway instance mediating storage access.
+        ctx: Auth context for the calling agent.
+        case_id: The case identifier containing the transactions.
+        transaction_node_ids: Node IDs of transactions to mark as disputed.
+
+    Returns:
+        Number of transaction nodes that were updated.
+
+    Raises:
+        GatewayAuthError: If auth context lacks 'write' permission.
+        RuntimeError: On storage errors.
+    """
+    gateway.check_auth(ctx, "write")
+    start = time.monotonic()
+    updated = 0
+    target_ids = set(transaction_node_ids)
+    try:
+        all_nodes = gateway.evidence_store.get_nodes_by_case(case_id)
+        for node_dict in all_nodes:
+            if (
+                node_dict.get("node_type") == EvidenceNodeType.TRANSACTION
+                and node_dict.get("node_id") in target_ids
+            ):
+                node_dict["is_disputed"] = True
+                txn = Transaction(**node_dict)
+                gateway.evidence_store.update_node(txn)
+                updated += 1
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"mark_transactions_disputed failed: {exc}") from exc
+    finally:
+        duration_ms = (time.monotonic() - start) * 1000
+        gateway.log_call(
+            ctx=ctx,
+            action="mark_transactions_disputed",
+            input_summary=(
+                f'{{"case_id": "{case_id}", "count": {len(transaction_node_ids)}}}'
+            ),
+            output_summary=f'{{"updated": {updated}}}',
+            duration_ms=duration_ms,
+        )
+    return updated

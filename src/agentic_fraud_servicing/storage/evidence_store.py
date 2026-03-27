@@ -129,6 +129,34 @@ class EvidenceStore:
         except sqlite3.Error as exc:
             raise RuntimeError(f"add_edge failed for edge_id '{edge.edge_id}': {exc}") from exc
 
+    def update_node(self, node: EvidenceNode) -> None:
+        """Update an existing evidence node in the store.
+
+        Replaces the JSON data blob for the node matching node.node_id.
+
+        Args:
+            node: The EvidenceNode (or subclass) with updated fields.
+
+        Raises:
+            RuntimeError: If node_id does not exist or a DB error occurs.
+        """
+        try:
+            cursor = self._conn.execute(
+                "UPDATE evidence_nodes SET data = ? WHERE node_id = ?",
+                (node.model_dump_json(), node.node_id),
+            )
+            if cursor.rowcount == 0:
+                raise RuntimeError(
+                    f"update_node failed: node_id '{node.node_id}' not found"
+                )
+            self._conn.commit()
+        except RuntimeError:
+            raise
+        except sqlite3.Error as exc:
+            raise RuntimeError(
+                f"update_node failed for node_id '{node.node_id}': {exc}"
+            ) from exc
+
     def get_nodes_by_case(self, case_id: str) -> list[dict]:
         """Retrieve all evidence nodes for a case.
 

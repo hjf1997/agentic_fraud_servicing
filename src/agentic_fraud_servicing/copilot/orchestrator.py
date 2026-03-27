@@ -366,8 +366,9 @@ class CopilotOrchestrator:
         r = self._retrieval_result
 
         # Summary counts for quick reference
+        disputed_count = sum(1 for t in r.transactions if t.get("is_disputed"))
         summary = (
-            f"Transactions: {len(r.transactions)} found. "
+            f"Transactions: {len(r.transactions)} found ({disputed_count} disputed). "
             f"Auth events: {len(r.auth_events)} found. "
             f"Customer profile: {'available' if r.customer_profile else 'not available'}."
         )
@@ -376,7 +377,12 @@ class CopilotOrchestrator:
         evidence_data: dict = {}
 
         if r.transactions:
-            evidence_data["transactions"] = r.transactions
+            disputed = [t for t in r.transactions if t.get("is_disputed")]
+            undisputed = [t for t in r.transactions if not t.get("is_disputed")]
+            if disputed:
+                evidence_data["disputed_transactions"] = disputed
+            if undisputed:
+                evidence_data["account_transactions"] = undisputed
 
         if r.auth_events:
             evidence_data["auth_events"] = r.auth_events

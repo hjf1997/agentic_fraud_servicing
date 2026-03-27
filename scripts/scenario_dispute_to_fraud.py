@@ -101,6 +101,7 @@ def _seed_evidence(gateway: ToolGateway, case_id: str) -> None:
             transaction_date=_THREE_WEEKS_AGO,
             auth_method=AuthMethod.CHIP,
             channel=TransactionChannel.POS,
+            is_disputed=True,
         ),
     )
 
