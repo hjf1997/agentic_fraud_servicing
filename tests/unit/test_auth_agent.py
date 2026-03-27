@@ -196,6 +196,56 @@ class TestRunAuthAssessment:
         user_input = call_args.kwargs.get("input") or call_args.args[1]
         assert "Not available" in user_input
 
+    async def test_includes_conversation_history(self, mock_provider):
+        """run_auth_assessment includes conversation history when provided."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = AuthAssessment()
+
+        history = [
+            ("CCP", "How can I help you today?"),
+            ("CARDMEMBER", "I need to check on a charge"),
+            ("CCP", "Can you verify your date of birth?"),
+            ("CARDMEMBER", "Uh... let me think... it's March 15"),
+        ]
+
+        with patch(
+            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_auth_assessment(
+                "Uh... let me think... it's March 15",
+                [],
+                None,
+                mock_provider,
+                conversation_history=history,
+            )
+
+        call_args = mock_run.call_args
+        user_input = call_args.kwargs.get("input") or call_args.args[1]
+        assert "Recent conversation" in user_input
+        assert "CCP: How can I help you today?" in user_input
+        assert "CARDMEMBER: I need to check on a charge" in user_input
+        assert "Current turn:" in user_input
+
+    async def test_no_conversation_history_fallback(self, mock_provider):
+        """run_auth_assessment works without conversation_history."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = AuthAssessment()
+
+        with patch(
+            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_auth_assessment("some text", [], None, mock_provider)
+
+        call_args = mock_run.call_args
+        user_input = call_args.kwargs.get("input") or call_args.args[1]
+        assert "Recent conversation" not in user_input
+        assert "Current turn:" in user_input
+        assert "some text" in user_input
+
     async def test_wraps_exceptions(self, mock_provider):
         """run_auth_assessment wraps SDK exceptions in RuntimeError."""
         with patch(

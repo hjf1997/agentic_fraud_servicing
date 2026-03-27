@@ -92,6 +92,7 @@ async def run_auth_assessment(
     auth_events: list[dict],
     customer_profile: dict | None,
     model_provider: ModelProvider,
+    conversation_history: list[tuple[str, str]] | None = None,
 ) -> AuthAssessment:
     """Run the auth assessment agent on transcript and auth data.
 
@@ -100,6 +101,9 @@ async def run_auth_assessment(
         auth_events: List of authentication event dicts for the session.
         customer_profile: Customer profile dict, or None if unavailable.
         model_provider: LLM model provider for inference.
+        conversation_history: Recent conversation turns as (speaker, text)
+            tuples. Provides multi-turn context for detecting behavioral
+            patterns like hesitation, contradictions, or story changes.
 
     Returns:
         AuthAssessment with impersonation risk score and recommendations.
@@ -108,7 +112,14 @@ async def run_auth_assessment(
         RuntimeError: If the agent SDK call fails.
     """
     # Build user message with all available context
-    parts = [f"Transcript segment:\n{transcript_text}"]
+    parts = []
+    if conversation_history:
+        lines = [f"{speaker}: {text}" for speaker, text in conversation_history]
+        parts.append(
+            f"Recent conversation ({len(conversation_history)} turns):\n"
+            + "\n".join(lines)
+        )
+    parts.append(f"Current turn:\n{transcript_text}")
     parts.append(f"\nAuth events:\n{json.dumps(auth_events, indent=2)}")
     if customer_profile is not None:
         parts.append(f"\nCustomer profile:\n{json.dumps(customer_profile, indent=2)}")

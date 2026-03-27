@@ -95,13 +95,14 @@ For assessment turns the pipeline is:
 
 **Role**: Assess impersonation risk of the caller.
 
-**Condition**: Runs if `turn <= 3` OR `impersonation_risk >= 0.4`.
+**Condition**: Runs if `cm_turn <= 3` OR `impersonation_risk >= 0.4`.
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
 | **INPUT** | `transcript_text` | `str` | Current turn's raw text (behavioral cues) |
 | **INPUT** | `auth_events` | `list[dict]` | Auth event records from retrieval (failed attempts, device fingerprints, login history) |
 | **INPUT** | `customer_profile` | `dict \| None` | Customer profile from retrieval (call patterns, geo, recent account changes) |
+| **INPUT** | `conversation_history` | `list[(speaker, text)] \| None` | Recent conversation turns for multi-turn behavioral pattern detection |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
 
 | Direction | Field | Type | Description |
@@ -277,7 +278,7 @@ Retrieval --> transactions     ----+                                    |
 
 - **Hub-and-spoke**: The orchestrator explicitly controls which agents run and when. No free handoffs.
 - **Conditional auth**: Auth agent is skipped after turn 3 if impersonation risk drops below 0.4, saving an LLM call.
-- **Idempotent retrieval**: Retrieval runs once and caches. Safe to include in every `gather()` call.
+- **Retrieval with cache invalidation**: Retrieval caches its result but invalidates when triage persists new allegations (evidence store changed). Re-fetches in parallel on the next assessment turn.
 - **Case advisor gating + parallelism**: Skipped on turns 1-3. On turn 4+, runs in parallel with Hypothesis Agent using the previous turn's scores.
 - **Question dedup**: Planner receives the last 3 turns of suggested questions to avoid repetition.
 - **All agents traced**: Every invocation is logged to the trace store with agent name, duration, and status.

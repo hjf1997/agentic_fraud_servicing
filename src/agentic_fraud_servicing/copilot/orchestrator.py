@@ -167,7 +167,10 @@ class CopilotOrchestrator:
                 self._run_triage_safe(
                     risk_flags, conversation_window, new_turn_offset, allegation_summary
                 ),
-                self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
+                self._run_auth_safe(
+                    event.text, auth_events, customer_profile, risk_flags,
+                    conversation_window,
+                ),
                 self._run_retrieval_safe(risk_flags),
             )
         else:
@@ -183,9 +186,11 @@ class CopilotOrchestrator:
             self._retrieval_result = retrieval_result
 
         # 3c. Process parallel results: triage
+        _invalidate_retrieval = False
         if triage_result is not None and triage_result.allegations:
             self.accumulated_allegations.extend(triage_result.allegations)
             self._persist_allegations(triage_result.allegations)
+            _invalidate_retrieval = True  # Evidence store changed; refresh next turn
 
         # 3c'. Advance the assessment index so the next assessment knows
         # which turns have already been processed by triage.
@@ -237,7 +242,8 @@ class CopilotOrchestrator:
         running_summary = self._build_allegations_summary()
         planner_missing = unmet_criteria + self.missing_fields
         question_result = await self._run_question_planner_safe(
-            running_summary, risk_flags, extra_missing=planner_missing
+            running_summary, risk_flags, extra_missing=planner_missing,
+            recent_turns=conversation_window,
         )
 
         # 9. Track recent suggestions for dedup in subsequent turns
@@ -246,7 +252,13 @@ class CopilotOrchestrator:
         if len(self._recent_suggestions) > 3:
             self._recent_suggestions = self._recent_suggestions[-3:]
 
-        # 10. Build and return the suggestion
+        # 10. Invalidate retrieval cache if evidence changed this turn, so the
+        # next assessment re-fetches fresh data. Done after hypothesis/advisor
+        # have consumed this turn's retrieval result.
+        if _invalidate_retrieval:
+            self._retrieval_result = None
+
+        # 11. Build and return the suggestion
         return self._build_suggestion(
             event,
             risk_flags=risk_flags,
@@ -407,11 +419,17 @@ class CopilotOrchestrator:
         return f"{summary}\n{json.dumps(evidence_data, indent=2, default=str)}"
 
     def _format_conversation_for_hypothesis(self) -> str:
-        """Format a brief conversation summary for the hypothesis agent."""
+        """Format a conversation summary for the hypothesis agent.
+
+        Uses the assessment-based window (context + new turns) to ensure no
+        turns are missed between assessments, matching the triage window.
+        """
         if not self.transcript_history:
             return "No conversation yet."
-        last_n = self.transcript_history[-5:]  # Last 5 turns for brevity
-        lines = [f"{e.speaker.value}: {e.text[:100]}" for e in last_n]
+        context_trailing = 4
+        context_start = max(0, self._last_assessed_idx - context_trailing)
+        window = self.transcript_history[context_start:]
+        lines = [f"{e.speaker.value}: {e.text}" for e in window]
         return f"{len(self.transcript_history)} turns total. Recent:\n" + "\n".join(lines)
 
     def _update_missing_fields(self) -> None:
@@ -466,7 +484,7 @@ class CopilotOrchestrator:
         Note: This method is only called for CARDMEMBER events — non-CARDMEMBER
         events return early in process_event() before reaching this check.
         """
-        if self._turn_count <= 3:
+        if self._cm_turn_count <= 3:
             return True
         if self.impersonation_risk >= 0.4:
             return True
@@ -528,6 +546,7 @@ class CopilotOrchestrator:
         auth_events: list[dict],
         customer_profile: dict | None,
         risk_flags: list[str],
+        conversation_history: list[tuple[str, str]] | None = None,
     ) -> AuthAssessment | None:
         """Run auth assessment agent with error handling."""
         t0 = time.perf_counter()
@@ -537,6 +556,7 @@ class CopilotOrchestrator:
                 auth_events=auth_events,
                 customer_profile=customer_profile,
                 model_provider=self.model_provider,
+                conversation_history=conversation_history,
             )
             self._log_agent_trace("auth", "run", (time.perf_counter() - t0) * 1000)
             return result
@@ -551,6 +571,7 @@ class CopilotOrchestrator:
         risk_flags: list[str],
         *,
         extra_missing: list[str] | None = None,
+        recent_turns: list[tuple[str, str]] | None = None,
     ) -> QuestionPlan | None:
         """Run question planner agent with error handling.
 
@@ -560,8 +581,8 @@ class CopilotOrchestrator:
         as additional missing fields for the current turn only — it is NOT
         accumulated into ``self.missing_fields``.
         """
-        # Last 5 conversation turns for context
-        recent_turns = [(e.speaker.value, e.text) for e in self.transcript_history[-5:]]
+        if recent_turns is None:
+            recent_turns = [(e.speaker.value, e.text) for e in self.transcript_history[-5:]]
         # Flatten recent suggestions into a single dedup list
         recent_questions = [q for qs in self._recent_suggestions for q in qs]
         missing = extra_missing if extra_missing else list(self.missing_fields)

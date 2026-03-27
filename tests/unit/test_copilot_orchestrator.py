@@ -345,11 +345,11 @@ class TestParallelExecution:
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_retrieval_not_reinvoked_on_second_event(
+    async def test_retrieval_not_reinvoked_when_no_allegations(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """Retrieval is cached after the first call and not re-invoked."""
-        mock_triage.return_value = _mock_triage_result()
+        """Retrieval is cached when triage extracts no allegations."""
+        mock_triage.return_value = AllegationExtractionResult(allegations=[])
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
         mock_retrieval.return_value = _mock_retrieval_result()
@@ -360,7 +360,7 @@ class TestParallelExecution:
         await orch.process_event(_make_event(event_id="evt-1"))
         await orch.process_event(_make_event(event_id="evt-2"))
 
-        # Retrieval called only once — second call returns cached result
+        # No allegations → cache not invalidated → retrieval called once
         mock_retrieval.assert_awaited_once()
         # Triage and auth called twice (once per event)
         assert mock_triage.await_count == 2
@@ -1047,6 +1047,127 @@ class TestConditionalAuth:
         assert mock_auth.await_count == 3  # Auth not called on turn 4
         assert orch.impersonation_risk == 0.2
         assert result.impersonation_risk == 0.2
+
+
+class TestAuthGateCountsCMTurns:
+    """Tests that auth gating uses CM turn count, not total turn count."""
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_auth_runs_on_first_cm_turn_after_system_events(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Auth runs on the first CM turn even if preceded by SYSTEM/CCP events."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # 3 non-CM events first
+        await orch.process_event(_make_event(event_id="sys-1", speaker=SpeakerType.SYSTEM))
+        await orch.process_event(_make_event(event_id="ccp-1", speaker=SpeakerType.CCP))
+        await orch.process_event(_make_event(event_id="sys-2", speaker=SpeakerType.SYSTEM))
+        # _turn_count is now 3, but _cm_turn_count is 0
+        assert mock_auth.await_count == 0
+
+        # First CM turn — auth should run (cm_turn_count=1 <= 3)
+        await orch.process_event(_make_event(event_id="cm-1"))
+        assert mock_auth.await_count == 1
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_auth_runs_3_cm_turns_with_interleaved_ccp(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Auth runs on first 3 CM turns regardless of interleaved CCP/SYSTEM events."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # Interleaved: SYSTEM, CM, CCP, CM, SYSTEM, CCP, CM, CCP, CM
+        await orch.process_event(_make_event(event_id="s1", speaker=SpeakerType.SYSTEM))
+        await orch.process_event(_make_event(event_id="cm1"))  # CM turn 1
+        await orch.process_event(_make_event(event_id="ccp1", speaker=SpeakerType.CCP))
+        await orch.process_event(_make_event(event_id="cm2"))  # CM turn 2
+        await orch.process_event(_make_event(event_id="s2", speaker=SpeakerType.SYSTEM))
+        await orch.process_event(_make_event(event_id="ccp2", speaker=SpeakerType.CCP))
+        await orch.process_event(_make_event(event_id="cm3"))  # CM turn 3
+        assert mock_auth.await_count == 3
+
+        # CM turn 4 — low risk, auth should be skipped
+        await orch.process_event(_make_event(event_id="ccp3", speaker=SpeakerType.CCP))
+        await orch.process_event(_make_event(event_id="cm4"))
+        assert mock_auth.await_count == 3  # Still 3
+
+
+class TestRetrievalCacheInvalidation:
+    """Tests for retrieval cache invalidation after evidence writes."""
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_retrieval_reinvoked_after_allegations_persisted(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Retrieval is called again after triage extracts allegations (cache invalidated)."""
+        mock_triage.return_value = _mock_triage_result()  # has allegations
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event(event_id="evt-1"))
+        assert mock_retrieval.await_count == 1
+
+        # Second event — triage returned allegations on evt-1, so cache was
+        # invalidated and retrieval should run again
+        await orch.process_event(_make_event(event_id="evt-2"))
+        assert mock_retrieval.await_count == 2
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_retrieval_cached_when_no_allegations(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Retrieval stays cached when triage extracts no allegations."""
+        mock_triage.return_value = AllegationExtractionResult(allegations=[])
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event(event_id="evt-1"))
+        assert mock_retrieval.await_count == 1
+
+        # No allegations → cache not invalidated → retrieval still cached
+        await orch.process_event(_make_event(event_id="evt-2"))
+        assert mock_retrieval.await_count == 1
 
 
 class TestCaseAdvisorIntegration:
