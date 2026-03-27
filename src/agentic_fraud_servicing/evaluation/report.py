@@ -166,22 +166,22 @@ async def generate_report(
             )
 
         try:
-            results["decision_explanation"] = await evaluate_decision_explanation(
-                run, model_provider
-            )
-        except Exception as exc:
-            print(
-                f"[report] decision_explanation evaluator failed: {exc}",
-                file=sys.stderr,
-            )
-
-        try:
             results["note_alignment"] = await evaluate_note_alignment(
                 run, model_provider
             )
         except Exception as exc:
             print(
                 f"[report] note_alignment evaluator failed: {exc}",
+                file=sys.stderr,
+            )
+
+        try:
+            results["decision_explanation"] = await evaluate_decision_explanation(
+                run, model_provider, note_alignment=results["note_alignment"]
+            )
+        except Exception as exc:
+            print(
+                f"[report] decision_explanation evaluator failed: {exc}",
                 file=sys.stderr,
             )
 

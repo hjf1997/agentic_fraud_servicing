@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from agentic_fraud_servicing.evaluation.models import (
     DecisionExplanation,
     EvaluationRun,
+    NoteAlignmentResult,
 )
 
 # --- Structured output model for the LLM agent ---
@@ -51,6 +52,7 @@ You will receive a comprehensive case summary including:
 - Risk flags raised
 - Turn-by-turn hypothesis score evolution
 - Key evidence retrieved
+- CCP Note Alignment scores (how well copilot output matched the CCP's notes)
 
 ## Output Requirements
 
@@ -68,12 +70,23 @@ List the top 3 most impactful evidence-to-decision links. Each entry must have:
 - `description`: Brief explanation of why this evidence mattered
 
 ### improvement_suggestions
-Provide 2-4 concrete, actionable suggestions. Examples:
+Provide 2-4 concrete, actionable suggestions. Consider:
+- Evidence timing: Were key pieces of evidence used promptly?
+- CCP note alignment gaps: If provided, identify where the copilot's output
+  diverged from the CCP's notes — missing facts, misaligned allegations, or
+  disagreements on category/action. Suggest how the copilot could better
+  capture what the CCP documented.
+- Hypothesis accuracy: Did scores converge to the correct category?
+
+Examples:
 - "The chip+PIN auth event was retrieved at turn 5 but did not increase
   FIRST_PARTY_FRAUD until turn 8 — consider weighting auth contradictions
   more heavily in early turns."
 - "The copilot missed the merchant familiarity signal in the cardmember's
   phrasing at turn 4 — add merchant familiarity detection to triage."
+- "CCP notes mention a specific transaction amount ($499.99) that the copilot
+  did not capture in its allegations — improve fact extraction to include
+  transaction amounts from cardmember statements."
 
 ### overall_quality_notes
 A brief (1-3 sentences) assessment of the copilot's reasoning quality.
@@ -93,6 +106,7 @@ _decision_explainer_agent = Agent(
 async def evaluate_decision_explanation(
     run: EvaluationRun,
     model_provider: ModelProvider,
+    note_alignment: NoteAlignmentResult | None = None,
 ) -> DecisionExplanation:
     """Generate a reasoning chain explaining how evidence drove hypothesis scores.
 
@@ -103,6 +117,8 @@ async def evaluate_decision_explanation(
     Args:
         run: A completed EvaluationRun with turn_metrics and ground_truth.
         model_provider: LLM model provider for inference.
+        note_alignment: Optional CCP note alignment results. When provided,
+            the LLM considers alignment gaps in its improvement suggestions.
 
     Returns:
         DecisionExplanation with reasoning chain, evidence links, and suggestions.
@@ -116,7 +132,7 @@ async def evaluate_decision_explanation(
             overall_quality_notes="Empty evaluation run — no copilot output to assess.",
         )
 
-    context = _build_context(run)
+    context = _build_context(run, note_alignment)
 
     try:
         result = await Runner.run(
@@ -145,7 +161,9 @@ async def evaluate_decision_explanation(
         )
 
 
-def _build_context(run: EvaluationRun) -> str:
+def _build_context(
+    run: EvaluationRun, note_alignment: NoteAlignmentResult | None = None
+) -> str:
     """Build comprehensive context string from the EvaluationRun for the LLM."""
     sections: list[str] = []
 
@@ -209,5 +227,16 @@ def _build_context(run: EvaluationRun) -> str:
                 evidence_items.append(f"- Turn {turn.turn_number}: {fact_str[:200]}")
     if evidence_items:
         sections.append("## Key Evidence Retrieved\n" + "\n".join(evidence_items))
+
+    # CCP Note Alignment (when available)
+    if note_alignment and note_alignment.explanation:
+        na_lines = [
+            f"- Facts Coverage: {note_alignment.facts_coverage_score:.2f}",
+            f"- Allegation Alignment: {note_alignment.allegation_alignment_score:.2f}",
+            f"- Category & Action: {note_alignment.category_action_score:.2f}",
+            f"- Overall: {note_alignment.overall_score:.2f}",
+            f"- Explanation: {note_alignment.explanation}",
+        ]
+        sections.append("## CCP Note Alignment\n" + "\n".join(na_lines))
 
     return "\n\n".join(sections)
