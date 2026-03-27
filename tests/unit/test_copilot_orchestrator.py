@@ -1160,8 +1160,8 @@ class TestCaseAdvisorIntegration:
         assert any("Case advisor failed" in f for f in result.risk_flags)
 
 
-class TestTriageSlidingWindow:
-    """Tests for the sliding window applied to triage agent input."""
+class TestTriageAssessmentWindow:
+    """Tests for the assessment-based window applied to triage agent input."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
@@ -1169,10 +1169,10 @@ class TestTriageSlidingWindow:
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_triage_receives_at_most_5_turns(
+    async def test_first_assessment_all_turns_are_new(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """After 10 events, triage receives only the last 5 turns (not all 10)."""
+        """On the first assessment, all turns are new (new_turn_offset=0)."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
@@ -1181,17 +1181,83 @@ class TestTriageSlidingWindow:
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
+        await orch.process_event(_make_event(event_id="evt-0", text="Turn 0"))
+
+        last_call = mock_triage.call_args
+        conv_history = last_call.kwargs.get("conversation_history")
+        new_turn_offset = last_call.kwargs.get("new_turn_offset")
+        assert conv_history is not None
+        assert len(conv_history) == 1
+        assert new_turn_offset == 0
+        assert last_call.kwargs.get("allegation_summary") is None
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_second_assessment_has_context_and_new_turns(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Second assessment includes context from first + new turns."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # assess_interval=1 so each CM event triggers assessment
+        await orch.process_event(_make_event(event_id="evt-0", text="Turn 0"))
+        await orch.process_event(_make_event(event_id="evt-1", text="Turn 1"))
+
+        last_call = mock_triage.call_args
+        conv_history = last_call.kwargs.get("conversation_history")
+        new_turn_offset = last_call.kwargs.get("new_turn_offset")
+        # 2 total turns, first was assessed → context_trailing=4 but only 1 prior
+        # context_start = max(0, 1 - 4) = 0, so all 2 turns included
+        assert conv_history is not None
+        assert len(conv_history) == 2
+        # First turn is context (already assessed), second is new
+        assert new_turn_offset == 1
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_context_trailing_limited_to_4(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """Context trailing is capped at 4, old turns are excluded."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        # 10 events, all assessed (assess_interval=1)
         for i in range(10):
             await orch.process_event(_make_event(event_id=f"evt-{i}", text=f"Turn {i} text"))
 
-        # Check the last call to triage — should have 5 turns, not 10
         last_call = mock_triage.call_args
         conv_history = last_call.kwargs.get("conversation_history")
+        new_turn_offset = last_call.kwargs.get("new_turn_offset")
+        # After 9 assessed turns, _last_assessed_idx=9, new_start=9
+        # context_start = max(0, 9 - 4) = 5, window = history[5:] = 5 turns
+        # new_turn_offset = 9 - 5 = 4
         assert conv_history is not None
         assert len(conv_history) == 5
-        # Should contain the last 5 turns (turns 5-9)
-        assert "Turn 5 text" in conv_history[0][1]
+        assert new_turn_offset == 4
+        # The 1 new turn is the last one
         assert "Turn 9 text" in conv_history[4][1]
+        # Context starts at turn 5
+        assert "Turn 5 text" in conv_history[0][1]
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
@@ -1199,10 +1265,10 @@ class TestTriageSlidingWindow:
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_allegation_summary_passed_when_window_active(
+    async def test_allegation_summary_passed_when_allegations_exist(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """When sliding window is active (>5 turns), allegation summary is passed."""
+        """Allegation summary is passed when accumulated_allegations is non-empty."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
@@ -1211,13 +1277,13 @@ class TestTriageSlidingWindow:
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
-        # Process 6 events so the window kicks in on the 6th
-        for i in range(6):
-            await orch.process_event(_make_event(event_id=f"evt-{i}", text=f"Turn {i}"))
+        # First event extracts an allegation
+        await orch.process_event(_make_event(event_id="evt-0", text="Turn 0"))
+        # Second event should have allegation summary
+        await orch.process_event(_make_event(event_id="evt-1", text="Turn 1"))
 
         last_call = mock_triage.call_args
         allegation_summary = last_call.kwargs.get("allegation_summary")
-        # Should have an allegation summary since accumulated_allegations has data
         assert allegation_summary is not None
         assert "UNRECOGNIZED_TRANSACTION" in allegation_summary
 
@@ -1227,10 +1293,33 @@ class TestTriageSlidingWindow:
     @patch(_QUESTION_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_short_call_sends_full_history_no_summary(
+    async def test_first_call_no_allegation_summary(
         self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """Short calls (<=5 turns) send full history without allegation summary."""
+        """First assessment has no allegation summary (no prior allegations)."""
+        mock_triage.return_value = AllegationExtractionResult(allegations=[])
+        mock_auth.return_value = _mock_auth_result()
+        mock_question.return_value = _mock_question_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = None
+
+        orch = _make_orchestrator()
+        await orch.process_event(_make_event(event_id="evt-0", text="Turn 0"))
+
+        last_call = mock_triage.call_args
+        assert last_call.kwargs.get("allegation_summary") is None
+
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_QUESTION_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_last_assessed_idx_advances(
+        self, mock_triage, mock_auth, mock_question, mock_retrieval, mock_hypothesis, mock_advisor
+    ):
+        """_last_assessed_idx advances after each assessment."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_question.return_value = _mock_question_result()
@@ -1239,18 +1328,13 @@ class TestTriageSlidingWindow:
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
-        # Process 3 events — under the window threshold
-        for i in range(3):
-            await orch.process_event(_make_event(event_id=f"evt-{i}", text=f"Turn {i}"))
+        assert orch._last_assessed_idx == 0
 
-        last_call = mock_triage.call_args
-        conv_history = last_call.kwargs.get("conversation_history")
-        allegation_summary = last_call.kwargs.get("allegation_summary")
-        # Full history (3 turns) should be sent
-        assert conv_history is not None
-        assert len(conv_history) == 3
-        # No allegation summary for short calls
-        assert allegation_summary is None
+        await orch.process_event(_make_event(event_id="evt-0"))
+        assert orch._last_assessed_idx == 1
+
+        await orch.process_event(_make_event(event_id="evt-1"))
+        assert orch._last_assessed_idx == 2
 
 
 class TestQuestionPlannerContext:

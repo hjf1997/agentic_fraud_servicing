@@ -150,20 +150,21 @@ and expected entities are listed.
 
 ## Extraction Rules
 
-1. Extract allegations ONLY from the CURRENT TURN (marked with [LATEST TURN] in
-   the input). Do NOT re-extract allegations from earlier turns — those were
-   already extracted in previous invocations.
-2. The full conversation history is provided for TWO purposes:
+1. Extract allegations from all `[NEW]` and `[LATEST TURN]` entries in the
+   conversation. These are turns that have NOT been processed by a previous
+   triage invocation. Do NOT extract from `[CONTEXT]` entries — those were
+   already processed in earlier invocations.
+2. The `[CONTEXT]` entries are provided for TWO purposes:
    a. **Context**: Understand the full story so far to correctly interpret what
-      the CM means in the current turn (e.g., "that charge" refers to a
-      merchant mentioned earlier).
-   b. **Deduplication**: If the CM repeats or rephrases an allegation already
-      made in an earlier turn, do NOT extract it again. Only extract genuinely
-      NEW information or allegations from the current turn.
-3. Extract 0-8 distinct NEW allegations per turn. Most turns yield 0-2
-   allegations. Return an empty allegations list if the current turn contains
-   no new allegations (e.g., CCP asking questions, SYSTEM events, CM repeating
-   earlier statements).
+      the CM means in newer turns (e.g., "that charge" refers to a merchant
+      mentioned earlier).
+   b. **Deduplication**: If the CM repeats or rephrases an allegation from a
+      `[CONTEXT]` turn (or from the "Previously extracted allegations" list),
+      do NOT extract it again. Only extract genuinely NEW information.
+3. Extract 0-8 distinct NEW allegations across all `[NEW]` and `[LATEST TURN]`
+   entries combined. Most assessment windows yield 1-4 allegations. Return an
+   empty allegations list if the new turns contain no new allegations (e.g.,
+   only CCP questions, SYSTEM events, or repeated statements).
 4. Each allegation MUST have a detail_type, description, and confidence score.
 5. The description should paraphrase what the CM said — not your analysis.
 6. Entities must be structured name-value pairs extracted from the conversation.
@@ -174,7 +175,7 @@ and expected entities are listed.
    - 0.5-0.6: Inferred from partial or indirect statements
    - Below 0.5: Weak inference, possibly misinterpreted
 8. The context field should capture the relevant quote or paraphrase from the
-   CURRENT TURN that prompted the extraction.
+   turn that prompted the extraction.
 
 Respond with structured output only.
 """
@@ -189,20 +190,23 @@ triage_agent = Agent(
 
 
 async def run_triage(
-    transcript_text: str,
+    conversation_history: list[tuple[str, str]],
     model_provider: ModelProvider,
-    conversation_history: list[tuple[str, str]] | None = None,
+    new_turn_offset: int = 0,
     allegation_summary: str | None = None,
 ) -> AllegationExtractionResult:
     """Run the triage agent on a transcript to extract structured allegations.
 
     Args:
-        transcript_text: The current turn's transcript text.
+        conversation_history: Conversation turns as list of (speaker, text)
+            tuples. Contains [CONTEXT] turns (before new_turn_offset) and
+            [NEW]/[LATEST TURN] turns (from new_turn_offset onward). The
+            agent extracts allegations only from [NEW] and [LATEST TURN].
         model_provider: LLM model provider for inference.
-        conversation_history: Recent conversation turns as list of
-            (speaker, text) tuples. When a sliding window is used, this
-            contains only the last N turns (not the full history). If
-            None, falls back to single-turn mode with transcript_text.
+        new_turn_offset: Index in conversation_history where new (unprocessed)
+            turns begin. Entries before this index are marked [CONTEXT]; entries
+            from this index onward are marked [NEW], with the final entry
+            marked [LATEST TURN].
         allegation_summary: Structured summary of previously extracted
             allegations for deduplication. Prepended to the user message
             so the agent avoids re-extracting known allegations.
@@ -213,31 +217,33 @@ async def run_triage(
     Raises:
         RuntimeError: If the agent SDK call fails.
     """
-    # Build user message with conversation context
-    if conversation_history:
-        parts = []
+    parts = []
 
-        # Prepend allegation summary for dedup when available
-        if allegation_summary:
-            parts.append(
-                "Previously extracted allegations (do NOT re-extract these):\n"
-                f"{allegation_summary}"
-            )
-
-        # Add conversation turns with latest turn highlighted
-        history_lines = []
-        for i, (speaker, text) in enumerate(conversation_history):
-            is_latest = i == len(conversation_history) - 1
-            prefix = "[LATEST TURN] " if is_latest else "[CONTEXT] "
-            history_lines.append(f"{prefix}{speaker}: {text}")
+    # Prepend allegation summary for dedup when available
+    if allegation_summary:
         parts.append(
-            f"Recent conversation (last {len(conversation_history)} turns):\n"
-            + "\n".join(history_lines)
+            "Previously extracted allegations (do NOT re-extract these):\n"
+            f"{allegation_summary}"
         )
 
-        user_msg = "\n\n".join(parts)
-    else:
-        user_msg = f"Transcript segment:\n{transcript_text}"
+    # Add conversation turns with [CONTEXT] / [NEW] / [LATEST TURN] markers
+    history_lines = []
+    for i, (speaker, text) in enumerate(conversation_history):
+        if i == len(conversation_history) - 1:
+            prefix = "[LATEST TURN]"
+        elif i >= new_turn_offset:
+            prefix = "[NEW]"
+        else:
+            prefix = "[CONTEXT]"
+        history_lines.append(f"{prefix} {speaker}: {text}")
+
+    new_count = len(conversation_history) - new_turn_offset
+    parts.append(
+        f"Conversation ({len(conversation_history)} turns, {new_count} new):\n"
+        + "\n".join(history_lines)
+    )
+
+    user_msg = "\n\n".join(parts)
 
     try:
         result = await Runner.run(

@@ -89,6 +89,7 @@ class CopilotOrchestrator:
         self._recent_suggestions: list[list[str]] = []
         self._turn_count: int = 0
         self._cm_turn_count: int = 0
+        self._last_assessed_idx: int = 0
 
     async def process_event(
         self, event: TranscriptEvent, *, is_last: bool = False
@@ -140,15 +141,21 @@ class CopilotOrchestrator:
         risk_flags: list[str] = []
 
         # 3a. Parallel group: triage + auth (conditional) + retrieval
-        # Use sliding window: last 5 turns for context, allegation summary for dedup
-        window_size = 5
+        # Build window: [CONTEXT] turns (trailing from previous assessment) +
+        # [NEW] turns (all turns since last assessment). This ensures no CM
+        # turns are missed even when assess_interval > 1.
+        context_trailing = 4  # number of previously-assessed turns for context
         history = self.transcript_history
-        if len(history) > window_size:
-            conversation_window = [(e.speaker.value, e.text) for e in history[-window_size:]]
-            allegation_summary = self._format_allegations_for_hypothesis()
-        else:
-            conversation_window = [(e.speaker.value, e.text) for e in history]
-            allegation_summary = None  # Short calls: full history, no summary needed
+        new_start = self._last_assessed_idx
+        context_start = max(0, new_start - context_trailing)
+        window = history[context_start:]
+        new_turn_offset = new_start - context_start
+        conversation_window = [(e.speaker.value, e.text) for e in window]
+        allegation_summary = (
+            self._format_allegations_for_hypothesis()
+            if self.accumulated_allegations
+            else None
+        )
 
         prior_retrieval = self._retrieval_result
         auth_events = prior_retrieval.auth_events if prior_retrieval else []
@@ -158,7 +165,7 @@ class CopilotOrchestrator:
         if self._should_run_auth(event):
             triage_result, auth_result, retrieval_result = await asyncio.gather(
                 self._run_triage_safe(
-                    event.text, risk_flags, conversation_window, allegation_summary
+                    risk_flags, conversation_window, new_turn_offset, allegation_summary
                 ),
                 self._run_auth_safe(event.text, auth_events, customer_profile, risk_flags),
                 self._run_retrieval_safe(risk_flags),
@@ -166,7 +173,7 @@ class CopilotOrchestrator:
         else:
             triage_result, retrieval_result = await asyncio.gather(
                 self._run_triage_safe(
-                    event.text, risk_flags, conversation_window, allegation_summary
+                    risk_flags, conversation_window, new_turn_offset, allegation_summary
                 ),
                 self._run_retrieval_safe(risk_flags),
             )
@@ -179,6 +186,10 @@ class CopilotOrchestrator:
         if triage_result is not None and triage_result.allegations:
             self.accumulated_allegations.extend(triage_result.allegations)
             self._persist_allegations(triage_result.allegations)
+
+        # 3c'. Advance the assessment index so the next assessment knows
+        # which turns have already been processed by triage.
+        self._last_assessed_idx = len(self.transcript_history)
 
         # 3d. Process parallel results: auth
         if auth_result is not None:
@@ -488,18 +499,18 @@ class CopilotOrchestrator:
 
     async def _run_triage_safe(
         self,
-        text: str,
         risk_flags: list[str],
-        conversation_history: list[tuple[str, str]] | None = None,
+        conversation_history: list[tuple[str, str]],
+        new_turn_offset: int = 0,
         allegation_summary: str | None = None,
     ) -> AllegationExtractionResult | None:
         """Run triage agent with error handling."""
         t0 = time.perf_counter()
         try:
             result = await run_triage(
-                transcript_text=text,
-                model_provider=self.model_provider,
                 conversation_history=conversation_history,
+                model_provider=self.model_provider,
+                new_turn_offset=new_turn_offset,
                 allegation_summary=allegation_summary,
             )
             self._log_agent_trace("triage", "run", (time.perf_counter() - t0) * 1000)

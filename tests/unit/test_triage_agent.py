@@ -92,12 +92,14 @@ class TestRunTriage:
         mock_run_result = MagicMock()
         mock_run_result.final_output = sample_result
 
+        history = [("CARDMEMBER", "I didn't make this purchase")]
+
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
-            result = await run_triage("I didn't make this purchase", mock_provider)
+            result = await run_triage(history, mock_provider)
 
         assert isinstance(result, AllegationExtractionResult)
         assert len(result.allegations) == 1
@@ -108,23 +110,27 @@ class TestRunTriage:
         mock_run_result = MagicMock()
         mock_run_result.final_output = AllegationExtractionResult()
 
+        history = [("CARDMEMBER", "test text")]
+
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
-            await run_triage("test text", mock_provider)
+            await run_triage(history, mock_provider)
 
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs["run_config"].model_provider is mock_provider
 
-    async def test_conversation_history_included(self, mock_provider):
-        """run_triage builds message from conversation_history when provided."""
+    async def test_conversation_history_markers(self, mock_provider):
+        """run_triage marks turns with [CONTEXT], [NEW], and [LATEST TURN]."""
         mock_run_result = MagicMock()
         mock_run_result.final_output = AllegationExtractionResult()
 
         history = [
             ("CCP", "How can I help you today?"),
+            ("CARDMEMBER", "I have a charge"),
+            ("CCP", "Let me check"),
             ("CARDMEMBER", "I didn't make this charge"),
         ]
 
@@ -133,34 +139,37 @@ class TestRunTriage:
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
-            await run_triage(
-                "I didn't make this charge",
-                mock_provider,
-                conversation_history=history,
-            )
+            await run_triage(history, mock_provider, new_turn_offset=2)
 
         call_args = mock_run.call_args
         user_input = call_args.kwargs.get("input") or call_args.args[1]
-        assert "Recent conversation" in user_input
-        assert "[LATEST TURN]" in user_input
-        assert "CARDMEMBER: I didn't make this charge" in user_input
+        assert "[CONTEXT] CCP: How can I help you today?" in user_input
+        assert "[CONTEXT] CARDMEMBER: I have a charge" in user_input
+        assert "[NEW] CCP: Let me check" in user_input
+        assert "[LATEST TURN] CARDMEMBER: I didn't make this charge" in user_input
 
-    async def test_falls_back_to_transcript_text(self, mock_provider):
-        """run_triage uses transcript_text when no conversation_history."""
+    async def test_all_new_when_offset_zero(self, mock_provider):
+        """When new_turn_offset=0, all turns except last are [NEW]."""
         mock_run_result = MagicMock()
         mock_run_result.final_output = AllegationExtractionResult()
+
+        history = [
+            ("CCP", "How can I help?"),
+            ("CARDMEMBER", "I didn't make this charge"),
+        ]
 
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
-            await run_triage("some transcript text", mock_provider)
+            await run_triage(history, mock_provider, new_turn_offset=0)
 
         call_args = mock_run.call_args
         user_input = call_args.kwargs.get("input") or call_args.args[1]
-        assert "Transcript segment:" in user_input
-        assert "some transcript text" in user_input
+        assert "[NEW] CCP: How can I help?" in user_input
+        assert "[LATEST TURN] CARDMEMBER: I didn't make this charge" in user_input
+        assert "[CONTEXT]" not in user_input
 
     async def test_includes_allegation_summary_when_provided(self, mock_provider):
         """run_triage prepends allegation summary to user message when provided."""
@@ -179,9 +188,8 @@ class TestRunTriage:
             return_value=mock_run_result,
         ) as mock_run:
             await run_triage(
-                "I see a duplicate charge",
+                history,
                 mock_provider,
-                conversation_history=history,
                 allegation_summary=summary,
             )
 
@@ -191,7 +199,6 @@ class TestRunTriage:
         assert "UNRECOGNIZED_TRANSACTION" in user_input
         assert "do NOT re-extract" in user_input
         assert "[LATEST TURN]" in user_input
-        assert "Recent conversation" in user_input
 
     async def test_no_allegation_summary_omits_section(self, mock_provider):
         """run_triage omits allegation summary section when not provided."""
@@ -208,30 +215,28 @@ class TestRunTriage:
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
-            await run_triage(
-                "I didn't make this charge",
-                mock_provider,
-                conversation_history=history,
-            )
+            await run_triage(history, mock_provider)
 
         call_args = mock_run.call_args
         user_input = call_args.kwargs.get("input") or call_args.args[1]
         assert "Previously extracted allegations" not in user_input
         assert "[LATEST TURN]" in user_input
 
-    async def test_no_previous_type_parameter(self):
-        """run_triage does not accept previous_type parameter."""
+    async def test_no_previous_type_or_transcript_text_parameter(self):
+        """run_triage does not accept previous_type or transcript_text parameters."""
         import inspect
 
         sig = inspect.signature(run_triage)
         assert "previous_type" not in sig.parameters
+        assert "transcript_text" not in sig.parameters
 
     async def test_wraps_exceptions(self, mock_provider):
         """run_triage wraps SDK exceptions in RuntimeError."""
+        history = [("CARDMEMBER", "bad input")]
         with patch(
             "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):
             with pytest.raises(RuntimeError, match="Triage agent failed"):
-                await run_triage("bad input", mock_provider)
+                await run_triage(history, mock_provider)

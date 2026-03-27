@@ -70,9 +70,9 @@ For assessment turns the pipeline is:
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
-| **INPUT** | `transcript_text` | `str` | Current turn's raw text |
-| **INPUT** | `conversation_history` | `list[(speaker, text)]` | Last 5 turns as (speaker, text) tuples |
-| **INPUT** | `allegation_summary` | `str \| None` | Previously extracted allegations for dedup (only when history > 5 turns) |
+| **INPUT** | `conversation_history` | `list[(speaker, text)]` | Context + new turns since last assessment (marked [CONTEXT]/[NEW]/[LATEST TURN]) |
+| **INPUT** | `new_turn_offset` | `int` | Index where [NEW] turns begin (entries before are [CONTEXT]) |
+| **INPUT** | `allegation_summary` | `str \| None` | Previously extracted allegations for dedup (when allegations exist) |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
 
 | Direction | Field | Type | Description |
