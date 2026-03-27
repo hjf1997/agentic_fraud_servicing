@@ -6,8 +6,8 @@ Provides four subcommands:
   investigate — Run the post-call investigator on an existing case and
                 print the resulting CasePack.
   view-case  — Look up and display a case from the local database.
-  evaluate   — Replay a transcript through the copilot pipeline, run the
-               8-dimension evaluation, and output the EvaluationReport.
+  evaluate   — Load simulation results from DB, run the 8-dimension
+               evaluation, and output the EvaluationReport.
 
 Entry point: ``python -m agentic_fraud_servicing.ui.cli``
 """
@@ -16,10 +16,9 @@ import argparse
 import asyncio
 import os
 import sys
-import time
 
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
-from agentic_fraud_servicing.evaluation.models import EvaluationRun, TurnMetric
+from agentic_fraud_servicing.evaluation.models import EvaluationRun, TurnMetric  # noqa: F401
 from agentic_fraud_servicing.evaluation.report import (
     extract_dimension_score,
     generate_report,
@@ -202,7 +201,9 @@ def _ensure_scripts_importable() -> None:
 
 
 async def cmd_evaluate(args: argparse.Namespace) -> None:
-    """Replay a transcript through the copilot and produce an evaluation report."""
+    """Load simulation results from DB and produce an evaluation report."""
+    import importlib
+    import json
     from datetime import datetime, timezone
 
     # Ensure scripts package is importable (scenario modules live there)
@@ -220,7 +221,8 @@ async def cmd_evaluate(args: argparse.Namespace) -> None:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # Determine transcript path
+    # Determine paths
+    db_dir = args.db_dir or f"data/simulation/{args.scenario}"
     transcript_path = args.transcript
     if transcript_path is None:
         transcript_path = os.path.join("scripts", "transcripts", f"{args.scenario}.json")
@@ -229,55 +231,71 @@ async def cmd_evaluate(args: argparse.Namespace) -> None:
         print(f"Error: transcript file not found: {transcript_path}", file=sys.stderr)
         sys.exit(1)
 
-    # Setup gateway and provider
-    db_dir = args.db_dir or f"data/evaluations/{args.scenario}"
+    # Load simulation data from DB + transcript
     gateway = create_gateway(db_dir)
     provider = create_provider()
 
-    # Phase 1: Seed evidence
-    scenario.seed_evidence_fn(gateway, scenario.case_id)
-    scenario.create_case_fn(gateway, scenario.case_id, scenario.call_id)
+    # Load transcript for turn text
+    events = parse_transcript_json(open(transcript_path).read())
 
-    # Phase 2: Copilot replay
-    with open(transcript_path) as f:
-        transcript_json = f.read()
-    events = parse_transcript_json(transcript_json)
+    # Load traces
+    traces = gateway.trace_store.get_traces_by_case(scenario.case_id)
+    suggestion_by_turn: dict[int, dict] = {}
+    latency_by_turn: dict[int, float] = {}
+    copilot_final_state: dict = {}
 
-    copilot = CopilotOrchestrator(gateway, provider)
-    copilot.case_id = scenario.case_id
-    copilot.call_id = scenario.call_id
+    for trace in traces:
+        if trace["agent_id"] == "copilot_suggestion" and trace["action"] == "suggestion":
+            input_data = json.loads(trace["input_data"])
+            turn_num = input_data.get("turn")
+            if turn_num is not None:
+                suggestion_by_turn[turn_num] = json.loads(trace["output_data"])
+                latency_by_turn[turn_num] = trace["duration_ms"]
+        elif trace["agent_id"] == "copilot_final" and trace["action"] == "final_state":
+            copilot_final_state = json.loads(trace["output_data"])
 
+    # Load allegations from evidence store
+    all_nodes = gateway.evidence_store.get_nodes_by_case(scenario.case_id)
+    allegation_nodes = [
+        n for n in all_nodes
+        if n.get("source_type") == "ALLEGATION" or n.get("node_type") == "ALLEGATION_STATEMENT"
+    ]
+
+    # Build TurnMetrics
     turn_metrics: list[TurnMetric] = []
     total_latency_ms = 0.0
-    prev_allegation_count = 0
-    start_time = datetime.now(timezone.utc).isoformat()
+    allegations_assigned = False
 
     for i, event in enumerate(events, 1):
-        t0 = time.perf_counter()
-        suggestion = await copilot.process_event(event)
-        latency_ms = (time.perf_counter() - t0) * 1000
+        suggestion = suggestion_by_turn.get(i)
+        latency_ms = latency_by_turn.get(i, 0.0)
         total_latency_ms += latency_ms
 
-        current_count = len(copilot.accumulated_allegations)
-        new_allegations = copilot.accumulated_allegations[prev_allegation_count:]
-        prev_allegation_count = current_count
+        hypothesis_scores: dict[str, float] = {}
+        if suggestion is not None:
+            hypothesis_scores = suggestion.get("hypothesis_scores", {})
+        elif copilot_final_state:
+            hypothesis_scores = copilot_final_state.get("hypothesis_scores", {})
 
-        metric = TurnMetric(
+        allegations_extracted: list[dict] = []
+        if suggestion is not None and not allegations_assigned and allegation_nodes:
+            allegations_extracted = [
+                {"detail_type": n.get("detail_type", ""), "description": n.get("text", "")}
+                for n in allegation_nodes
+            ]
+            allegations_assigned = True
+
+        turn_metrics.append(TurnMetric(
             turn_number=i,
             speaker=event.speaker.value,
             text=event.text,
             latency_ms=latency_ms,
-            copilot_suggestion=suggestion.model_dump(mode="json"),
-            hypothesis_scores=dict(copilot.hypothesis_scores),
-            allegations_extracted=[a.model_dump(mode="json") for a in new_allegations],
-        )
-        turn_metrics.append(metric)
+            copilot_suggestion=suggestion,
+            hypothesis_scores=hypothesis_scores,
+            allegations_extracted=allegations_extracted,
+        ))
 
-    end_time = datetime.now(timezone.utc).isoformat()
-
-    # Load ground truth from scenario module
-    import importlib
-
+    # Load ground truth
     ground_truth: dict = {}
     try:
         mod = importlib.import_module(f"scripts.scenario_{args.scenario}")
@@ -285,13 +303,8 @@ async def cmd_evaluate(args: argparse.Namespace) -> None:
     except (ImportError, AttributeError):
         pass
 
-    copilot_final_state = {
-        "hypothesis_scores": copilot.hypothesis_scores,
-        "impersonation_risk": copilot.impersonation_risk,
-        "missing_fields": copilot.missing_fields,
-        "evidence_collected": copilot.evidence_collected,
-        "allegations_extracted": len(copilot.accumulated_allegations),
-    }
+    start_time = traces[0]["timestamp"] if traces else datetime.now(timezone.utc).isoformat()
+    end_time = traces[-1]["timestamp"] if traces else datetime.now(timezone.utc).isoformat()
 
     evaluation_run = EvaluationRun(
         scenario_name=args.scenario,
@@ -304,14 +317,11 @@ async def cmd_evaluate(args: argparse.Namespace) -> None:
         copilot_final_state=copilot_final_state,
     )
 
-    # Phase 3: Generate report
+    # Generate report
     report = await generate_report(evaluation_run, provider)
 
-    # Save evaluation artifacts
     output_dir = f"data/evaluations/{args.scenario}"
     os.makedirs(output_dir, exist_ok=True)
-    with open(os.path.join(output_dir, "evaluation_run.json"), "w") as f:
-        f.write(evaluation_run.model_dump_json(indent=2))
     save_report(report, output_dir)
 
     # Output
@@ -354,10 +364,10 @@ def build_parser() -> argparse.ArgumentParser:
     vc.add_argument("-d", "--db-dir", default="data/cli", help="Directory for SQLite databases")
 
     # evaluate
-    ev = subparsers.add_parser("evaluate", help="Run evaluation pipeline on a scenario")
+    ev = subparsers.add_parser("evaluate", help="Evaluate simulation results for a scenario")
     ev.add_argument("-s", "--scenario", required=True, help="Scenario name to evaluate")
     ev.add_argument("-t", "--transcript", default=None, help="Override transcript file path")
-    ev.add_argument("-d", "--db-dir", default=None, help="Directory for SQLite databases")
+    ev.add_argument("-d", "--db-dir", default=None, help="Simulation data directory with SQLite DBs")
     ev.add_argument(
         "-o", "--output", choices=["json", "text"], default="json", help="Output format"
     )

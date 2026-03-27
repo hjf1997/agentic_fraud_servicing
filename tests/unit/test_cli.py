@@ -438,20 +438,34 @@ class TestCmdEvaluate:
             generated_at="2024-01-01T00:00:00Z",
         )
 
+    def _make_mock_gateway(self):
+        """Create a mock gateway with trace and evidence store responses."""
+        gateway = MagicMock()
+        gateway.trace_store.get_traces_by_case.return_value = [
+            {
+                "trace_id": "t1",
+                "case_id": "case-eval-001",
+                "agent_id": "copilot_final",
+                "action": "final_state",
+                "input_data": "{}",
+                "output_data": json.dumps({
+                    "hypothesis_scores": {"THIRD_PARTY_FRAUD": 0.6},
+                    "impersonation_risk": 0.1,
+                }),
+                "duration_ms": 0.0,
+                "timestamp": "2024-01-01T00:00:00Z",
+                "status": "success",
+            }
+        ]
+        gateway.evidence_store.get_nodes_by_case.return_value = []
+        return gateway
+
     @pytest.mark.asyncio
     async def test_evaluate_json_output(self, tmp_path, capsys) -> None:
         """Evaluate prints EvaluationReport as JSON."""
         scenario = self._make_mock_scenario()
         report = self._make_mock_report()
-        suggestion = _make_suggestion()
-
-        mock_copilot = MagicMock()
-        mock_copilot.process_event = AsyncMock(return_value=suggestion)
-        mock_copilot.hypothesis_scores = {"THIRD_PARTY_FRAUD": 0.6}
-        mock_copilot.impersonation_risk = 0.1
-        mock_copilot.missing_fields = []
-        mock_copilot.evidence_collected = []
-        mock_copilot.accumulated_allegations = []
+        mock_gateway = self._make_mock_gateway()
 
         # Create a transcript file
         transcript_file = tmp_path / "transcript.json"
@@ -478,9 +492,8 @@ class TestCmdEvaluate:
 
         with (
             patch("agentic_fraud_servicing.ui.cli._ensure_scripts_importable"),
-            patch("agentic_fraud_servicing.ui.cli.create_gateway"),
+            patch("agentic_fraud_servicing.ui.cli.create_gateway", return_value=mock_gateway),
             patch("agentic_fraud_servicing.ui.cli.create_provider"),
-            patch("agentic_fraud_servicing.ui.cli.CopilotOrchestrator", return_value=mock_copilot),
             patch(
                 "agentic_fraud_servicing.ui.cli.generate_report",
                 new_callable=AsyncMock,
@@ -515,15 +528,7 @@ class TestCmdEvaluate:
         """Evaluate prints text summary when --output text is used."""
         scenario = self._make_mock_scenario()
         report = self._make_mock_report()
-        suggestion = _make_suggestion()
-
-        mock_copilot = MagicMock()
-        mock_copilot.process_event = AsyncMock(return_value=suggestion)
-        mock_copilot.hypothesis_scores = {"THIRD_PARTY_FRAUD": 0.6}
-        mock_copilot.impersonation_risk = 0.1
-        mock_copilot.missing_fields = []
-        mock_copilot.evidence_collected = []
-        mock_copilot.accumulated_allegations = []
+        mock_gateway = self._make_mock_gateway()
 
         transcript_file = tmp_path / "transcript.json"
         transcript_file.write_text(
@@ -549,9 +554,8 @@ class TestCmdEvaluate:
 
         with (
             patch("agentic_fraud_servicing.ui.cli._ensure_scripts_importable"),
-            patch("agentic_fraud_servicing.ui.cli.create_gateway"),
+            patch("agentic_fraud_servicing.ui.cli.create_gateway", return_value=mock_gateway),
             patch("agentic_fraud_servicing.ui.cli.create_provider"),
-            patch("agentic_fraud_servicing.ui.cli.CopilotOrchestrator", return_value=mock_copilot),
             patch(
                 "agentic_fraud_servicing.ui.cli.generate_report",
                 new_callable=AsyncMock,

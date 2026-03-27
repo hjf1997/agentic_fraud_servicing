@@ -1,15 +1,16 @@
-"""Enterprise evaluation runner: replay transcripts through CopilotOrchestrator.
+"""Enterprise evaluation runner: evaluate simulation results from DB.
 
-Replays pre-existing transcript JSON files through the copilot pipeline with
-real Bedrock LLM, capturing per-turn latency and structured evaluation data.
-No investigator phase — copilot-only evaluation.
+Loads copilot assessment data from the simulation's SQLite stores (traces.db,
+evidence.db) and transcript file, then runs the 8-dimension quality evaluators.
+No copilot replay — evaluation reads the simulation's actual results.
 
 Usage:
     python scripts/run_evaluation.py --scenario scam_techvault
-    python scripts/run_evaluation.py --scenario scam_techvault --transcript path/to/transcript.json
+    python scripts/run_evaluation.py --scenario scam_techvault --data-dir data/simulation/scam_techvault
     python scripts/run_evaluation.py --list
 
-Requires valid AWS credentials in .env (LLM_PROVIDER=bedrock).
+Requires valid AWS credentials in .env (LLM_PROVIDER=bedrock) for LLM-powered
+evaluators.
 """
 
 import argparse
@@ -21,7 +22,6 @@ import os
 import re
 import sys
 import time
-import uuid
 from datetime import datetime, timezone
 
 # Ensure project root is on sys.path so 'scripts' package is importable
@@ -40,14 +40,12 @@ from scripts.simulation_data import discover_scenarios  # noqa: E402
 discover_scenarios()
 
 from agentic_fraud_servicing.config import get_settings  # noqa: E402
-from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator  # noqa: E402
 from agentic_fraud_servicing.evaluation.models import EvaluationRun, TurnMetric  # noqa: E402
 from agentic_fraud_servicing.evaluation.report import (  # noqa: E402
     extract_dimension_score,
     generate_report,
     save_report,
 )
-from agentic_fraud_servicing.ingestion.redaction import redact_all  # noqa: E402
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_json  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
 from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
@@ -104,45 +102,113 @@ def _load_ground_truth(scenario_name: str) -> dict:
         return {}
 
 
-def _persist_trace(
-    gateway,
+def _build_evaluation_run_from_db(
+    scenario_name: str,
+    data_dir: str,
+    transcript_path: str,
     case_id: str,
-    agent_id: str,
-    action: str,
-    input_data: str,
-    output_data: str,
-    duration_ms: float = 0.0,
-) -> None:
-    """Persist a data record to the trace store for dashboard consumption."""
-    # Redact PII in conversation turn text before persisting
-    if action == "conversation_turn":
-        try:
-            data = json.loads(output_data)
-            if "text" in data:
-                data["text"], _ = redact_all(data["text"])
-                output_data = json.dumps(data)
-        except (json.JSONDecodeError, TypeError):
-            pass
+) -> EvaluationRun:
+    """Reconstruct an EvaluationRun from simulation DB + transcript file.
 
-    gateway.trace_store.log_invocation(
-        trace_id=str(uuid.uuid4()),
-        case_id=case_id,
-        agent_id=agent_id,
-        action=action,
-        input_data=input_data,
-        output_data=output_data,
-        duration_ms=duration_ms,
-        timestamp=datetime.now(timezone.utc),
-        status="success",
+    Reads:
+    - traces.db: copilot_suggestion records (hypothesis scores, risk flags,
+      suggested questions, latency) and copilot_final state
+    - evidence.db: AllegationStatement nodes for extracted allegations
+    - transcript file: original turn text (unredacted)
+    - scenario module: ground truth
+
+    Returns:
+        EvaluationRun ready for the 8-dimension evaluators.
+    """
+    gateway = create_gateway(data_dir)
+
+    # 1. Load transcript for turn structure and text
+    with open(transcript_path) as f:
+        transcript_json = f.read()
+    events = parse_transcript_json(transcript_json)
+
+    # 2. Load traces — build lookup of suggestion data by turn number
+    traces = gateway.trace_store.get_traces_by_case(case_id)
+
+    suggestion_by_turn: dict[int, dict] = {}
+    latency_by_turn: dict[int, float] = {}
+    copilot_final_state: dict = {}
+
+    for trace in traces:
+        if trace["agent_id"] == "copilot_suggestion" and trace["action"] == "suggestion":
+            input_data = json.loads(trace["input_data"])
+            turn_num = input_data.get("turn")
+            if turn_num is not None:
+                suggestion_by_turn[turn_num] = json.loads(trace["output_data"])
+                latency_by_turn[turn_num] = trace["duration_ms"]
+        elif trace["agent_id"] == "copilot_final" and trace["action"] == "final_state":
+            copilot_final_state = json.loads(trace["output_data"])
+
+    # 3. Load allegations from evidence store
+    all_nodes = gateway.evidence_store.get_nodes_by_case(case_id)
+    allegation_nodes = [
+        n for n in all_nodes
+        if n.get("source_type") == "ALLEGATION" or n.get("node_type") == "ALLEGATION_STATEMENT"
+    ]
+
+    # 4. Build TurnMetrics from transcript + trace data
+    turn_metrics: list[TurnMetric] = []
+    total_latency_ms = 0.0
+
+    # Track which assessed turn gets the allegations (put them on the first assessed turn
+    # that has a suggestion, since evaluators just collect unique detail_types across all turns)
+    allegations_assigned = False
+
+    for i, event in enumerate(events, 1):
+        suggestion = suggestion_by_turn.get(i)
+        latency_ms = latency_by_turn.get(i, 0.0)
+        total_latency_ms += latency_ms
+
+        # Extract hypothesis scores from suggestion or use empty
+        hypothesis_scores: dict[str, float] = {}
+        if suggestion is not None:
+            hypothesis_scores = suggestion.get("hypothesis_scores", {})
+        elif copilot_final_state:
+            # Non-assessed turns: carry forward from final state (approximate)
+            hypothesis_scores = copilot_final_state.get("hypothesis_scores", {})
+
+        # Assign allegations to first assessed turn
+        allegations_extracted: list[dict] = []
+        if suggestion is not None and not allegations_assigned and allegation_nodes:
+            allegations_extracted = [
+                {"detail_type": n.get("detail_type", ""), "description": n.get("text", "")}
+                for n in allegation_nodes
+            ]
+            allegations_assigned = True
+
+        metric = TurnMetric(
+            turn_number=i,
+            speaker=event.speaker.value,
+            text=event.text,
+            latency_ms=latency_ms,
+            copilot_suggestion=suggestion,
+            hypothesis_scores=hypothesis_scores,
+            allegations_extracted=allegations_extracted,
+        )
+        turn_metrics.append(metric)
+
+    # 5. Build EvaluationRun
+    ground_truth = _load_ground_truth(scenario_name)
+
+    # Use trace timestamps for start/end if available
+    start_time = traces[0]["timestamp"] if traces else datetime.now(timezone.utc).isoformat()
+    end_time = traces[-1]["timestamp"] if traces else datetime.now(timezone.utc).isoformat()
+
+    return EvaluationRun(
+        scenario_name=scenario_name,
+        ground_truth=ground_truth,
+        turn_metrics=turn_metrics,
+        total_turns=len(turn_metrics),
+        total_latency_ms=total_latency_ms,
+        start_time=start_time,
+        end_time=end_time,
+        copilot_final_state=copilot_final_state,
     )
-
-
-def _top_hypothesis(scores: dict[str, float]) -> str:
-    """Return the top-scoring hypothesis category and its score."""
-    if not scores:
-        return "N/A"
-    top_key = max(scores, key=scores.get)
-    return f"{top_key}={scores[top_key]:.2f}"
 
 
 # ---------------------------------------------------------------------------
@@ -150,10 +216,9 @@ def _top_hypothesis(scores: dict[str, float]) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
-    """Replay a transcript through the copilot and capture evaluation metrics."""
+async def run_evaluation(scenario_name: str, data_dir: str, transcript_path: str) -> None:
+    """Load simulation results from DB and run 8-dimension quality evaluators."""
     wall_start = time.perf_counter()
-    start_time = datetime.now(timezone.utc).isoformat()
 
     scenario = get_scenario(scenario_name)
     ground_truth = _load_ground_truth(scenario_name)
@@ -161,16 +226,17 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
     # -- Banner --
     print(f"\n{BOLD}{CYAN}{'=' * 60}{RESET}")
     print(f"{BOLD}{CYAN}  AMEX Fraud Servicing — Evaluation Runner{RESET}")
-    print(f"{BOLD}{CYAN}  (Copilot Replay Mode){RESET}")
+    print(f"{BOLD}{CYAN}  (Evaluate from Simulation DB){RESET}")
     print(f"{BOLD}{CYAN}{'=' * 60}{RESET}")
     print(f"\n{BOLD}Scenario: {scenario.title}{RESET}")
     print(f"{DIM}{scenario.description}{RESET}")
+    print(f"{DIM}Data dir: {data_dir}{RESET}")
     print(f"{DIM}Transcript: {transcript_path}{RESET}")
     if ground_truth:
         gt_cat = ground_truth.get("investigation_category", "?")
         print(f"{DIM}Ground truth category: {gt_cat}{RESET}")
 
-    # -- Setup --
+    # -- Setup model provider (for LLM-powered evaluators) --
     try:
         settings = get_settings()
     except Exception as exc:
@@ -185,151 +251,32 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
         print(f"{RED}Check AWS credentials and Bedrock model configuration.{RESET}")
         sys.exit(1)
 
-    db_dir = f"data/evaluations/{scenario_name}"
-    gateway = create_gateway(db_dir)
-    print(f"{DIM}Gateway created with SQLite stores in {db_dir}/{RESET}")
-
     # ===================================================================
-    # Phase 1: Seed Evidence
+    # Phase 1: Load simulation results from DB
     # ===================================================================
     print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
-    print(f"{BOLD}{GREEN}Phase 1: Seeding Evidence Store{RESET}")
+    print(f"{BOLD}{GREEN}Phase 1: Loading Simulation Results{RESET}")
     print(f"{BOLD}{GREEN}{'=' * 60}{RESET}")
 
-    scenario.seed_evidence_fn(gateway, scenario.case_id)
-    case = scenario.create_case_fn(gateway, scenario.case_id, scenario.call_id)
-
-    nodes = gateway.evidence_store.get_nodes_by_case(scenario.case_id)
-    edges = gateway.evidence_store.get_edges_by_case(scenario.case_id)
-    print(f"  Seeded {len(nodes)} evidence nodes, {len(edges)} edges")
-    print(
-        f"  Case {scenario.case_id}: status={case.status.value}, "
-        f"allegation={case.allegation_type.value}"
+    evaluation_run = _build_evaluation_run_from_db(
+        scenario_name, data_dir, transcript_path, scenario.case_id,
     )
 
+    assessed_count = sum(
+        1 for m in evaluation_run.turn_metrics if m.copilot_suggestion is not None
+    )
+    print(f"  Total turns: {evaluation_run.total_turns}")
+    print(f"  Assessed turns: {assessed_count}")
+    print(f"  Total latency: {evaluation_run.total_latency_ms:.0f}ms")
+
     # ===================================================================
-    # Phase 2: Copilot Replay
+    # Phase 2: Generate Evaluation Report (8-dimension quality assessment)
     # ===================================================================
     print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
-    print(f"{BOLD}{GREEN}Phase 2: Copilot — Transcript Replay{RESET}")
+    print(f"{BOLD}{GREEN}Phase 2: Generating Evaluation Report{RESET}")
     print(f"{BOLD}{GREEN}{'=' * 60}{RESET}")
 
-    # Load transcript
-    with open(transcript_path) as f:
-        transcript_json = f.read()
-    events = parse_transcript_json(transcript_json)
-    print(f"  Loaded {len(events)} transcript events")
-
-    copilot = CopilotOrchestrator(gateway, model_provider, assess_interval=1)
-    copilot.case_id = scenario.case_id
-    copilot.call_id = scenario.call_id
-
-    turn_metrics: list[TurnMetric] = []
-    total_latency_ms = 0.0
-    prev_allegation_count = 0
-
-    total_events = len(events)
-    for i, event in enumerate(events, 1):
-        t0 = time.perf_counter()
-        suggestion = await copilot.process_event(event, is_last=(i == total_events))
-        latency_ms = (time.perf_counter() - t0) * 1000
-        total_latency_ms += latency_ms
-
-        # Capture only new allegations from this turn
-        current_count = len(copilot.accumulated_allegations)
-        new_allegations = copilot.accumulated_allegations[prev_allegation_count:]
-        prev_allegation_count = current_count
-
-        metric = TurnMetric(
-            turn_number=i,
-            speaker=event.speaker.value,
-            text=event.text,
-            latency_ms=latency_ms,
-            copilot_suggestion=suggestion.model_dump(mode="json") if suggestion else None,
-            hypothesis_scores=dict(copilot.hypothesis_scores),
-            allegations_extracted=[a.model_dump(mode="json") for a in new_allegations],
-        )
-        turn_metrics.append(metric)
-
-        # Print progress
-        top = _top_hypothesis(copilot.hypothesis_scores)
-        color = CYAN if event.speaker.value == "CCP" else YELLOW
-        if event.speaker.value == "SYSTEM":
-            color = DIM
-        assessed = "" if suggestion is None else " [assessed]"
-        print(
-            f"  {BOLD}[Turn {i}/{len(events)}]{RESET} "
-            f"{color}{event.speaker.value}{RESET} "
-            f"| {latency_ms:7.0f}ms "
-            f"| top: {top}{assessed}"
-        )
-
-        # Persist transcript turn
-        _persist_trace(
-            gateway,
-            scenario.case_id,
-            "transcript",
-            "conversation_turn",
-            json.dumps({"turn": i, "speaker": event.speaker.value}),
-            json.dumps({"turn": i, "speaker": event.speaker.value, "text": event.text}),
-            duration_ms=latency_ms,
-        )
-        if suggestion is not None:
-            _persist_trace(
-                gateway,
-                scenario.case_id,
-                "copilot_suggestion",
-                "suggestion",
-                json.dumps({"turn": i}),
-                suggestion.model_dump_json(),
-                duration_ms=latency_ms,
-            )
-
-    # -- Final copilot state --
-    copilot_final_state = {
-        "hypothesis_scores": copilot.hypothesis_scores,
-        "impersonation_risk": copilot.impersonation_risk,
-        "missing_fields": copilot.missing_fields,
-        "evidence_collected": copilot.evidence_collected,
-        "allegations_extracted": len(copilot.accumulated_allegations),
-    }
-
-    _persist_trace(
-        gateway,
-        scenario.case_id,
-        "copilot_final",
-        "final_state",
-        "{}",
-        json.dumps(copilot_final_state),
-    )
-
-    # -- Build EvaluationRun --
-    end_time = datetime.now(timezone.utc).isoformat()
-    evaluation_run = EvaluationRun(
-        scenario_name=scenario_name,
-        ground_truth=ground_truth,
-        turn_metrics=turn_metrics,
-        total_turns=len(turn_metrics),
-        total_latency_ms=total_latency_ms,
-        start_time=start_time,
-        end_time=end_time,
-        copilot_final_state=copilot_final_state,
-    )
-
-    # Save EvaluationRun as JSON
     output_dir = f"data/evaluations/{scenario_name}"
-    os.makedirs(output_dir, exist_ok=True)
-    eval_run_path = os.path.join(output_dir, "evaluation_run.json")
-    with open(eval_run_path, "w") as f:
-        f.write(evaluation_run.model_dump_json(indent=2))
-
-    # ===================================================================
-    # Phase 3: Generate Evaluation Report (8-dimension quality assessment)
-    # ===================================================================
-    print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
-    print(f"{BOLD}{GREEN}Phase 3: Generating Evaluation Report{RESET}")
-    print(f"{BOLD}{GREEN}{'=' * 60}{RESET}")
-
     report = None
     report_path = None
     try:
@@ -338,17 +285,21 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
         print(f"  Report saved to: {report_path}")
     except Exception as exc:
         print(f"  {YELLOW}Warning: Report generation failed: {exc}{RESET}")
-        print(f"  {YELLOW}Evaluation run data was saved — report can be regenerated.{RESET}")
 
     # -- Summary --
     print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
     print(f"{BOLD}{GREEN}Evaluation Summary{RESET}")
     print(f"{BOLD}{GREEN}{'=' * 60}{RESET}")
-    print(f"  Total turns: {len(turn_metrics)}")
-    print(f"  Total latency: {total_latency_ms:.0f}ms")
-    print(f"  Avg latency per turn: {total_latency_ms / max(len(turn_metrics), 1):.0f}ms")
-    print(f"  Final hypothesis scores: {json.dumps(copilot.hypothesis_scores, indent=2)}")
-    print(f"  Allegations extracted: {len(copilot.accumulated_allegations)}")
+    print(f"  Total turns: {evaluation_run.total_turns}")
+    print(f"  Assessed turns: {assessed_count}")
+    print(f"  Total latency: {evaluation_run.total_latency_ms:.0f}ms")
+    avg_latency = evaluation_run.total_latency_ms / max(assessed_count, 1)
+    print(f"  Avg latency per assessed turn: {avg_latency:.0f}ms")
+
+    final_scores = evaluation_run.copilot_final_state.get("hypothesis_scores", {})
+    if final_scores:
+        print(f"  Final hypothesis scores: {json.dumps(final_scores, indent=2)}")
+
     if ground_truth:
         print(f"  Ground truth: {json.dumps(ground_truth, indent=2)}")
     else:
@@ -381,7 +332,6 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
     minutes, seconds = divmod(elapsed, 60)
     print(f"\n{BOLD}{GREEN}Evaluation complete.{RESET}")
     print(f"  Elapsed time: {int(minutes)}m {seconds:.1f}s")
-    print(f"  Results saved to: {eval_run_path}")
     if report_path:
         print(f"  Report saved to: {report_path}")
 
@@ -389,7 +339,7 @@ async def run_evaluation(scenario_name: str, transcript_path: str) -> None:
 def main() -> None:
     """Parse CLI args and run the evaluation."""
     parser = argparse.ArgumentParser(
-        description="AMEX Fraud Servicing — Evaluation Runner (Copilot Replay)"
+        description="AMEX Fraud Servicing — Evaluation Runner (from Simulation DB)"
     )
     parser.add_argument(
         "--scenario",
@@ -397,9 +347,16 @@ def main() -> None:
         help=f"Scenario to evaluate. Available: {', '.join(list_scenarios())}",
     )
     parser.add_argument(
+        "--data-dir",
+        "-d",
+        help="Path to simulation data directory containing SQLite DBs "
+        "(default: data/simulation/{scenario})",
+    )
+    parser.add_argument(
         "--transcript",
         "-t",
-        help="Override transcript file path (default: scripts/transcripts/{scenario}.json)",
+        help="Path to transcript file for turn text "
+        "(default: scripts/transcripts/{scenario}.json)",
     )
     parser.add_argument(
         "--list",
@@ -412,29 +369,30 @@ def main() -> None:
         print("Available scenarios:")
         for name in list_scenarios():
             s = get_scenario(name)
-            transcript = os.path.join("scripts", "transcripts", f"{name}.json")
-            exists = "yes" if os.path.isfile(transcript) else "no"
-            print(f"  {name:30s} — {s.title}  (transcript: {exists})")
+            sim_dir = f"data/simulation/{name}"
+            has_db = os.path.isdir(sim_dir)
+            print(f"  {name:30s} — {s.title}  (simulation data: {'yes' if has_db else 'no'})")
         return
 
     if not args.scenario:
         parser.error("--scenario is required (or use --list to see available scenarios)")
 
     scenario_name = args.scenario
-    # Validate scenario exists
-    get_scenario(scenario_name)
+    get_scenario(scenario_name)  # Validate scenario exists
+
+    # Determine data directory (simulation output)
+    data_dir = args.data_dir or f"data/simulation/{scenario_name}"
+    if not os.path.isdir(data_dir):
+        print(f"{RED}Error: Simulation data directory not found: {data_dir}{RESET}")
+        print(f"{YELLOW}Run the simulation first: python scripts/run_simulation.py -s {scenario_name}{RESET}")
+        sys.exit(1)
 
     # Determine transcript path
-    if args.transcript:
-        transcript_path = args.transcript
-    else:
-        transcript_path = os.path.join("scripts", "transcripts", f"{scenario_name}.json")
-
+    transcript_path = args.transcript or os.path.join(
+        "scripts", "transcripts", f"{scenario_name}.json"
+    )
     if not os.path.isfile(transcript_path):
         print(f"{RED}Error: Transcript file not found: {transcript_path}{RESET}")
-        print(
-            f"{YELLOW}Create a transcript JSON file or use --transcript to specify a path.{RESET}"
-        )
         sys.exit(1)
 
     # Save output to scenario-specific file
@@ -446,7 +404,7 @@ def main() -> None:
         original_stdout = sys.stdout
         sys.stdout = TeeWriter(original_stdout, log_file)
         try:
-            asyncio.run(run_evaluation(scenario_name, transcript_path))
+            asyncio.run(run_evaluation(scenario_name, data_dir, transcript_path))
         finally:
             sys.stdout = original_stdout
 
