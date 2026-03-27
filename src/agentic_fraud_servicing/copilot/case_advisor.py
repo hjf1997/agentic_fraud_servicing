@@ -22,10 +22,10 @@ from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERE
 
 
 class CaseTypeAssessment(BaseModel):
-    """Assessment for a single case type (fraud, dispute, or scam)."""
+    """Assessment for a single case type (fraud or dispute)."""
 
     case_type: str
-    """'fraud', 'dispute', or 'scam'."""
+    """'fraud' or 'dispute'."""
 
     eligibility: str
     """'eligible', 'blocked', or 'incomplete'."""
@@ -134,7 +134,7 @@ case type. Read them carefully and cite specific passages in your determinations
 Given the current case state (allegations, evidence, hypothesis scores, and
 conversation so far), evaluate eligibility for each case type:
 
-### For each case type (fraud, dispute, scam):
+### For each case type (fraud, dispute):
 
 1. **Determine eligibility status**:
    - `eligible` — All required criteria from the policy checklist are met and
@@ -179,7 +179,7 @@ gathering next.
 ## Output Format
 
 Return structured output with:
-- assessments: list of CaseTypeAssessment (one per case type: fraud, dispute, scam)
+- assessments: list of CaseTypeAssessment (one per case type: fraud, dispute)
 - general_warnings: list of applicable cross-cutting warnings
 - next_info_needed: list of information items the CCP should gather
 - summary: 2-4 sentence eligibility summary

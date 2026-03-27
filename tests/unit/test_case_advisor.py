@@ -53,7 +53,7 @@ class TestCaseTypeAssessment:
 
     def test_json_round_trip(self) -> None:
         a = CaseTypeAssessment(
-            case_type="scam",
+            case_type="fraud",
             eligibility="eligible",
             met_criteria=["identity verified"],
         )
