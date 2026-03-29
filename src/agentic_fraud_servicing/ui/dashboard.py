@@ -325,8 +325,8 @@ def _build_eligibility_chart(suggestions: list[dict]) -> plt.Figure | None:
         turns.append(turn)
         turn_map: dict[str, str] = {}
         for item in ce:
-            ct = item.get("case_type", "")
-            st = item.get("eligibility", "")
+            ct = item.get("case_type", "").lower()
+            st = item.get("eligibility", "").lower()
             if ct and st:
                 turn_map[ct] = st
                 case_types_set.add(ct)
