@@ -75,16 +75,41 @@ characterization?
 ### 3. Category & Action Agreement
 Does the copilot's investigation category (highest hypothesis) and case
 eligibility match the CCP's conclusion and recommended actions?
-- **1.0**: Category and actions fully agree with CCP's assessment.
-- **0.5**: Category matches but actions differ, or vice versa.
-- **0.0**: Both category and actions disagree with CCP notes.
+
+This dimension requires **reasoning trace comparison**, not just outcome matching:
+
+**When copilot and CCP agree on the outcome:**
+- Verify the copilot's reasoning is coherent with the CCP's reasoning. A correct
+  outcome reached through wrong reasoning is unreliable and should score lower.
+- **1.0**: Category and actions agree AND the copilot's reasoning trace (hypothesis
+  scores, evidence cited, risk flags) is coherent with the CCP's rationale.
+- **0.7**: Category and actions agree but the copilot's reasoning diverges from
+  the CCP's — the right answer was reached for partially wrong reasons (e.g.,
+  copilot flagged correct category but based on different evidence than CCP cited).
+- **0.5**: Category matches but actions differ, or the copilot's reasoning is
+  incoherent even though the outcome happens to be correct.
+
+**When copilot and CCP disagree on the outcome:**
+- Compare both reasoning traces to identify WHERE they diverge and WHY.
+- **0.3**: Category or actions partially overlap — copilot's reasoning shows
+  some valid signals but missed key evidence that led CCP to a different conclusion.
+- **0.0**: Complete disagreement — copilot's reasoning contradicts the CCP's
+  assessment with no valid supporting evidence.
 
 ## Rules
 1. Be lenient on wording — focus on semantic equivalence, not exact phrasing.
 2. The CCP notes may use informal language or abbreviations.
 3. The copilot output uses structured fields — compare substance, not format.
 4. Set `overall` to the average of the three sub-scores.
-5. Provide a 2-4 sentence explanation covering all three dimensions.
+5. Provide a comprehensive explanation (4-8 sentences) that covers:
+   - Facts coverage: which key facts were captured or missed.
+   - Allegation alignment: how well the copilot understood the customer's claims.
+   - Reasoning coherence: whether the copilot's reasoning trace (hypothesis
+     scores, evidence, risk flags) is consistent with the CCP's reasoning —
+     especially flag cases where the correct outcome was reached through
+     incorrect or incomplete reasoning.
+   - When outcomes disagree: explain specifically what evidence or reasoning
+     the copilot missed or misinterpreted that led to the wrong conclusion.
 """
 
 _alignment_agent = Agent(
