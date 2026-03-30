@@ -98,6 +98,46 @@ def get_langfuse():
         return None
 
 
+def tag_firewall_block(agent_name: str, error_message: str) -> None:
+    """Tag the current LangFuse trace when an agent is blocked by the enterprise firewall.
+
+    Creates a highly visible score event (firewall_block=1) with the agent name
+    and error detail so blocked calls surface in LangFuse search and dashboards.
+    """
+    lf = get_langfuse()
+    if lf is None:
+        return
+    try:
+        lf.score(
+            name="firewall_block",
+            value=1,
+            comment=f"[{agent_name}] {error_message}",
+        )
+    except Exception:
+        pass
+
+
+def is_firewall_block(exc: BaseException) -> bool:
+    """Detect whether an exception chain contains a 403 firewall policy block.
+
+    Walks the exception __cause__ chain looking for openai.PermissionDeniedError
+    (status_code=403) or the enterprise firewall rejection message.
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        msg = str(current).lower()
+        if "403" in msg and "policy" in msg:
+            return True
+        # Check for openai SDK's PermissionDeniedError
+        type_name = type(current).__name__
+        if type_name == "PermissionDeniedError":
+            return True
+        if hasattr(current, "status_code") and getattr(current, "status_code") == 403:
+            return True
+        current = getattr(current, "__cause__", None)
+    return False
+
+
 def shutdown_langfuse() -> None:
     """Flush pending traces and uninstrument. Call on app shutdown."""
     global _instrumentor, _initialized

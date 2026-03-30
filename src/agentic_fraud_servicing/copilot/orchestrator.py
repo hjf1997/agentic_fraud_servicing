@@ -17,7 +17,11 @@ from datetime import datetime, timezone
 from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
-from agentic_fraud_servicing.copilot.langfuse_tracing import get_langfuse
+from agentic_fraud_servicing.copilot.langfuse_tracing import (
+    get_langfuse,
+    is_firewall_block,
+    tag_firewall_block,
+)
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_hypothesis
 from agentic_fraud_servicing.copilot.question_planner import QuestionPlan, run_question_planner
@@ -616,7 +620,11 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "retrieval", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
-            risk_flags.append(f"Retrieval failed: {exc}")
+            if is_firewall_block(exc):
+                tag_firewall_block("retrieval", str(exc))
+                risk_flags.append("FIREWALL BLOCKED: retrieval agent prompt rejected by policy")
+            else:
+                risk_flags.append(f"Retrieval failed: {exc}")
             return None
 
     async def _run_triage_safe(
@@ -641,7 +649,11 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "triage", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
-            risk_flags.append(f"Triage failed: {exc}")
+            if is_firewall_block(exc):
+                tag_firewall_block("triage", str(exc))
+                risk_flags.append("FIREWALL BLOCKED: triage agent prompt rejected by policy")
+            else:
+                risk_flags.append(f"Triage failed: {exc}")
             return None
 
     async def _run_auth_safe(
@@ -666,7 +678,11 @@ class CopilotOrchestrator:
             return result
         except Exception as exc:
             self._log_agent_trace("auth", "run", (time.perf_counter() - t0) * 1000, status="error")
-            risk_flags.append(f"Auth assessment failed: {exc}")
+            if is_firewall_block(exc):
+                tag_firewall_block("auth", str(exc))
+                risk_flags.append("FIREWALL BLOCKED: auth agent prompt rejected by policy")
+            else:
+                risk_flags.append(f"Auth assessment failed: {exc}")
             return None
 
     async def _run_question_planner_safe(
@@ -706,7 +722,11 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "question_planner", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
-            risk_flags.append(f"Question planner failed: {exc}")
+            if is_firewall_block(exc):
+                tag_firewall_block("question_planner", str(exc))
+                risk_flags.append("FIREWALL BLOCKED: question_planner agent prompt rejected by policy")
+            else:
+                risk_flags.append(f"Question planner failed: {exc}")
             return None
 
     async def _run_hypothesis_safe(
@@ -734,7 +754,11 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "hypothesis", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
-            risk_flags.append(f"Hypothesis scoring failed: {exc}")
+            if is_firewall_block(exc):
+                tag_firewall_block("hypothesis", str(exc))
+                risk_flags.append("FIREWALL BLOCKED: hypothesis agent prompt rejected by policy")
+            else:
+                risk_flags.append(f"Hypothesis scoring failed: {exc}")
             return None
 
     async def _run_case_advisor_safe(self, risk_flags: list[str]) -> CaseAdvisory | None:
@@ -754,5 +778,9 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "case_advisor", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
-            risk_flags.append(f"Case advisor failed: {exc}")
+            if is_firewall_block(exc):
+                tag_firewall_block("case_advisor", str(exc))
+                risk_flags.append("FIREWALL BLOCKED: case_advisor agent prompt rejected by policy")
+            else:
+                risk_flags.append(f"Case advisor failed: {exc}")
             return None
