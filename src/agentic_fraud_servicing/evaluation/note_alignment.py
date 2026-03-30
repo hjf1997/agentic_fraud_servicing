@@ -110,7 +110,7 @@ async def evaluate_note_alignment(
     Returns:
         NoteAlignmentResult with per-dimension scores and overall score.
     """
-    ccp_notes = redact_all(run.ground_truth.get("ccp_notes", ""))
+    ccp_notes, _ = redact_all(run.ground_truth.get("ccp_notes", ""))
     if not ccp_notes:
         return NoteAlignmentResult(
             facts_coverage_score=0.0,
