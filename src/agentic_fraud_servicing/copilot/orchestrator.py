@@ -18,8 +18,10 @@ from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
 from agentic_fraud_servicing.copilot.langfuse_tracing import (
+    extract_http_error,
     get_langfuse,
     is_firewall_block,
+    tag_agent_error,
     tag_firewall_block,
 )
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
@@ -563,6 +565,14 @@ class CopilotOrchestrator:
         parts.append("Never ask for full PAN or CVV.")
         return " ".join(parts)
 
+    @staticmethod
+    def _format_error(agent_name: str, exc: BaseException) -> str:
+        """Format an agent error with HTTP status code for terminal output."""
+        status_code, error_body = extract_http_error(exc)
+        if status_code is not None:
+            return f"{agent_name} failed (HTTP {status_code}): {error_body[:200]}"
+        return f"{agent_name} failed: {exc}"
+
     def _log_agent_trace(
         self, agent_name: str, action: str, duration_ms: float, status: str = "success"
     ) -> None:
@@ -620,11 +630,12 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "retrieval", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
+            tag_agent_error("retrieval", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("retrieval", str(exc))
                 risk_flags.append("FIREWALL BLOCKED: retrieval agent prompt rejected by policy")
             else:
-                risk_flags.append(f"Retrieval failed: {exc}")
+                risk_flags.append(self._format_error("Retrieval", exc))
             return None
 
     async def _run_triage_safe(
@@ -649,11 +660,12 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "triage", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
+            tag_agent_error("triage", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("triage", str(exc))
                 risk_flags.append("FIREWALL BLOCKED: triage agent prompt rejected by policy")
             else:
-                risk_flags.append(f"Triage failed: {exc}")
+                risk_flags.append(self._format_error("Triage", exc))
             return None
 
     async def _run_auth_safe(
@@ -678,11 +690,12 @@ class CopilotOrchestrator:
             return result
         except Exception as exc:
             self._log_agent_trace("auth", "run", (time.perf_counter() - t0) * 1000, status="error")
+            tag_agent_error("auth", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("auth", str(exc))
                 risk_flags.append("FIREWALL BLOCKED: auth agent prompt rejected by policy")
             else:
-                risk_flags.append(f"Auth assessment failed: {exc}")
+                risk_flags.append(self._format_error("Auth", exc))
             return None
 
     async def _run_question_planner_safe(
@@ -722,11 +735,12 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "question_planner", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
+            tag_agent_error("question_planner", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("question_planner", str(exc))
                 risk_flags.append("FIREWALL BLOCKED: question_planner agent prompt rejected by policy")
             else:
-                risk_flags.append(f"Question planner failed: {exc}")
+                risk_flags.append(self._format_error("Question planner", exc))
             return None
 
     async def _run_hypothesis_safe(
@@ -754,11 +768,12 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "hypothesis", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
+            tag_agent_error("hypothesis", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("hypothesis", str(exc))
                 risk_flags.append("FIREWALL BLOCKED: hypothesis agent prompt rejected by policy")
             else:
-                risk_flags.append(f"Hypothesis scoring failed: {exc}")
+                risk_flags.append(self._format_error("Hypothesis", exc))
             return None
 
     async def _run_case_advisor_safe(self, risk_flags: list[str]) -> CaseAdvisory | None:
@@ -778,9 +793,10 @@ class CopilotOrchestrator:
             self._log_agent_trace(
                 "case_advisor", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
+            tag_agent_error("case_advisor", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("case_advisor", str(exc))
                 risk_flags.append("FIREWALL BLOCKED: case_advisor agent prompt rejected by policy")
             else:
-                risk_flags.append(f"Case advisor failed: {exc}")
+                risk_flags.append(self._format_error("Case advisor", exc))
             return None

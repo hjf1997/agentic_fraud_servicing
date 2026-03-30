@@ -130,6 +130,60 @@ def tag_firewall_block(agent_name: str, error_message: str) -> None:
         pass
 
 
+def tag_agent_error(agent_name: str, exc: BaseException) -> None:
+    """Enrich the current LangFuse observation with HTTP error details.
+
+    Walks the exception chain to extract HTTP status codes and body text,
+    then updates the current observation's metadata so the error is visible
+    in the LangFuse traces list (instead of a generic "Error getting responses").
+    """
+    lf = get_langfuse()
+    if lf is None:
+        return
+    try:
+        status_code, error_body = extract_http_error(exc)
+        obs = lf.get_current_observation()
+        if obs is not None:
+            obs.update(
+                metadata={
+                    "error_agent": agent_name,
+                    "http_status": status_code,
+                    "error_message": error_body[:500] if error_body else str(exc)[:500],
+                },
+                level="ERROR",
+                status_message=f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)[:200],
+            )
+    except Exception:
+        pass
+
+
+def extract_http_error(exc: BaseException) -> tuple[int | None, str]:
+    """Walk the exception chain and extract HTTP status code and body.
+
+    Returns:
+        (status_code, error_body) — status_code is None if not found.
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        # openai SDK exceptions have status_code and body/message
+        if hasattr(current, "status_code"):
+            code = getattr(current, "status_code", None)
+            body = getattr(current, "body", None) or getattr(current, "message", None) or str(current)
+            if isinstance(body, (dict, list)):
+                import json
+                body = json.dumps(body, default=str)
+            return code, str(body)
+        # httpx.HTTPStatusError
+        if hasattr(current, "response"):
+            resp = getattr(current, "response", None)
+            if resp is not None and hasattr(resp, "status_code"):
+                code = resp.status_code
+                body = getattr(resp, "text", str(current))
+                return code, str(body)
+        current = getattr(current, "__cause__", None)
+    return None, str(exc)
+
+
 def is_firewall_block(exc: BaseException) -> bool:
     """Detect whether an exception chain contains a 403 firewall policy block.
 
