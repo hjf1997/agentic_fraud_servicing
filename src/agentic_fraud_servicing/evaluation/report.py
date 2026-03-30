@@ -135,55 +135,55 @@ async def generate_report(
     try:
         results["latency"] = evaluate_latency(run)
     except Exception as exc:
-        print(_format_eval_error("latency", exc), file=sys.stderr)
+        print(_format_eval_error("latency", exc))
 
     try:
         results["convergence"] = evaluate_convergence(run)
     except Exception as exc:
-        print(_format_eval_error("convergence", exc), file=sys.stderr)
+        print(_format_eval_error("convergence", exc))
 
     try:
         results["evidence_utilization"] = evaluate_evidence_utilization(run)
     except Exception as exc:
-        print(_format_eval_error("evidence_utilization", exc), file=sys.stderr)
+        print(_format_eval_error("evidence_utilization", exc))
 
     # --- LLM-powered evaluators (only when model_provider is available) ---
     if model_provider is not None:
         try:
             results["prediction"] = await evaluate_prediction(run, model_provider)
         except Exception as exc:
-            print(_format_eval_error("prediction", exc), file=sys.stderr)
+            print(_format_eval_error("prediction", exc))
 
         try:
             results["question_adherence"] = await evaluate_question_adherence(run, model_provider)
         except Exception as exc:
-            print(_format_eval_error("question_adherence", exc), file=sys.stderr)
+            print(_format_eval_error("question_adherence", exc))
 
         try:
             results["allegation_quality"] = await evaluate_allegation_quality(run, model_provider)
         except Exception as exc:
-            print(_format_eval_error("allegation_quality", exc), file=sys.stderr)
+            print(_format_eval_error("allegation_quality", exc))
 
         try:
             results["risk_flag_timeliness"] = await evaluate_risk_flag_timeliness(
                 run, model_provider
             )
         except Exception as exc:
-            print(_format_eval_error("risk_flag_timeliness", exc), file=sys.stderr)
+            print(_format_eval_error("risk_flag_timeliness", exc))
 
         try:
             results["note_alignment"] = await evaluate_note_alignment(
                 run, model_provider
             )
         except Exception as exc:
-            print(_format_eval_error("note_alignment", exc), file=sys.stderr)
+            print(_format_eval_error("note_alignment", exc))
 
         try:
             results["decision_explanation"] = await evaluate_decision_explanation(
                 run, model_provider, note_alignment=results["note_alignment"]
             )
         except Exception as exc:
-            print(_format_eval_error("decision_explanation", exc), file=sys.stderr)
+            print(_format_eval_error("decision_explanation", exc))
 
     # --- Compute overall score ---
     dimension_scores = {dim: extract_dimension_score(dim, results[dim]) for dim in _WEIGHTS}

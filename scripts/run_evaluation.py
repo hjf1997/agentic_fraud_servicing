@@ -34,6 +34,52 @@ if _PROJECT_ROOT not in sys.path:
 # Agents SDK when using Bedrock provider instead of OpenAI.
 os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 
+# Configure logging so that the Agents SDK's "Error getting response" messages
+# include the actual HTTP status code instead of just dumping filtered.input.
+import logging
+
+_agents_logger = logging.getLogger("agents")
+_agents_logger.setLevel(logging.ERROR)
+
+
+class _HttpErrorFilter(logging.Filter):
+    """Intercept Agents SDK error logs and append HTTP status code details."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info and record.exc_info[1] is not None:
+            exc = record.exc_info[1]
+            # Walk exception chain for HTTP status
+            current = exc
+            while current is not None:
+                if hasattr(current, "status_code"):
+                    code = getattr(current, "status_code", None)
+                    body = getattr(current, "body", None) or getattr(current, "message", None) or ""
+                    record.msg = f"HTTP {code} error — {body}\n(original: {record.msg})"
+                    break
+                current = getattr(current, "__cause__", None)
+        elif hasattr(record, "msg") and "Error getting response" in str(record.msg):
+            # The SDK logs without exc_info — try to extract from the last exception
+            exc_info = sys.exc_info()
+            if exc_info[1] is not None:
+                current = exc_info[1]
+                while current is not None:
+                    if hasattr(current, "status_code"):
+                        code = getattr(current, "status_code", None)
+                        body = getattr(current, "body", None) or getattr(current, "message", None) or ""
+                        record.msg = f"HTTP {code} error — {body}"
+                        record.args = ()
+                        break
+                    current = getattr(current, "__cause__", None)
+        return True
+
+
+_agents_logger.addFilter(_HttpErrorFilter())
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+_agents_logger.addHandler(_handler)
+# Prevent the agents logger from propagating to root (avoids duplicate output)
+_agents_logger.propagate = False
+
 # Auto-discover and register all scenario_*.py modules
 from scripts.simulation_data import discover_scenarios  # noqa: E402
 
@@ -286,7 +332,13 @@ async def run_evaluation(scenario_name: str, data_dir: str, transcript_path: str
         report_path = save_report(report, output_dir)
         print(f"  Report saved to: {report_path}")
     except Exception as exc:
-        print(f"  {YELLOW}Warning: Report generation failed: {exc}{RESET}")
+        from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
+
+        status_code, error_body = extract_http_error(exc)
+        if status_code is not None:
+            print(f"  {YELLOW}Warning: Report generation failed (HTTP {status_code}): {error_body[:300]}{RESET}")
+        else:
+            print(f"  {YELLOW}Warning: Report generation failed: {exc}{RESET}")
 
     # -- Summary --
     print(f"\n{BOLD}{GREEN}{'=' * 60}{RESET}")
