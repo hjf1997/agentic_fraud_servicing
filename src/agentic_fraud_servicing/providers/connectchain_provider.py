@@ -9,6 +9,8 @@ and endpoint resolution.
 
 from __future__ import annotations
 
+import time
+
 from agents import OpenAIChatCompletionsModel
 from agents.models.interface import Model, ModelProvider
 from openai import AsyncAzureOpenAI
@@ -52,8 +54,11 @@ class ConnectChainModelProvider(ModelProvider):
                 request_type="init",
             ) from exc
 
+        self._raw_get_token = get_token_from_env
+        self._cached_token: str | None = None
+        self._token_expiry: float = 0
+
         try:
-            token = get_token_from_env()
             lc_llm = get_connectchain_model(settings.connectchain_model_index)
             # Extract Azure OpenAI config from the LangChain LLM object
             azure_endpoint = (
@@ -84,11 +89,29 @@ class ConnectChainModelProvider(ModelProvider):
             )
 
         self._client = AsyncAzureOpenAI(
-            api_key=token,
+            azure_ad_token_provider=self._get_cached_token,
             azure_endpoint=azure_endpoint,
             api_version=api_version,
         )
         self._default_model = deployment or "gpt-4o"
+
+    def _get_cached_token(self) -> str:
+        """Return a cached EAS token, refreshing via ConnectChain when expired.
+
+        Caches the token for 5 minutes to avoid a network round-trip on every
+        LLM call. On refresh failure, returns the stale token if available.
+        """
+        now = time.monotonic()
+        if self._cached_token is not None and now < self._token_expiry:
+            return self._cached_token
+        try:
+            self._cached_token = self._raw_get_token()
+            self._token_expiry = now + 300  # 5 minutes
+        except Exception:
+            if self._cached_token is not None:
+                return self._cached_token
+            raise
+        return self._cached_token
 
     def get_model(self, model_name: str | None) -> Model:
         """Return an OpenAIChatCompletionsModel using Azure OpenAI credentials.
