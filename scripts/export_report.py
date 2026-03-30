@@ -148,8 +148,8 @@ def _render_eligibility_chart_base64(suggestions: list[dict]) -> str:
         turns.append(turn)
         turn_map: dict[str, str] = {}
         for item in ce:
-            ct = item.get("case_type", "")
-            st = item.get("eligibility", "")
+            ct = item.get("case_type", "").lower()
+            st = item.get("eligibility", "").lower()
             if ct and st:
                 turn_map[ct] = st
                 case_types_set.add(ct)

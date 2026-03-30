@@ -47,6 +47,7 @@ from agentic_fraud_servicing.ui.eval_dashboard import (  # noqa: E402
     _build_hypothesis_chart,
     _build_latency_chart,
     _build_latency_stats_html,
+    _build_note_alignment_html,
     _build_prediction_html,
     _build_radar_chart,
     _build_summary_html,
@@ -98,6 +99,7 @@ def _build_full_report(scenario_name: str) -> str:
     allegation_html = _build_allegation_html(report)
     evidence_html = _build_evidence_table_html(report)
     decision_html = _build_decision_html(report)
+    note_alignment_html = _build_note_alignment_html(report)
     transcript_html = _build_eval_transcript_html(run)
 
     # Build charts and render as base64 PNGs
@@ -236,10 +238,14 @@ def _build_full_report(scenario_name: str) -> str:
     <div class="section-title">7. Decision Explanation &amp; Risk Flags</div>
     {decision_html}
 
-    <!-- Section 8: Transcript Replay -->
+    <!-- Section 8: CCP Note Alignment -->
+    <div class="section-title">8. CCP Note Alignment</div>
+    {note_alignment_html}
+
+    <!-- Section 9: Transcript Replay -->
     <details style="margin-bottom:16px;">
       <summary class="section-title" style="cursor:pointer; border-bottom:none;">
-        8. Transcript Replay (click to expand)
+        9. Transcript Replay (click to expand)
       </summary>
       {transcript_html}
     </details>
