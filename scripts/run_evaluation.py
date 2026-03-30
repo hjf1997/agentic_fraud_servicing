@@ -34,12 +34,14 @@ if _PROJECT_ROOT not in sys.path:
 # Agents SDK when using Bedrock provider instead of OpenAI.
 os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 
-# Configure logging so that the Agents SDK's "Error getting response" messages
-# include the actual HTTP status code instead of just dumping filtered.input.
+# Configure logging so that:
+# 1. OPENAI_LOG=debug/info HTTP request logs go to stdout (visible in TeeWriter)
+# 2. Agents SDK "Error getting response" messages include HTTP status codes
 import logging
 
-_agents_logger = logging.getLogger("agents")
-_agents_logger.setLevel(logging.ERROR)
+_log_fmt = logging.Formatter("[%(asctime)s %(name)s %(levelname)s] %(message)s", datefmt="%H:%M:%S")
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setFormatter(_log_fmt)
 
 
 class _HttpErrorFilter(logging.Filter):
@@ -48,7 +50,6 @@ class _HttpErrorFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if record.exc_info and record.exc_info[1] is not None:
             exc = record.exc_info[1]
-            # Walk exception chain for HTTP status
             current = exc
             while current is not None:
                 if hasattr(current, "status_code"):
@@ -58,7 +59,6 @@ class _HttpErrorFilter(logging.Filter):
                     break
                 current = getattr(current, "__cause__", None)
         elif hasattr(record, "msg") and "Error getting response" in str(record.msg):
-            # The SDK logs without exc_info — try to extract from the last exception
             exc_info = sys.exc_info()
             if exc_info[1] is not None:
                 current = exc_info[1]
@@ -73,11 +73,21 @@ class _HttpErrorFilter(logging.Filter):
         return True
 
 
+# OpenAI SDK logger ("openai") — handles OPENAI_LOG=debug HTTP request/response logs
+_openai_logger = logging.getLogger("openai")
+_openai_logger.addHandler(_stdout_handler)
+_openai_logger.propagate = False
+
+# httpx logger — OPENAI_LOG=debug also enables httpx debug logs
+_httpx_logger = logging.getLogger("httpx")
+_httpx_logger.addHandler(_stdout_handler)
+_httpx_logger.propagate = False
+
+# Agents SDK logger ("openai.agents") — "Error getting response" messages
+_agents_logger = logging.getLogger("openai.agents")
+_agents_logger.setLevel(logging.ERROR)
 _agents_logger.addFilter(_HttpErrorFilter())
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
-_agents_logger.addHandler(_handler)
-# Prevent the agents logger from propagating to root (avoids duplicate output)
+_agents_logger.addHandler(_stdout_handler)
 _agents_logger.propagate = False
 
 # Auto-discover and register all scenario_*.py modules
