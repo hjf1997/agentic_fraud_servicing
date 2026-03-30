@@ -232,3 +232,19 @@ def redact_all(text: str) -> tuple[str, RedactionInfo]:
         pii_types=pii_types,
     )
     return redacted, info
+
+
+def redact_all_gsgt(text: str) -> tuple[str, RedactionInfo]:
+    """Redaction for ground truth / CCP notes comparison.
+
+    Calls redact_all() for standard PII redaction. In the enterprise
+    environment, this function is extended to also invoke the company's
+    internal redaction tool before or after redact_all().
+
+    Args:
+        text: The raw CCP notes text to redact.
+
+    Returns:
+        A tuple of (redacted_text, RedactionInfo).
+    """
+    return redact_all(text)
