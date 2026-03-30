@@ -173,6 +173,11 @@ async def _match_allegations(
         )
         output: AllegationMatchResult = result.final_output
         return output.matched, output.missed, output.false_positives
-    except Exception:
+    except Exception as exc:
         # Graceful degradation: treat all as missed / false positive
+        from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
+
+        status_code, error_body = extract_http_error(exc)
+        detail = f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)
+        print(f"[allegation_quality] LLM matching failed ({detail})", file=__import__("sys").stderr)
         return [], list(ground_truth), list(extracted)

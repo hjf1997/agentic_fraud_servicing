@@ -272,6 +272,11 @@ async def _match_flags(
             run_config=RunConfig(model_provider=model_provider),
         )
         return result.final_output
-    except Exception:
+    except Exception as exc:
         # Graceful degradation: all expected flags unmatched
+        from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
+
+        status_code, error_body = extract_http_error(exc)
+        detail = f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)
+        print(f"[risk_flag_evaluator] LLM matching failed ({detail})", file=__import__("sys").stderr)
         return FlagMatchResult(matches=[], unmatched=list(expected_flags))

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
 from agentic_fraud_servicing.evaluation.allegation_quality import (
     evaluate_allegation_quality,
 )
@@ -37,6 +38,14 @@ from agentic_fraud_servicing.evaluation.risk_flag_evaluator import (
 
 if TYPE_CHECKING:
     from agentic_fraud_servicing.providers.base import ModelProvider
+
+
+def _format_eval_error(evaluator: str, exc: BaseException) -> str:
+    """Format evaluator error with HTTP status code when available."""
+    status_code, error_body = extract_http_error(exc)
+    if status_code is not None:
+        return f"[report] {evaluator} evaluator failed (HTTP {status_code}): {error_body[:300]}"
+    return f"[report] {evaluator} evaluator failed: {exc}"
 
 # Dimension weights for overall score calculation.
 _WEIGHTS: dict[str, float] = {
@@ -126,64 +135,55 @@ async def generate_report(
     try:
         results["latency"] = evaluate_latency(run)
     except Exception as exc:
-        print(f"[report] latency evaluator failed: {exc}", file=sys.stderr)
+        print(_format_eval_error("latency", exc), file=sys.stderr)
 
     try:
         results["convergence"] = evaluate_convergence(run)
     except Exception as exc:
-        print(f"[report] convergence evaluator failed: {exc}", file=sys.stderr)
+        print(_format_eval_error("convergence", exc), file=sys.stderr)
 
     try:
         results["evidence_utilization"] = evaluate_evidence_utilization(run)
     except Exception as exc:
-        print(f"[report] evidence_utilization evaluator failed: {exc}", file=sys.stderr)
+        print(_format_eval_error("evidence_utilization", exc), file=sys.stderr)
 
     # --- LLM-powered evaluators (only when model_provider is available) ---
     if model_provider is not None:
         try:
             results["prediction"] = await evaluate_prediction(run, model_provider)
         except Exception as exc:
-            print(f"[report] prediction evaluator failed: {exc}", file=sys.stderr)
+            print(_format_eval_error("prediction", exc), file=sys.stderr)
 
         try:
             results["question_adherence"] = await evaluate_question_adherence(run, model_provider)
         except Exception as exc:
-            print(f"[report] question_adherence evaluator failed: {exc}", file=sys.stderr)
+            print(_format_eval_error("question_adherence", exc), file=sys.stderr)
 
         try:
             results["allegation_quality"] = await evaluate_allegation_quality(run, model_provider)
         except Exception as exc:
-            print(f"[report] allegation_quality evaluator failed: {exc}", file=sys.stderr)
+            print(_format_eval_error("allegation_quality", exc), file=sys.stderr)
 
         try:
             results["risk_flag_timeliness"] = await evaluate_risk_flag_timeliness(
                 run, model_provider
             )
         except Exception as exc:
-            print(
-                f"[report] risk_flag_timeliness evaluator failed: {exc}",
-                file=sys.stderr,
-            )
+            print(_format_eval_error("risk_flag_timeliness", exc), file=sys.stderr)
 
         try:
             results["note_alignment"] = await evaluate_note_alignment(
                 run, model_provider
             )
         except Exception as exc:
-            print(
-                f"[report] note_alignment evaluator failed: {exc}",
-                file=sys.stderr,
-            )
+            print(_format_eval_error("note_alignment", exc), file=sys.stderr)
 
         try:
             results["decision_explanation"] = await evaluate_decision_explanation(
                 run, model_provider, note_alignment=results["note_alignment"]
             )
         except Exception as exc:
-            print(
-                f"[report] decision_explanation evaluator failed: {exc}",
-                file=sys.stderr,
-            )
+            print(_format_eval_error("decision_explanation", exc), file=sys.stderr)
 
     # --- Compute overall score ---
     dimension_scores = {dim: extract_dimension_score(dim, results[dim]) for dim in _WEIGHTS}

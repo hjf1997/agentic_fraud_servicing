@@ -210,6 +210,10 @@ async def _score_alignment(
         )
         return result.final_output
     except Exception as exc:
+        from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
+
+        status_code, error_body = extract_http_error(exc)
+        detail = f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)
         return NoteAlignmentScore(
-            explanation=f"LLM scoring failed: {exc}",
+            explanation=f"LLM scoring failed ({detail})",
         )

@@ -151,13 +151,18 @@ async def evaluate_decision_explanation(
             improvement_suggestions=output.improvement_suggestions,
             overall_quality_notes=output.overall_quality_notes,
         )
-    except Exception:
+    except Exception as exc:
         # Graceful degradation on LLM failure
+        from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
+
+        status_code, error_body = extract_http_error(exc)
+        detail = f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)
+        print(f"[decision_explainer] LLM failed ({detail})", file=__import__("sys").stderr)
         return DecisionExplanation(
             reasoning_chain="",
             influential_evidence=[],
             improvement_suggestions=[],
-            overall_quality_notes="Decision explanation could not be generated due to LLM error.",
+            overall_quality_notes=f"Decision explanation failed ({detail}).",
         )
 
 

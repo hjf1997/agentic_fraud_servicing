@@ -170,4 +170,8 @@ async def _score_adherence(
         output: AdherenceScore = result.final_output
         return output.score, output.explanation
     except Exception as exc:
-        return 0.0, f"LLM scoring failed: {exc}"
+        from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
+
+        status_code, error_body = extract_http_error(exc)
+        detail = f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)
+        return 0.0, f"LLM scoring failed ({detail})"

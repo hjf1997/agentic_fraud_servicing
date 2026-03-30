@@ -103,7 +103,11 @@ async def map_outcome_to_category(
         mapping: OutcomeMapping = result.final_output
         return mapping.mapped_category, mapping.reasoning
     except Exception as exc:
-        raise RuntimeError(f"Outcome mapping agent failed: {exc}") from exc
+        from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
+
+        status_code, error_body = extract_http_error(exc)
+        detail = f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)
+        raise RuntimeError(f"Outcome mapping agent failed ({detail})") from exc
 
 
 def _get_top_two(scores: dict[str, float]) -> tuple[str, float, float]:
