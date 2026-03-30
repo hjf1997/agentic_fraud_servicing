@@ -54,6 +54,7 @@ class ConnectChainModelProvider(ModelProvider):
                 request_type="init",
             ) from exc
 
+        self._model_index = settings.connectchain_model_index
         self._raw_get_token = get_token_from_env
         self._cached_token: str | None = None
         self._token_expiry: float = 0
@@ -105,7 +106,7 @@ class ConnectChainModelProvider(ModelProvider):
         if self._cached_token is not None and now < self._token_expiry:
             return self._cached_token
         try:
-            self._cached_token = self._raw_get_token()
+            self._cached_token = self._raw_get_token(self._model_index)
             self._token_expiry = now + 300  # 5 minutes
         except Exception:
             if self._cached_token is not None:
