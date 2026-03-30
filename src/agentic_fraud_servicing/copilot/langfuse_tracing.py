@@ -101,8 +101,9 @@ def get_langfuse():
 def tag_firewall_block(agent_name: str, error_message: str) -> None:
     """Tag the current LangFuse trace when an agent is blocked by the enterprise firewall.
 
-    Attaches a score (firewall_block=1) to the current observation and its
-    parent trace so blocked calls surface in LangFuse search and dashboards.
+    Attaches a score (firewall_block=1) and a "firewall_block" tag to the
+    current observation and its parent trace so blocked calls surface as a
+    colored pill in the LangFuse traces list and are filterable by tag.
     """
     lf = get_langfuse()
     if lf is None:
@@ -110,6 +111,9 @@ def tag_firewall_block(agent_name: str, error_message: str) -> None:
     try:
         obs = lf.get_current_observation()
         if obs is not None:
+            # Tag the observation — tags auto-aggregate to the parent trace,
+            # making blocked traces visible as colored pills in the list view.
+            obs.update(tags=["firewall_block", f"blocked:{agent_name}"])
             # Score the specific observation (agent-level)
             obs.score(
                 name="firewall_block",

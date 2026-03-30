@@ -18,7 +18,7 @@ from agentic_fraud_servicing.evaluation.models import (
     EvaluationRun,
     NoteAlignmentResult,
 )
-from agentic_fraud_servicing.ingestion.redaction import redact_pan
+from agentic_fraud_servicing.ingestion.redaction import redact_all
 
 # --- Output model for LLM scoring ---
 
@@ -110,7 +110,7 @@ async def evaluate_note_alignment(
     Returns:
         NoteAlignmentResult with per-dimension scores and overall score.
     """
-    ccp_notes = redact_pan(run.ground_truth.get("ccp_notes", ""))
+    ccp_notes = redact_all(run.ground_truth.get("ccp_notes", ""))
     if not ccp_notes:
         return NoteAlignmentResult(
             facts_coverage_score=0.0,
