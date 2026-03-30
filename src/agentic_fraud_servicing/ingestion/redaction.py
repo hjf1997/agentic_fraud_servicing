@@ -1,8 +1,9 @@
 """PCI-compliant PII detection and redaction for transcript text.
 
 Provides functions to detect and replace sensitive data (PAN, CVV, SSN, DOB,
-addresses) with typed placeholders before text reaches any LLM or storage.
-All redaction uses regex pattern matching — no external dependencies.
+addresses, phone numbers, emails) with typed placeholders before text reaches
+any LLM or storage. All redaction uses regex pattern matching — no external
+dependencies.
 """
 
 import re
@@ -81,6 +82,32 @@ _STREET_TYPES = (
 )
 _ADDRESS_RE = re.compile(r"(?i)\d{1,6}\s+(?:[A-Za-z]+\s+){1,4}" + _STREET_TYPES + r"\.?")
 
+# --- Phone number patterns ---
+
+# US formats: (214) 449-5199, 214-449-5199, 214.449.5199, 2144495199,
+# +1 (214) 449-5199, +1-214-449-5199, 1-800-555-0199
+_PHONE_RE = re.compile(
+    r"(?<!\d)"
+    r"(?:\+?1[\s.\-]?)?"  # optional country code +1
+    r"(?:\(\d{3}\)|\d{3})"  # area code: (214) or 214
+    r"[\s.\-]?"  # separator
+    r"\d{3}"  # exchange
+    r"[\s.\-]?"  # separator
+    r"\d{4}"  # subscriber
+    r"(?!\d)"
+)
+
+# --- Email patterns ---
+
+# Standard email: user@domain.tld, also handles "dot" / "at" obfuscation
+_EMAIL_RE = re.compile(
+    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
+)
+# Obfuscated email: "user at domain dot com"
+_EMAIL_OBFUSCATED_RE = re.compile(
+    r"(?i)[a-zA-Z0-9._%+\-]+\s+(?:at|@)\s+[a-zA-Z0-9.\-]+\s+(?:dot|\.)\s+[a-zA-Z]{2,}"
+)
+
 
 def redact_pan(text: str) -> str:
     """Replace credit/debit card numbers with [PAN_REDACTED]."""
@@ -128,6 +155,22 @@ def redact_address(text: str) -> str:
     return _ADDRESS_RE.sub("[ADDRESS_REDACTED]", text)
 
 
+def redact_phone(text: str) -> str:
+    """Replace US phone number patterns with [PHONE_REDACTED]."""
+    return _PHONE_RE.sub("[PHONE_REDACTED]", text)
+
+
+def redact_email(text: str) -> str:
+    """Replace email addresses with [EMAIL_REDACTED].
+
+    Handles both standard (user@domain.com) and obfuscated
+    (user at domain dot com) formats.
+    """
+    result = _EMAIL_RE.sub("[EMAIL_REDACTED]", text)
+    result = _EMAIL_OBFUSCATED_RE.sub("[EMAIL_REDACTED]", result)
+    return result
+
+
 def redact_all(text: str) -> tuple[str, RedactionInfo]:
     """Apply all redaction functions in sequence and return redaction metadata.
 
@@ -148,7 +191,7 @@ def redact_all(text: str) -> tuple[str, RedactionInfo]:
     contains_cvv = False
     pii_types: list[str] = []
 
-    # Apply redactions in order: PAN, CVV, SSN, DOB, address
+    # Apply redactions in order: PAN, CVV, SSN, DOB, address, phone, email
     redacted = redact_pan(text)
     if redacted != text:
         contains_pan = True
@@ -172,6 +215,16 @@ def redact_all(text: str) -> tuple[str, RedactionInfo]:
     redacted = redact_address(text)
     if redacted != text:
         pii_types.append("ADDRESS")
+    text = redacted
+
+    redacted = redact_phone(text)
+    if redacted != text:
+        pii_types.append("PHONE")
+    text = redacted
+
+    redacted = redact_email(text)
+    if redacted != text:
+        pii_types.append("EMAIL")
 
     info = RedactionInfo(
         contains_pan=contains_pan,
