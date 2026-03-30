@@ -143,7 +143,7 @@ async def evaluate_prediction(
         PredictionResult with match status, confidence delta, and reasoning.
     """
     # Extract ground truth tag
-    ground_truth_tag = run.ground_truth.get("investigation_category", "")
+    ground_truth_tag = run.ground_truth.get("outcome_test", "")
     if not ground_truth_tag:
         return PredictionResult(
             predicted_category="",

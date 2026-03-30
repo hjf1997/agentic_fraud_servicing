@@ -41,7 +41,7 @@ def evaluate_convergence(run: EvaluationRun) -> ConvergenceResult:
     Returns:
         ConvergenceResult with convergence turn, ratio, and per-turn score history.
     """
-    correct_category = run.ground_truth.get("investigation_category", "")
+    correct_category = run.ground_truth.get("outcome_test", "")
 
     # No ground truth or empty turns → cannot assess convergence
     if not correct_category or not run.turn_metrics:
