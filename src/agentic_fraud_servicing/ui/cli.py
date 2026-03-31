@@ -52,6 +52,8 @@ def _format_suggestion_text(suggestion) -> str:
         lines.append("Suggested Questions:")
         for q in suggestion.suggested_questions:
             lines.append(f"  - {q}")
+    if suggestion.information_sufficient:
+        lines.append("  [Information sufficient - ready to proceed]")
     if suggestion.risk_flags:
         lines.append("Risk Flags:")
         for flag in suggestion.risk_flags:

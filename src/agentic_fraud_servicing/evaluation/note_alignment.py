@@ -204,6 +204,12 @@ def _build_copilot_summary(run: EvaluationRun) -> str:
         if last_suggestion.get("running_summary"):
             parts.append(f"## Running Summary\n{last_suggestion['running_summary']}")
 
+    # Information sufficient
+    if last_suggestion:
+        info_sufficient = last_suggestion.get("information_sufficient")
+        if info_sufficient is not None:
+            parts.append(f"## Information Sufficient\n{info_sufficient}")
+
     # Impersonation risk
     imp_risk = run.copilot_final_state.get("impersonation_risk")
     if imp_risk is not None:

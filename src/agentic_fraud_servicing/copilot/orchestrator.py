@@ -3,9 +3,10 @@
 Processes transcript events, maintains running hypothesis scores and
 impersonation risk, invokes specialist agents, and produces CopilotSuggestion
 output for each turn. Triage, auth, and retrieval run concurrently via
-asyncio.gather(); hypothesis, case advisor, and question planner run
-sequentially after them. This is a plain Python class — not an Agents SDK
-Agent — keeping the control flow explicit and auditable.
+asyncio.gather(); hypothesis and case advisor run in parallel after them.
+The case advisor handles both eligibility assessment and question planning.
+This is a plain Python class — not an Agents SDK Agent — keeping the control
+flow explicit and auditable.
 """
 
 import asyncio
@@ -26,7 +27,6 @@ from agentic_fraud_servicing.copilot.langfuse_tracing import (
 )
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_hypothesis
-from agentic_fraud_servicing.copilot.question_planner import QuestionPlan, run_question_planner
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult, run_retrieval
 from agentic_fraud_servicing.copilot.triage_agent import run_triage
 from agentic_fraud_servicing.gateway.tool_gateway import AuthContext, ToolGateway
@@ -110,7 +110,7 @@ class CopilotOrchestrator:
 
         For assessment turns the pipeline is:
         1. Parallel: triage (claim extraction) + auth (conditional) + retrieval
-        2. Sequential: hypothesis → case advisor (after turn 3) → question planner
+        2. Parallel: hypothesis + case advisor (after turn 3)
 
         Auth is conditional after the first 3 turns: skipped when
         impersonation risk is low (< 0.4).
@@ -291,18 +291,18 @@ class CopilotOrchestrator:
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
-        # 6-7. Run hypothesis agent and case advisor.
+        # 6-7. Run hypothesis agent and case advisor (merged: eligibility + questions).
         # On turns > 3, run both in PARALLEL — case advisor uses previous turn's
         # hypothesis_scores (acceptable since scores shift incrementally).
-        _lf_p2a = None
+        _lf_p2 = None
         if lf is not None:
             try:
-                _lf_p2a = lf.start_as_current_observation(
-                    as_type="chain", name="phase2a_hypothesis_advisor",
+                _lf_p2 = lf.start_as_current_observation(
+                    as_type="chain", name="phase2_hypothesis_advisor",
                 )
-                _lf_p2a.__enter__()
+                _lf_p2.__enter__()
             except Exception:
-                _lf_p2a = None
+                _lf_p2 = None
 
         case_advisory = None
         if self._turn_count > 3:
@@ -310,69 +310,37 @@ class CopilotOrchestrator:
                 self._run_hypothesis_safe(
                     auth_result=auth_result, risk_flags=risk_flags
                 ),
-                self._run_case_advisor_safe(risk_flags),
+                self._run_case_advisor_safe(risk_flags, conversation_window),
             )
         else:
             hypothesis_result = await self._run_hypothesis_safe(
                 auth_result=auth_result, risk_flags=risk_flags
             )
 
-        if _lf_p2a is not None:
+        if _lf_p2 is not None:
             try:
-                _lf_p2a.__exit__(None, None, None)
+                _lf_p2.__exit__(None, None, None)
             except Exception:
                 pass
         if hypothesis_result is not None:
             self.hypothesis_scores = dict(hypothesis_result.scores)
-        unmet_criteria: list[str] = []
-        if case_advisory is not None:
-            # Collect unmet criteria to pass to question planner (not accumulated
-            # in self.missing_fields — they change each turn and would bloat the list)
-            for assessment in case_advisory.assessments:
-                for criterion in assessment.unmet_criteria:
-                    unmet_criteria.append(f"[{assessment.case_type}] {criterion}")
 
-        # 8. Run question planner agent (after case advisor so it has unmet criteria)
-        _lf_p2b = None
-        if lf is not None:
-            try:
-                _lf_p2b = lf.start_as_current_observation(
-                    as_type="chain", name="phase2b_question_planner",
-                )
-                _lf_p2b.__enter__()
-            except Exception:
-                _lf_p2b = None
-
-        running_summary = self._build_allegations_summary()
-        planner_missing = unmet_criteria + self.missing_fields
-        question_result = await self._run_question_planner_safe(
-            running_summary, risk_flags, extra_missing=planner_missing,
-            recent_turns=conversation_window,
-        )
-
-        if _lf_p2b is not None:
-            try:
-                _lf_p2b.__exit__(None, None, None)
-            except Exception:
-                pass
-
-        # 9. Track recent suggestions for dedup in subsequent turns
-        suggested_questions = question_result.questions if question_result else []
+        # 8. Track recent suggestions for dedup in subsequent turns
+        suggested_questions = case_advisory.questions if case_advisory else []
         self._recent_suggestions.append(suggested_questions)
         if len(self._recent_suggestions) > 3:
             self._recent_suggestions = self._recent_suggestions[-3:]
 
-        # 10. Invalidate retrieval cache if evidence changed this turn, so the
+        # 9. Invalidate retrieval cache if evidence changed this turn, so the
         # next assessment re-fetches fresh data. Done after hypothesis/advisor
         # have consumed this turn's retrieval result.
         if _invalidate_retrieval:
             self._retrieval_result = None
 
-        # 11. Build and return the suggestion
+        # 10. Build and return the suggestion
         return self._build_suggestion(
             event,
             risk_flags=risk_flags,
-            suggested_questions=suggested_questions,
             case_advisory=case_advisory,
         )
 
@@ -383,7 +351,6 @@ class CopilotOrchestrator:
         event: TranscriptEvent,
         *,
         risk_flags: list[str] | None = None,
-        suggested_questions: list[str] | None = None,
         case_advisory: CaseAdvisory | None = None,
     ) -> CopilotSuggestion:
         """Assemble a CopilotSuggestion from current state.
@@ -393,9 +360,13 @@ class CopilotOrchestrator:
         """
         case_eligibility: list[dict] = []
         case_advisory_summary = ""
+        suggested_questions: list[str] = []
+        information_sufficient = False
         if case_advisory is not None:
             case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]
             case_advisory_summary = case_advisory.summary
+            suggested_questions = case_advisory.questions
+            information_sufficient = case_advisory.information_sufficient
 
         retrieved_facts: list[str] = []
         if self._retrieval_result is not None:
@@ -404,7 +375,7 @@ class CopilotOrchestrator:
         return CopilotSuggestion(
             call_id=event.call_id,
             timestamp_ms=event.timestamp_ms,
-            suggested_questions=suggested_questions or [],
+            suggested_questions=suggested_questions,
             risk_flags=risk_flags or [],
             retrieved_facts=retrieved_facts,
             running_summary=self._build_allegations_summary(),
@@ -413,6 +384,7 @@ class CopilotOrchestrator:
             impersonation_risk=self.impersonation_risk,
             case_eligibility=case_eligibility,
             case_advisory_summary=case_advisory_summary,
+            information_sufficient=information_sufficient,
         )
 
     def _persist_allegations(self, allegations: list[AllegationExtraction]) -> None:
@@ -698,51 +670,6 @@ class CopilotOrchestrator:
                 risk_flags.append(self._format_error("Auth", exc))
             return None
 
-    async def _run_question_planner_safe(
-        self,
-        case_summary: str,
-        risk_flags: list[str],
-        *,
-        extra_missing: list[str] | None = None,
-        recent_turns: list[tuple[str, str]] | None = None,
-    ) -> QuestionPlan | None:
-        """Run question planner agent with error handling.
-
-        Passes recent conversation turns and previously suggested questions
-        so the planner avoids repeating questions already asked or suggested.
-        ``extra_missing`` (typically unmet case-advisor criteria) is passed
-        as additional missing fields for the current turn only — it is NOT
-        accumulated into ``self.missing_fields``.
-        """
-        if recent_turns is None:
-            recent_turns = [(e.speaker.value, e.text) for e in self.transcript_history[-5:]]
-        # Flatten recent suggestions into a single dedup list
-        recent_questions = [q for qs in self._recent_suggestions for q in qs]
-        missing = extra_missing if extra_missing else list(self.missing_fields)
-        t0 = time.perf_counter()
-        try:
-            result = await run_question_planner(
-                case_summary=case_summary,
-                missing_fields=missing,
-                hypothesis_scores=dict(self.hypothesis_scores),
-                model_provider=self.model_provider,
-                recent_turns=recent_turns if recent_turns else None,
-                recent_questions=recent_questions if recent_questions else None,
-            )
-            self._log_agent_trace("question_planner", "run", (time.perf_counter() - t0) * 1000)
-            return result
-        except Exception as exc:
-            self._log_agent_trace(
-                "question_planner", "run", (time.perf_counter() - t0) * 1000, status="error"
-            )
-            tag_agent_error("question_planner", exc)
-            if is_firewall_block(exc):
-                tag_firewall_block("question_planner", str(exc))
-                risk_flags.append("FIREWALL BLOCKED: question_planner agent prompt rejected by policy")
-            else:
-                risk_flags.append(self._format_error("Question planner", exc))
-            return None
-
     async def _run_hypothesis_safe(
         self,
         auth_result: AuthAssessment | None,
@@ -776,16 +703,28 @@ class CopilotOrchestrator:
                 risk_flags.append(self._format_error("Hypothesis", exc))
             return None
 
-    async def _run_case_advisor_safe(self, risk_flags: list[str]) -> CaseAdvisory | None:
-        """Run case advisor agent with error handling."""
+    async def _run_case_advisor_safe(
+        self,
+        risk_flags: list[str],
+        conversation_window: list[tuple[str, str]],
+    ) -> CaseAdvisory | None:
+        """Run case advisor agent with error handling.
+
+        The merged case advisor handles both eligibility assessment and
+        question planning. It receives the assessment-based conversation
+        window, missing fields, and recent questions for deduplication.
+        """
+        recent_questions = [q for qs in self._recent_suggestions for q in qs]
         t0 = time.perf_counter()
         try:
             result = await run_case_advisor(
                 allegations_summary=self._format_allegations_for_hypothesis(),
                 evidence_summary=self._format_evidence_for_hypothesis(),
                 hypothesis_scores=dict(self.hypothesis_scores),
-                conversation_summary=self._format_conversation_for_hypothesis(),
+                conversation_window=conversation_window,
                 model_provider=self.model_provider,
+                missing_fields=self.missing_fields if self.missing_fields else None,
+                recent_questions=recent_questions if recent_questions else None,
             )
             self._log_agent_trace("case_advisor", "run", (time.perf_counter() - t0) * 1000)
             return result

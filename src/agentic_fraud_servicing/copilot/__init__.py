@@ -24,11 +24,6 @@ from agentic_fraud_servicing.copilot.hypothesis_agent import (
     run_hypothesis,
 )
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
-from agentic_fraud_servicing.copilot.question_planner import (
-    QuestionPlan,
-    question_agent,
-    run_question_planner,
-)
 from agentic_fraud_servicing.copilot.retrieval_agent import (
     RetrievalResult,
     retrieval_agent,
@@ -54,10 +49,6 @@ __all__ = [
     "AuthAssessment",
     "auth_agent",
     "run_auth_assessment",
-    # question_planner
-    "QuestionPlan",
-    "question_agent",
-    "run_question_planner",
     # retrieval_agent
     "RetrievalResult",
     "retrieval_agent",

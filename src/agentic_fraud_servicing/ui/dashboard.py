@@ -443,6 +443,11 @@ def _build_copilot_final_html(
                 f"<p style='margin-top:8px; font-size:0.9em; color:#555;'>"
                 f"<strong>Advisory:</strong> {advisory}</p>"
             )
+        if last_sug.get("information_sufficient"):
+            advisory_html += (
+                f'<p style="margin-top:8px;"><span class="elig-badge elig-eligible">'
+                f"Ready to Proceed</span></p>"
+            )
 
     return f"""<div class="card">
       <h4 style="color:{AMEX_NAVY}; margin-top:0;">Final Copilot State</h4>
@@ -475,10 +480,15 @@ def _build_copilot_turns_html(suggestions: list[dict]) -> str:
         r_list = "".join(f"<li>{r}</li>" for r in risk_flags) if risk_flags else "<li>None</li>"
 
         # Build eligibility badges for this turn
+        info_sufficient = sug.get("information_sufficient", False)
         elig_section = ""
         if case_elig:
             elig_badges = _build_eligibility_badges_html(case_elig)
             elig_section = f"<dt>Case Eligibility</dt><dd>{elig_badges}</dd>"
+            if info_sufficient:
+                elig_section += (
+                    '<dd><span class="elig-badge elig-eligible">Ready to Proceed</span></dd>'
+                )
             if advisory:
                 elig_section += (
                     f"<dt>Advisory Summary</dt><dd style='font-size:0.9em;'>{advisory}</dd>"

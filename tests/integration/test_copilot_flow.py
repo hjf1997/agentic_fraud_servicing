@@ -16,7 +16,6 @@ from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, CaseTypeA
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
 from agentic_fraud_servicing.models.enums import SpeakerType
-from agentic_fraud_servicing.copilot.question_planner import QuestionPlan
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult
 from agentic_fraud_servicing.models.allegations import (
     AllegationExtraction,
@@ -53,19 +52,6 @@ _AUTH_ASSESSMENT = AuthAssessment(
     step_up_recommended=False,
     step_up_method="NONE",
     assessment_summary="Low impersonation risk. Device and identity verified.",
-)
-
-_QUESTION_PLAN = QuestionPlan(
-    questions=[
-        "Do you recall making any online purchases around March 1st?",
-        "Have you shared your card details with any family members?",
-    ],
-    rationale=[
-        "Clarify if AMZN charge could be legitimate",
-        "Check for authorized user activity",
-    ],
-    priority_field="auth_method",
-    confidence=0.80,
 )
 
 _RETRIEVAL_RESULT = RetrievalResult(
@@ -113,15 +99,23 @@ _CASE_ADVISORY = CaseAdvisory(
         ),
     ],
     general_warnings=["Escalation may be required for amounts over $10K"],
-    next_info_needed=["Caller identity verification", "Date CM first noticed the charge"],
+    questions=[
+        "Do you recall making any online purchases around March 1st?",
+        "Have you shared your card details with any family members?",
+    ],
+    rationale=[
+        "Clarify if AMZN charge could be legitimate",
+        "Check for authorized user activity",
+    ],
+    priority_field="auth_method",
+    information_sufficient=False,
     summary="Fraud case incomplete pending identity verification. Dispute case eligible.",
 )
 
 
-# -- Patch targets for the 6 specialist run_* functions --
+# -- Patch targets for the 5 specialist run_* functions --
 _PATCH_TRIAGE = "agentic_fraud_servicing.copilot.orchestrator.run_triage"
 _PATCH_AUTH = "agentic_fraud_servicing.copilot.orchestrator.run_auth_assessment"
-_PATCH_QUESTION = "agentic_fraud_servicing.copilot.orchestrator.run_question_planner"
 _PATCH_RETRIEVAL = "agentic_fraud_servicing.copilot.orchestrator.run_retrieval"
 _PATCH_HYPOTHESIS = "agentic_fraud_servicing.copilot.orchestrator.run_hypothesis"
 _PATCH_CASE_ADVISOR = "agentic_fraud_servicing.copilot.orchestrator.run_case_advisor"
@@ -129,11 +123,10 @@ _PATCH_CASE_ADVISOR = "agentic_fraud_servicing.copilot.orchestrator.run_case_adv
 
 @pytest.fixture()
 def _mock_specialists():
-    """Patch all 6 specialist run_* functions with canned results."""
+    """Patch all 5 specialist run_* functions with canned results."""
     with (
         patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
         patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
-        patch(_PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN) as m_question,
         patch(
             _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
         ) as m_retrieval,
@@ -147,7 +140,6 @@ def _mock_specialists():
         yield {
             "triage": m_triage,
             "auth": m_auth,
-            "question": m_question,
             "retrieval": m_retrieval,
             "hypothesis": m_hypothesis,
             "case_advisor": m_case_advisor,
@@ -193,16 +185,17 @@ class TestCopilotSuggestionOutput:
         assert isinstance(result, CopilotSuggestion)
 
     @pytest.mark.usefixtures("_mock_specialists")
-    async def test_suggestion_contains_questions_from_planner(
+    async def test_suggestion_contains_questions_from_case_advisor(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """Suggested questions should come from the question planner mock."""
+        """Suggested questions should come from the case advisor mock."""
         gateway = gateway_factory(tmp_path)
         orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
+        orch._turn_count = 3  # Case advisor only runs after turn 3
 
         # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
         result = await orch.process_event(sample_transcript_events[1])
-        assert result.suggested_questions == _QUESTION_PLAN.questions
+        assert result.suggested_questions == _CASE_ADVISORY.questions
 
     @pytest.mark.usefixtures("_mock_specialists")
     async def test_suggestion_contains_safety_guidance(
@@ -362,9 +355,6 @@ class TestPipelineOptimizations:
             patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
             patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
             patch(
-                _PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN
-            ) as m_question,
-            patch(
                 _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
             ) as m_retrieval,
             patch(
@@ -385,7 +375,6 @@ class TestPipelineOptimizations:
             m_auth.assert_not_awaited()
             m_hypo.assert_not_awaited()
             m_retrieval.assert_not_awaited()
-            m_question.assert_not_awaited()
             m_advisor.assert_not_awaited()
 
     async def test_multiple_events_retrieval_cached(
@@ -395,7 +384,6 @@ class TestPipelineOptimizations:
         with (
             patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT),
             patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT),
-            patch(_PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN),
             patch(
                 _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
             ) as m_retrieval,
@@ -415,13 +403,10 @@ class TestPipelineOptimizations:
     async def test_cardmember_full_pipeline(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """CARDMEMBER events should invoke all 6 agents."""
+        """CARDMEMBER events should invoke all 5 agents."""
         with (
             patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
             patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
-            patch(
-                _PATCH_QUESTION, new_callable=AsyncMock, return_value=_QUESTION_PLAN
-            ) as m_question,
             patch(
                 _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
             ) as m_retrieval,
@@ -434,7 +419,7 @@ class TestPipelineOptimizations:
         ):
             gateway = gateway_factory(tmp_path)
             orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
-            # Advance past early-turn gates so all 6 agents run:
+            # Advance past early-turn gates so all 5 agents run:
             # turn > 3 for case advisor, impersonation_risk >= 0.4 for auth
             orch._turn_count = 3
             orch.impersonation_risk = 0.5
@@ -442,13 +427,12 @@ class TestPipelineOptimizations:
             # Process CARDMEMBER event (index 1) — full pipeline
             await orch.process_event(sample_transcript_events[1])
 
-            # All 6 agents should be called
+            # All 5 agents should be called
             m_triage.assert_awaited_once()
             m_auth.assert_awaited_once()
             m_retrieval.assert_awaited_once()
             m_hypo.assert_awaited_once()
             m_advisor.assert_awaited_once()
-            m_question.assert_awaited_once()
 
     @pytest.mark.usefixtures("_mock_specialists")
     async def test_output_format_unchanged(

@@ -106,3 +106,4 @@ class CopilotSuggestion(BaseModel):
     impersonation_risk: float = 0.0
     case_eligibility: list[dict] = []
     case_advisory_summary: str = ""
+    information_sufficient: bool = False

@@ -27,24 +27,20 @@ flowchart TD
 
     Phase1 --> StateUpdate["State Updates<br/>─────────────<br/>accumulated_allegations += new<br/>impersonation_risk updated<br/>_retrieval_result cached<br/>missing_fields pruned<br/>evidence_collected updated"]
 
-    subgraph Phase2a["Phase 2a: Parallel — asyncio.gather()"]
+    subgraph Phase2["Phase 2: Parallel — asyncio.gather()"]
         direction LR
         Hyp["Hypothesis Agent<br/>─────────────<br/>Bayesian scoring:<br/>THIRD_PARTY_FRAUD<br/>FIRST_PARTY_FRAUD<br/>SCAM | DISPUTE"]
-        CaseAdv["Case Advisor<br/>─────────────<br/>Policy-aware<br/>eligibility check<br/>per case type<br/>+ unmet criteria"]
+        CaseAdv["Case Advisor<br/>─────────────<br/>Policy-aware<br/>eligibility check<br/>+ 0-3 questions<br/>+ stopping signal"]
     end
 
-    StateUpdate --> Phase2a
-    Phase2a --> ScoresUpdate["Update hypothesis_scores"]
-
-    ScoresUpdate --> QPlanner["Question Planner Agent<br/>─────────────<br/>1-3 suggested questions<br/>+ rationale + priority<br/>(deduplicates last 3 turns)"]
-
-    QPlanner --> Output["CopilotSuggestion<br/>─────────────<br/>suggested_questions<br/>risk_flags<br/>hypothesis_scores<br/>impersonation_risk<br/>case_eligibility<br/>running_summary<br/>safety_guidance<br/>retrieved_facts"]
+    StateUpdate --> Phase2
+    Phase2 --> Output["CopilotSuggestion<br/>─────────────<br/>suggested_questions<br/>risk_flags<br/>hypothesis_scores<br/>impersonation_risk<br/>case_eligibility<br/>information_sufficient<br/>running_summary<br/>safety_guidance<br/>retrieved_facts"]
 
     Auth -.- AuthNote["Turns 1-3: always<br/>Turn 4+: only if risk ≥ 0.4"]
     Retrieval -.- RetrNote["Runs once per session<br/>(cached thereafter)"]
 
     style Phase1 fill:#e8f4fd,stroke:#1a73e8
-    style Phase2a fill:#e8f4fd,stroke:#1a73e8
+    style Phase2 fill:#e8f4fd,stroke:#1a73e8
     style Output fill:#e6f4ea,stroke:#1e8e3e
     style ReturnPrev fill:#fce8e6,stroke:#d93025
     style ReturnPrev2 fill:#fce8e6,stroke:#d93025
@@ -57,8 +53,7 @@ Only **CARDMEMBER** events trigger the agent pipeline, and only on **assessment 
 For assessment turns the pipeline is:
 
 1. **Phase 1 (parallel)**: Triage + Auth (conditional) + Retrieval
-2. **Phase 2a (parallel, turn 4+)**: Hypothesis + Case Advisor — or Hypothesis only on turns 1-3
-3. **Phase 2b (sequential)**: Question Planner (needs both Phase 2a outputs)
+2. **Phase 2 (parallel, turn 4+)**: Hypothesis + Case Advisor — or Hypothesis only on turns 1-3
 
 ---
 
@@ -149,7 +144,7 @@ For assessment turns the pipeline is:
 
 ---
 
-## Phase 2a — Hypothesis + Case Advisor (parallel on turn 4+)
+## Phase 2 — Hypothesis + Case Advisor (parallel on turn 4+)
 
 ### 4. Hypothesis Agent
 
@@ -178,7 +173,7 @@ For assessment turns the pipeline is:
 
 ### 5. Case Advisor (parallel with Hypothesis on turn 4+)
 
-**Role**: Policy-aware case opening eligibility assessment.
+**Role**: Policy-aware case eligibility assessment with integrated question planning and stopping condition.
 
 **Condition**: Skipped on turns 1-3 (not enough info yet). On turn 4+, runs in parallel with Hypothesis Agent using the **previous turn's** hypothesis scores (acceptable since scores shift incrementally via the Bayesian prior design).
 
@@ -187,7 +182,9 @@ For assessment turns the pipeline is:
 | **INPUT** | `allegations_summary` | `str` | All accumulated allegations (same as hypothesis) |
 | **INPUT** | `evidence_summary` | `str` | Retrieved evidence JSON (same as hypothesis) |
 | **INPUT** | `hypothesis_scores` | `dict[str, float]` | Previous turn's scores (Bayesian prior) |
-| **INPUT** | `conversation_summary` | `str` | Last 5 turns + total turn count |
+| **INPUT** | `conversation_window` | `list[(speaker, text)]` | Assessment-based conversation window (context + new turns) |
+| **INPUT** | `missing_fields` | `list[str] \| None` | Entity-based missing fields from triage extraction |
+| **INPUT** | `recent_questions` | `list[str] \| None` | Previously suggested questions (last 3 turns, flattened) for dedup |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
 
 **Context**: Embedded policy documents from `docs/policies/*.md` (loaded at module import time).
@@ -202,35 +199,13 @@ For assessment turns the pipeline is:
 | | `.blockers` | `list[str]` | Active blocking rules with explanations |
 | | `.policy_citations` | `list[str]` | Specific policy text cited |
 | **OUTPUT** | `general_warnings` | `list[str]` | Cross-cutting warnings (escalation triggers, etc.) |
-| **OUTPUT** | `next_info_needed` | `list[str]` | What CCP should gather next |
-| **OUTPUT** | `summary` | `str` | 2-4 sentence eligibility landscape |
-
-**Side effects**:
-- `unmet_criteria` passed to Question Planner as `extra_missing`
-
----
-
-## Phase 2b — Question Planner (sequential, after Phase 2a)
-
-### 6. Question Planner
-
-**Role**: Suggest next-best questions for the CCP to ask the cardmember.
-
-| Direction | Field | Type | Description |
-|-----------|-------|------|-------------|
-| **INPUT** | `case_summary` | `str` | Running allegations summary |
-| **INPUT** | `missing_fields` | `list[str]` | Merged list of Case Advisor unmet criteria (prefixed `[case_type]`) + standard missing fields (`transaction_date`, `merchant_name`, etc.) |
-| **INPUT** | `hypothesis_scores` | `dict[str, float]` | Current 4-category scores |
-| **INPUT** | `recent_turns` | `list[(speaker, text)]` | Last 5 conversation turns |
-| **INPUT** | `recent_questions` | `list[str]` | Previously suggested questions (last 3 turns, flattened) for dedup |
-| **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
-
-| Direction | Field | Type | Description |
-|-----------|-------|------|-------------|
-| **OUTPUT** | `questions` | `list[str]` | 1-3 suggested next-best questions |
+| **OUTPUT** | `questions` | `list[str]` | 0-3 suggested next-best questions (empty when sufficient) |
 | **OUTPUT** | `rationale` | `list[str]` | Parallel list — why each question matters |
-| **OUTPUT** | `priority_field` | `str` | Most important missing field targeted |
-| **OUTPUT** | `confidence` | `float` | 0.0-1.0 confidence these questions will elicit useful info |
+| **OUTPUT** | `priority_field` | `str` | Most important missing field targeted, or "" when sufficient |
+| **OUTPUT** | `information_sufficient` | `bool` | `True` when all required info is gathered per policy checklist |
+| **OUTPUT** | `summary` | `str` | 2-4 sentence eligibility landscape + next steps |
+
+**Stopping condition**: When the leading hypothesis case type is `eligible` or all types are `blocked` for non-resolvable reasons, `information_sufficient` is set to `True` and `questions` is empty. This signals to the CCP that enough information has been gathered to proceed.
 
 **Side effects**:
 - Questions tracked in `orchestrator._recent_suggestions` (rolling window of last 3 turns for dedup)
@@ -245,7 +220,7 @@ All agent results are assembled into a single `CopilotSuggestion`:
 |-------|------|--------|
 | `call_id` | `str` | TranscriptEvent |
 | `timestamp_ms` | `int` | TranscriptEvent |
-| `suggested_questions` | `list[str]` | Question Planner |
+| `suggested_questions` | `list[str]` | Case Advisor |
 | `risk_flags` | `list[str]` | Auth Agent + all agent error flags |
 | `retrieved_facts` | `list[str]` | Retrieval Agent summary |
 | `running_summary` | `str` | Accumulated allegations summary |
@@ -254,20 +229,23 @@ All agent results are assembled into a single `CopilotSuggestion`:
 | `impersonation_risk` | `float` | Auth Agent |
 | `case_eligibility` | `list[dict]` | Case Advisor assessments |
 | `case_advisory_summary` | `str` | Case Advisor summary |
+| `information_sufficient` | `bool` | Case Advisor stopping signal |
 
 ---
 
 ## Data Flow Summary
 
 ```
-Triage --> accumulated_allegations --> Hypothesis --> hypothesis_scores --> Case Advisor
-                                   |-> Question Planner                 |-> Question Planner
-                                   |                                    |
-Retrieval --> transactions     ----+                                    |
-           |  auth_events ---------+                                    |
-           +- customer_profile ----+                                    |
-                  |                                                     |
-                  +-> Auth Agent --> impersonation_risk -----------------+
+Triage --> accumulated_allegations --> Hypothesis --> hypothesis_scores
+                                   |                                  |
+                                   +-> Case Advisor <-----------------+
+                                   |   (eligibility + questions       |
+                                   |    + stopping signal)            |
+Retrieval --> transactions     ----+                                  |
+           |  auth_events ---------+                                  |
+           +- customer_profile ----+                                  |
+                  |                                                   |
+                  +-> Auth Agent --> impersonation_risk ---------------+
                                  |  risk_flags
                                  +-> Hypothesis (auth_summary)
 ```
@@ -277,10 +255,12 @@ Retrieval --> transactions     ----+                                    |
 ## Key Design Points
 
 - **Hub-and-spoke**: The orchestrator explicitly controls which agents run and when. No free handoffs.
+- **5 specialist agents**: Triage, Auth, Retrieval, Hypothesis, Case Advisor. The former Question Planner has been merged into Case Advisor for reduced latency and policy-aware question generation.
 - **Conditional auth**: Auth agent is skipped after turn 3 if impersonation risk drops below 0.4, saving an LLM call.
 - **Retrieval with cache invalidation**: Retrieval caches its result but invalidates when triage persists new allegations (evidence store changed). Re-fetches in parallel on the next assessment turn.
 - **Case advisor gating + parallelism**: Skipped on turns 1-3. On turn 4+, runs in parallel with Hypothesis Agent using the previous turn's scores.
-- **Question dedup**: Planner receives the last 3 turns of suggested questions to avoid repetition.
+- **Integrated question planning**: Case Advisor generates 0-3 questions when info is incomplete and returns `information_sufficient=True` with 0 questions when ready.
+- **Question dedup**: Case Advisor receives the last 3 turns of suggested questions to avoid repetition.
 - **All agents traced**: Every invocation is logged to the trace store with agent name, duration, and status.
 - **Error isolation**: Each agent is wrapped in a `_run_*_safe` method. Failures append to `risk_flags` but never crash the pipeline.
 
@@ -311,13 +291,13 @@ When `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, LangFuse is enable
 ### What's Captured
 
 **Auto-instrumented** (via `openinference-instrumentation-openai-agents`):
-- Every `Runner.run()` LLM call across all 6 agents: prompts, completions, tokens, model, latency
+- Every `Runner.run()` LLM call across all 5 agents: prompts, completions, tokens, model, latency
 - Tool invocations with arguments and return values
 - Agent handoffs
 
 **Orchestrator-added context** (via `propagate_attributes` + `start_as_current_observation`):
 - `session_id` — groups all turns for one case
-- Phase spans: `phase1_parallel`, `phase2a_hypothesis_advisor`, `phase2b_question_planner`
+- Phase spans: `phase1_parallel`, `phase2_hypothesis_advisor`
 - Turn metadata: `cm_turn`, `assess_interval`
 
 ### Trace Hierarchy
@@ -328,11 +308,9 @@ Trace: "copilot_turn" (session_id=case_id)
 │  ├─ auto: triage → LLM generation + tool calls
 │  ├─ auto: auth → LLM generation
 │  └─ auto: retrieval → LLM generation + tool calls
-├─ Span: "phase2a_hypothesis_advisor"
-│  ├─ auto: hypothesis → LLM generation
-│  └─ auto: case_advisor → LLM generation
-└─ Span: "phase2b_question_planner"
-   └─ auto: question_planner → LLM generation
+└─ Span: "phase2_hypothesis_advisor"
+   ├─ auto: hypothesis → LLM generation
+   └─ auto: case_advisor → LLM generation
 ```
 
 ### Self-hosted Deployment

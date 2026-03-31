@@ -1,4 +1,9 @@
-"""Case Advisor agent — policy-aware case opening eligibility assessment.
+"""Case Advisor agent — policy-aware eligibility assessment and question planning.
+
+Merges the former Case Advisor and Question Planner into a single agent that:
+- Evaluates case eligibility per type (eligible/blocked/incomplete)
+- Suggests 0-3 next-best questions when information is insufficient
+- Signals information_sufficient=True when all required info is gathered
 
 Provides Pydantic output models (CaseTypeAssessment, CaseAdvisory), a
 policy document loader (load_policies), the Case Advisor Agent instance,
@@ -52,11 +57,24 @@ class CaseAdvisory(BaseModel):
     general_warnings: list[str] = Field(default_factory=list)
     """Cross-cutting warnings from general guidelines."""
 
-    next_info_needed: list[str] = Field(default_factory=list)
-    """What information the CCP should gather next."""
+    questions: list[str] = Field(default_factory=list)
+    """0-3 suggested next-best questions for the CCP to ask.
+
+    Empty when information_sufficient is True.
+    """
+
+    rationale: list[str] = Field(default_factory=list)
+    """Brief explanation for each question (parallel list with questions)."""
+
+    priority_field: str = ""
+    """The most impactful missing information item, or empty when sufficient."""
+
+    information_sufficient: bool = False
+    """True when all required information has been gathered per the policy
+    checklists. The CCP can proceed to case opening."""
 
     summary: str = ""
-    """2-4 sentence summary of the eligibility landscape."""
+    """2-4 sentence summary of the eligibility landscape and next steps."""
 
 
 # ---------------------------------------------------------------------------
@@ -113,10 +131,10 @@ _POLICY_TEXT = load_policies()
 
 CASE_ADVISOR_INSTRUCTIONS = f"""\
 You are a Case Advisor specialist for AMEX card dispute servicing. Your role is
-to help the Contact Center Professional (CCP) determine which type of case to
-open based on the current case state and AMEX policy documents.
+to help the Contact Center Professional (CCP) by assessing case eligibility AND
+suggesting targeted questions to fill information gaps — all in a single step.
 
-This is ADVISORY only — the CCP makes the final decision on which case to open.
+This is ADVISORY only — the CCP makes the final decision.
 
 ## Investigation Categories
 
@@ -129,7 +147,7 @@ case type. Read them carefully and cite specific passages in your determinations
 
 {_POLICY_TEXT}
 
-## Your Task
+## Part 1 — Eligibility Assessment
 
 Given the current case state (allegations, evidence, hypothesis scores, and
 conversation so far), evaluate eligibility for each case type:
@@ -164,25 +182,72 @@ Review the general guidelines document and flag any cross-cutting warnings
 that apply to the current case (e.g., escalation triggers, priority rules,
 case type conflicts, documentation requirements).
 
-### Next information needed
+## Part 2 — Question Planning
 
-Identify what specific information the CCP should gather next to resolve any
-`incomplete` statuses. Prioritize by impact — what single piece of information
-would change the most eligibility statuses.
+Based on the eligibility assessment above, determine whether more information
+is needed and suggest targeted questions.
 
-### Summary
+### Stopping condition — information_sufficient
 
-Provide a 2-4 sentence summary of the overall eligibility landscape. Which
-case types are available, which are blocked, and what should the CCP focus on
-gathering next.
+Check the unmet_criteria across ALL case type assessments against what has
+already been gathered. If ALL of the following are true, set
+`information_sufficient = true` and return an empty questions list:
+
+- The leading hypothesis case type has status `eligible` (all criteria met,
+  no blockers), OR
+- All case types are `blocked` for reasons that cannot be resolved by
+  gathering more information from the cardmember (e.g., regulatory blocks,
+  account-level restrictions).
+
+Otherwise, set `information_sufficient = false` and suggest questions.
+
+### Question generation rules (when information is insufficient)
+
+1. **Prioritize by impact**: Identify the single most important unmet criterion
+   from the policy checklists — set this as `priority_field`. Target the
+   question(s) at resolving it first.
+
+2. **Suggest 1-3 questions**: Craft open-ended questions that target the
+   priority field and any secondary gaps. Questions should be natural and
+   conversational — suitable for a live phone call.
+
+3. **Provide rationale**: For each question, briefly explain what information
+   it aims to elicit and which policy criterion it addresses.
+
+4. **Deduplication**: If recently suggested questions are provided, do NOT
+   repeat them. Ask about the same topic from a different angle if needed.
+
+5. **Disambiguation**: If hypothesis scores are close between two categories
+   (e.g., THIRD_PARTY_FRAUD 0.4 vs SCAM 0.35), ask questions that help
+   distinguish between them.
+
+6. **First-party fraud probing**: If the FIRST_PARTY_FRAUD hypothesis is
+   elevated, suggest questions that probe for contradictions between the
+   cardmember's claims and verifiable facts (e.g., transaction details,
+   delivery, device usage) without being accusatory.
+
+7. **NEVER ask the customer to reveal their full card number (PAN) or
+   CVV/CVC.** These are already on file and asking violates PCI-DSS.
+
+8. **Prefer open-ended questions** — avoid yes/no when possible.
+
+## Part 3 — Summary
+
+Provide a 2-4 sentence summary covering:
+- Which case types are available, blocked, or incomplete.
+- What the CCP should focus on gathering next (if anything).
+- Whether the case is ready to proceed (if information_sufficient is true).
 
 ## Output Format
 
 Return structured output with:
 - assessments: list of CaseTypeAssessment (one per case type: fraud, dispute)
 - general_warnings: list of applicable cross-cutting warnings
-- next_info_needed: list of information items the CCP should gather
-- summary: 2-4 sentence eligibility summary
+- questions: 0-3 suggested questions (empty list when information_sufficient)
+- rationale: parallel list with questions
+- priority_field: most impactful missing field, or "" when sufficient
+- information_sufficient: true when ready, false when more info needed
+- summary: 2-4 sentence eligibility and next-steps summary
 """
 
 
@@ -206,32 +271,56 @@ async def run_case_advisor(
     allegations_summary: str,
     evidence_summary: str,
     hypothesis_scores: dict[str, float],
-    conversation_summary: str,
+    conversation_window: list[tuple[str, str]],
     model_provider: ModelProvider,
+    missing_fields: list[str] | None = None,
+    recent_questions: list[str] | None = None,
 ) -> CaseAdvisory:
-    """Run the Case Advisor agent to assess case opening eligibility.
+    """Run the Case Advisor agent to assess eligibility and suggest questions.
 
     Args:
         allegations_summary: Formatted allegations with types and entities.
         evidence_summary: Retrieved evidence text (transactions, auth events).
         hypothesis_scores: Current 4-category hypothesis score distribution.
-        conversation_summary: Running summary of the call so far.
+        conversation_window: Recent (speaker, text) turns from the assessment-
+            based conversation window (consistent with other agents).
         model_provider: LLM model provider for inference.
+        missing_fields: Triage-extracted fields still missing (supplementary
+            input — the agent also derives gaps from policy checklists).
+        recent_questions: Previously suggested questions to avoid repeating.
 
     Returns:
-        CaseAdvisory with per-type eligibility assessments and warnings.
+        CaseAdvisory with eligibility assessments, questions, and stopping signal.
 
     Raises:
         RuntimeError: If the agent SDK call fails.
     """
     scores_text = ", ".join(f"{k}: {v:.2f}" for k, v in hypothesis_scores.items())
 
-    user_msg = (
-        f"## Allegations\n{allegations_summary}\n\n"
-        f"## Evidence\n{evidence_summary}\n\n"
-        f"## Current Hypothesis Scores\n{scores_text}\n\n"
-        f"## Conversation Summary\n{conversation_summary}"
-    )
+    parts = [
+        f"## Allegations\n{allegations_summary}",
+        f"## Evidence\n{evidence_summary}",
+        f"## Current Hypothesis Scores\n{scores_text}",
+    ]
+
+    # Conversation window
+    if conversation_window:
+        turn_lines = [f"{speaker}: {text}" for speaker, text in conversation_window]
+        parts.append("## Recent Conversation\n" + "\n".join(turn_lines))
+
+    # Supplementary missing fields from triage entity tracking
+    if missing_fields:
+        fields_str = ", ".join(missing_fields)
+        parts.append(f"## Missing Fields (from triage)\n{fields_str}")
+
+    # Deduplication: recently suggested questions
+    if recent_questions:
+        q_lines = [f"- {q}" for q in recent_questions]
+        parts.append(
+            "## Recently Suggested Questions (do NOT repeat)\n" + "\n".join(q_lines)
+        )
+
+    user_msg = "\n\n".join(parts)
 
     try:
         result = await Runner.run(

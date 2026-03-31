@@ -187,6 +187,8 @@ def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
         print(f"  {CYAN}Suggested Questions:{RESET}")
         for q in suggestion.suggested_questions[:3]:
             print(f"    - {q}")
+    if suggestion.information_sufficient:
+        print(f"  {GREEN}Information sufficient - ready to proceed{RESET}")
     if suggestion.risk_flags:
         print(f"  {RED}Risk Flags:{RESET}")
         for flag in suggestion.risk_flags[:5]:

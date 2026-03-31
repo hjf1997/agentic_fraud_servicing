@@ -1,4 +1,8 @@
-"""Tests for copilot/case_advisor.py — models, policy loader, agent, and runner."""
+"""Tests for copilot/case_advisor.py — models, policy loader, agent, and runner.
+
+The case advisor is a merged agent that handles both eligibility assessment
+and question planning, with an information_sufficient stopping signal.
+"""
 
 from __future__ import annotations
 
@@ -74,44 +78,60 @@ class TestCaseAdvisory:
         c = CaseAdvisory()
         assert c.assessments == []
         assert c.general_warnings == []
-        assert c.next_info_needed == []
+        assert c.questions == []
+        assert c.rationale == []
+        assert c.priority_field == ""
+        assert c.information_sufficient is False
         assert c.summary == ""
 
-    def test_with_assessments(self) -> None:
+    def test_with_assessments_and_questions(self) -> None:
         fraud = CaseTypeAssessment(case_type="fraud", eligibility="incomplete")
         dispute = CaseTypeAssessment(case_type="dispute", eligibility="eligible")
         c = CaseAdvisory(
             assessments=[fraud, dispute],
             general_warnings=["Elderly caller — handle with care"],
-            next_info_needed=["Card status at time of transaction"],
+            questions=["When did the transaction occur?", "Do you still have the card?"],
+            rationale=["Need transaction date", "Need card possession info"],
+            priority_field="transaction_date",
+            information_sufficient=False,
             summary="Fraud case is incomplete. Dispute case is eligible.",
         )
         assert len(c.assessments) == 2
         assert c.assessments[0].case_type == "fraud"
         assert len(c.general_warnings) == 1
+        assert len(c.questions) == 2
+        assert len(c.rationale) == 2
+        assert c.priority_field == "transaction_date"
+        assert c.information_sufficient is False
         assert c.summary.startswith("Fraud")
+
+    def test_information_sufficient_with_empty_questions(self) -> None:
+        c = CaseAdvisory(
+            assessments=[
+                CaseTypeAssessment(case_type="fraud", eligibility="eligible"),
+            ],
+            questions=[],
+            information_sufficient=True,
+            summary="All required information gathered. Fraud case is eligible.",
+        )
+        assert c.information_sufficient is True
+        assert c.questions == []
+        assert c.priority_field == ""
 
     def test_json_round_trip(self) -> None:
         c = CaseAdvisory(
             assessments=[
                 CaseTypeAssessment(case_type="fraud", eligibility="blocked"),
             ],
+            questions=["When did this happen?"],
+            rationale=["Need transaction date"],
+            priority_field="transaction_date",
+            information_sufficient=False,
             summary="Fraud is blocked due to prior dispute.",
         )
         data = json.loads(c.model_dump_json())
         restored = CaseAdvisory.model_validate(data)
         assert restored == c
-
-    def test_next_info_needed_list(self) -> None:
-        c = CaseAdvisory(
-            next_info_needed=[
-                "Transaction date",
-                "Merchant name",
-                "Card status",
-            ],
-        )
-        assert len(c.next_info_needed) == 3
-        assert "Transaction date" in c.next_info_needed
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +220,26 @@ class TestCaseAdvisorAgent:
         """Instructions tell the agent to cite specific policy text."""
         lower = CASE_ADVISOR_INSTRUCTIONS.lower()
         assert "cite" in lower
-        assert "per" in lower and "filename" in lower or "policy" in lower
+
+    def test_instructions_contain_question_planning(self) -> None:
+        """Instructions include question planning section."""
+        assert "Question Planning" in CASE_ADVISOR_INSTRUCTIONS
+        assert "information_sufficient" in CASE_ADVISOR_INSTRUCTIONS
+
+    def test_instructions_contain_stopping_condition(self) -> None:
+        """Instructions include stopping condition rules."""
+        assert "Stopping condition" in CASE_ADVISOR_INSTRUCTIONS
+        assert "information_sufficient = true" in CASE_ADVISOR_INSTRUCTIONS
+
+    def test_instructions_contain_pan_cvv_guardrail(self) -> None:
+        """Instructions include PAN/CVV guardrail."""
+        assert "NEVER ask the customer to reveal their full card number" in CASE_ADVISOR_INSTRUCTIONS
+        assert "CVV" in CASE_ADVISOR_INSTRUCTIONS
+
+    def test_instructions_contain_dedup_rule(self) -> None:
+        """Instructions include deduplication guidance."""
+        assert "Deduplication" in CASE_ADVISOR_INSTRUCTIONS
+        assert "do NOT" in CASE_ADVISOR_INSTRUCTIONS
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +266,10 @@ class TestRunCaseAdvisor:
                 ),
             ],
             general_warnings=["Elderly caller — handle with care"],
-            next_info_needed=["Card status at time of transaction"],
+            questions=["When did the transaction happen?"],
+            rationale=["Need transaction date"],
+            priority_field="transaction_date",
+            information_sufficient=False,
             summary="Fraud case is incomplete. Dispute case blocked.",
         )
 
@@ -256,13 +298,15 @@ class TestRunCaseAdvisor:
                 allegations_summary="UNRECOGNIZED_TRANSACTION: $2847 at TechVault",
                 evidence_summary="Chip+PIN auth from enrolled device",
                 hypothesis_scores=default_scores,
-                conversation_summary="CM called about unauthorized charge",
+                conversation_window=[("CARDMEMBER", "I didn't make this purchase")],
                 model_provider=mock_provider,
             )
 
         assert isinstance(result, CaseAdvisory)
         assert len(result.assessments) == 1
         assert result.assessments[0].case_type == "fraud"
+        assert len(result.questions) == 1
+        assert result.information_sufficient is False
 
     async def test_passes_model_provider(self, mock_provider, default_scores) -> None:
         """run_case_advisor passes model_provider in RunConfig."""
@@ -278,7 +322,7 @@ class TestRunCaseAdvisor:
                 allegations_summary="test",
                 evidence_summary="test",
                 hypothesis_scores=default_scores,
-                conversation_summary="test",
+                conversation_window=[("CARDMEMBER", "test")],
                 model_provider=mock_provider,
             )
 
@@ -299,7 +343,7 @@ class TestRunCaseAdvisor:
                 allegations_summary="UNRECOGNIZED_TRANSACTION: $2847 at TechVault",
                 evidence_summary="evidence",
                 hypothesis_scores=default_scores,
-                conversation_summary="summary",
+                conversation_window=[("CARDMEMBER", "test")],
                 model_provider=mock_provider,
             )
 
@@ -321,7 +365,7 @@ class TestRunCaseAdvisor:
                 allegations_summary="claims",
                 evidence_summary="Chip+PIN auth from enrolled device ID dev-123",
                 hypothesis_scores=default_scores,
-                conversation_summary="summary",
+                conversation_window=[("CARDMEMBER", "test")],
                 model_provider=mock_provider,
             )
 
@@ -350,12 +394,107 @@ class TestRunCaseAdvisor:
                 allegations_summary="claims",
                 evidence_summary="evidence",
                 hypothesis_scores=scores,
-                conversation_summary="summary",
+                conversation_window=[("CARDMEMBER", "test")],
                 model_provider=mock_provider,
             )
 
         user_input = mock_run.call_args.kwargs.get("input") or mock_run.call_args.args[1]
         assert "FIRST_PARTY_FRAUD: 0.60" in user_input
+
+    async def test_includes_conversation_window(self, mock_provider, default_scores) -> None:
+        """run_case_advisor includes conversation window in user message."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = CaseAdvisory()
+
+        with patch(
+            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_case_advisor(
+                allegations_summary="claims",
+                evidence_summary="evidence",
+                hypothesis_scores=default_scores,
+                conversation_window=[
+                    ("CCP", "How can I help you?"),
+                    ("CARDMEMBER", "I see a charge I didn't make"),
+                ],
+                model_provider=mock_provider,
+            )
+
+        user_input = mock_run.call_args.kwargs.get("input") or mock_run.call_args.args[1]
+        assert "## Recent Conversation" in user_input
+        assert "I see a charge I didn't make" in user_input
+
+    async def test_includes_missing_fields(self, mock_provider, default_scores) -> None:
+        """run_case_advisor includes missing fields when provided."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = CaseAdvisory()
+
+        with patch(
+            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_case_advisor(
+                allegations_summary="claims",
+                evidence_summary="evidence",
+                hypothesis_scores=default_scores,
+                conversation_window=[("CARDMEMBER", "test")],
+                model_provider=mock_provider,
+                missing_fields=["transaction_date", "auth_method"],
+            )
+
+        user_input = mock_run.call_args.kwargs.get("input") or mock_run.call_args.args[1]
+        assert "## Missing Fields" in user_input
+        assert "transaction_date" in user_input
+        assert "auth_method" in user_input
+
+    async def test_includes_recent_questions(self, mock_provider, default_scores) -> None:
+        """run_case_advisor includes recent questions for dedup."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = CaseAdvisory()
+
+        with patch(
+            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_case_advisor(
+                allegations_summary="claims",
+                evidence_summary="evidence",
+                hypothesis_scores=default_scores,
+                conversation_window=[("CARDMEMBER", "test")],
+                model_provider=mock_provider,
+                recent_questions=["When did this happen?", "Do you have the card?"],
+            )
+
+        user_input = mock_run.call_args.kwargs.get("input") or mock_run.call_args.args[1]
+        assert "Recently Suggested Questions" in user_input
+        assert "When did this happen?" in user_input
+
+    async def test_omits_optional_sections_when_none(self, mock_provider, default_scores) -> None:
+        """Optional sections are omitted when not provided."""
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = CaseAdvisory()
+
+        with patch(
+            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
+            await run_case_advisor(
+                allegations_summary="claims",
+                evidence_summary="evidence",
+                hypothesis_scores=default_scores,
+                conversation_window=[],
+                model_provider=mock_provider,
+            )
+
+        user_input = mock_run.call_args.kwargs.get("input") or mock_run.call_args.args[1]
+        assert "## Missing Fields" not in user_input
+        assert "Recently Suggested Questions" not in user_input
+        assert "## Recent Conversation" not in user_input
 
     async def test_wraps_exceptions_in_runtime_error(self, mock_provider, default_scores) -> None:
         """run_case_advisor wraps SDK exceptions in RuntimeError."""
@@ -369,6 +508,6 @@ class TestRunCaseAdvisor:
                     allegations_summary="claims",
                     evidence_summary="evidence",
                     hypothesis_scores=default_scores,
-                    conversation_summary="summary",
+                    conversation_window=[("CARDMEMBER", "test")],
                     model_provider=mock_provider,
                 )
