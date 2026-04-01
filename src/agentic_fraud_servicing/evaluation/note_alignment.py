@@ -27,6 +27,8 @@ class NoteAlignmentScore(BaseModel):
     """Structured output from the note alignment scoring agent.
 
     Attributes:
+        copilot_category: The investigation category the copilot concluded.
+        ccp_category: The investigation category the CCP concluded.
         facts_coverage: 0.0-1.0 — did copilot capture the same key facts?
         allegation_alignment: 0.0-1.0 — does copilot's understanding match CCP's?
         category_action: 0.0-1.0 — do category and recommended actions agree?
@@ -34,6 +36,8 @@ class NoteAlignmentScore(BaseModel):
         explanation: Brief rationale for each sub-score.
     """
 
+    copilot_category: str = ""
+    ccp_category: str = ""
     facts_coverage: float = 0.0
     allegation_alignment: float = 0.0
     category_action: float = 0.0
@@ -95,6 +99,18 @@ This dimension requires **reasoning trace comparison**, not just outcome matchin
   some valid signals but missed key evidence that led CCP to a different conclusion.
 - **0.0**: Complete disagreement — copilot's reasoning contradicts the CCP's
   assessment with no valid supporting evidence.
+
+## Category Extraction (MANDATORY first step)
+
+Before scoring, you MUST:
+1. Identify the copilot's concluded category from its highest hypothesis score.
+   Set `copilot_category` to one of: third_party_fraud, first_party_fraud, scam, dispute.
+2. Identify the CCP's concluded category from their notes and reasoning.
+   Set `ccp_category` to one of: third_party_fraud, first_party_fraud, scam, dispute.
+3. If `copilot_category` and `ccp_category` differ, the outcomes DISAGREE — you
+   MUST use the disagreement rubric (0.0–0.3) for Category & Action Agreement.
+   Do not conflate discussing the same topic (e.g., both mention fraud) with
+   reaching the same conclusion (e.g., both conclude third-party fraud).
 
 ## Rules
 1. Be lenient on wording — focus on semantic equivalence, not exact phrasing.
@@ -239,7 +255,29 @@ async def _score_alignment(
             input=user_msg,
             run_config=RunConfig(model_provider=model_provider),
         )
-        return result.final_output
+        score: NoteAlignmentScore = result.final_output
+        # Consistency guard: if extracted categories disagree but the LLM
+        # scored category_action above the disagreement ceiling, cap it.
+        _DISAGREEMENT_CEILING = 0.3
+        if (
+            score.copilot_category
+            and score.ccp_category
+            and score.copilot_category.strip().lower()
+            != score.ccp_category.strip().lower()
+            and score.category_action > _DISAGREEMENT_CEILING
+        ):
+            score.category_action = _DISAGREEMENT_CEILING
+            score.overall = round(
+                (score.facts_coverage + score.allegation_alignment + score.category_action)
+                / 3,
+                2,
+            )
+            score.explanation += (
+                f" [Auto-corrected: copilot concluded '{score.copilot_category}'"
+                f" but CCP concluded '{score.ccp_category}' —"
+                f" category_action capped at {_DISAGREEMENT_CEILING}.]"
+            )
+        return score
     except Exception as exc:
         from agentic_fraud_servicing.copilot.langfuse_tracing import extract_http_error
 
