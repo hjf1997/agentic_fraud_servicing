@@ -43,7 +43,6 @@ from agentic_fraud_servicing.ui.eval_dashboard import (  # noqa: E402
     _build_decision_html,
     _build_eval_transcript_html,
     _build_evidence_table_html,
-    _build_flagged_turns_html,
     _build_hypothesis_chart,
     _build_latency_chart,
     _build_latency_stats_html,
@@ -92,8 +91,7 @@ def _build_full_report(scenario_name: str) -> str:
 
     # Build HTML sections from eval_dashboard builders
     summary_html = _build_summary_html(report, run)
-    latency_stats_html = _build_latency_stats_html(report)
-    flagged_turns_html = _build_flagged_turns_html(report)
+    latency_stats_html = _build_latency_stats_html(report, run)
     prediction_html = _build_prediction_html(report)
     adherence_detail_html = _build_adherence_detail_html(report)
     allegation_html = _build_allegation_html(report)
@@ -208,7 +206,6 @@ def _build_full_report(scenario_name: str) -> str:
       <div class="card">{latency_img}</div>
       <div>
         {latency_stats_html}
-        {flagged_turns_html}
       </div>
     </div>
 
