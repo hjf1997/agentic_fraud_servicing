@@ -147,30 +147,65 @@ case type. Read them carefully and cite specific passages in your determinations
 
 {_POLICY_TEXT}
 
-## Part 1 — Eligibility Assessment
+## Part 1A — Allegation Credibility Check (MANDATORY before eligibility)
 
-Given the current case state (allegations, evidence, hypothesis scores, and
-conversation so far), evaluate eligibility for each case type:
+Before evaluating policy criteria, cross-reference EACH allegation against the
+retrieved evidence and hypothesis scores. Allegations are what the cardmember
+CLAIMS — they are not facts until corroborated by evidence.
+
+1. **For each allegation**, check whether retrieved evidence supports,
+   contradicts, or is neutral:
+   - **Contradicted**: Evidence directly refutes the allegation (e.g., signed
+     delivery proof vs. "never received"; chip+PIN auth from enrolled device
+     vs. "unauthorized transaction"; CM's own device/IP in auth logs vs.
+     "account takeover by stranger"). A contradicted allegation MUST NOT count
+     as satisfying a policy criterion.
+   - **Supported**: Evidence corroborates the allegation (e.g., auth logs show
+     unfamiliar device matching CM's "unauthorized" claim; no delivery record
+     matching CM's "never received" claim).
+   - **Unverified**: No evidence available to confirm or refute. Treat as
+     tentatively meeting the criterion but flag it as requiring verification.
+
+2. **Factor in hypothesis scores**: If FIRST_PARTY_FRAUD hypothesis is
+   elevated (≥ 0.3), apply heightened scrutiny to all allegations — look
+   harder for contradictions and do NOT treat unverified allegations as
+   meeting eligibility criteria. Instead, mark those criteria as `unmet`
+   until corroborating evidence is gathered.
+
+3. **Flag contradictions** in `general_warnings` with the specific allegation,
+   the contradicting evidence, and the impact on eligibility.
+
+## Part 1B — Eligibility Assessment
+
+Given the credibility check above, the current case state, and the policy
+documents, evaluate eligibility for each case type:
 
 ### For each case type (fraud, dispute):
 
 1. **Determine eligibility status**:
-   - `eligible` — All required criteria from the policy checklist are met and
-     no blocking rules apply. The CCP can proceed to open this case type.
-   - `blocked` — An active blocking rule prevents opening this case type.
-     Cite the specific blocking rule from the policy document.
+   - `eligible` — All required criteria from the policy checklist are met
+     BY CORROBORATED OR UNCONTRADICTED ALLEGATIONS and no blocking rules
+     apply. The CCP can proceed to open this case type. A criterion satisfied
+     only by a contradicted allegation is NOT met.
+   - `blocked` — An active blocking rule prevents opening this case type,
+     OR evidence directly contradicts the foundational allegation for this
+     case type (e.g., proven authorized transaction blocks fraud case).
+     Cite the specific blocking rule or contradicting evidence.
    - `incomplete` — Some required criteria are not yet satisfied but no
      blocking rules apply. The case could become eligible once more information
-     is gathered.
+     is gathered. Criteria backed only by unverified allegations when
+     FIRST_PARTY_FRAUD is elevated should be treated as incomplete.
 
-2. **List met criteria** — Which policy requirements are already satisfied,
-   with brief evidence references.
+2. **List met criteria** — Which policy requirements are satisfied by
+   supported or uncontradicted allegations, with brief evidence references.
 
 3. **List unmet criteria** — Which policy requirements are NOT yet satisfied.
-   Be specific about what information is missing.
+   Include criteria where the allegation is contradicted by evidence —
+   explain what evidence contradicts the claim.
 
 4. **List blockers** — Any active blocking rules that prevent opening this
-   case type. Cite the exact policy text.
+   case type, including evidence-based contradictions that undermine the
+   case foundation. Cite the exact policy text or evidence.
 
 5. **Cite policy text** — For every determination, reference the specific
    policy document and passage. Use the format:
@@ -180,7 +215,8 @@ conversation so far), evaluate eligibility for each case type:
 
 Review the general guidelines document and flag any cross-cutting warnings
 that apply to the current case (e.g., escalation triggers, priority rules,
-case type conflicts, documentation requirements).
+case type conflicts, documentation requirements, allegation credibility
+concerns from Part 1A).
 
 ## Part 2 — Question Planning
 

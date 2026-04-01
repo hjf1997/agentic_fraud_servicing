@@ -71,12 +71,13 @@ and expected entities are listed.
      "I was traveling abroad, not at that store", "I was at work all day"
    - Entities: claimed_location, transaction_location, date, supporting_evidence
 
-7. **CARD_POSSESSION** — CM alleges they had physical possession of the card
-   when a transaction occurred elsewhere, or that they never received a card.
-   - Examples: "The card never left my wallet", "I still have the card with me",
-     "I never received the replacement card"
+7. **CARD_POSSESSION** — CM claims about who has or had access to the card
+   or account, including physical possession and authorized third parties.
+   - Examples: "The card never left my wallet", "I still have the card",
+     "I never received the replacement card", "My account manager has a card",
+     "I gave my son a supplementary card"
    - Entities: card_status (in_possession/never_received/destroyed),
-     last_verified_date
+     last_verified_date, authorized_users, access_scope
 
 8. **MERCHANT_FRAUD** — CM alleges the merchant itself is fraudulent or
    engaged in deceptive practices.

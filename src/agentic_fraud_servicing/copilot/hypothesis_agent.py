@@ -123,6 +123,12 @@ Apply these evidence-to-hypothesis mappings:
   Increase FIRST_PARTY_FRAUD. Changing the narrative under pressure is a
   behavioral red flag for misrepresentation.
 
+- **CM authorized a third party who made the disputed transactions** →
+  Strongly decrease THIRD_PARTY_FRAUD. If the CM granted access (employee,
+  family, delegate, agency), the transactions are not unauthorized — increase
+  DISPUTE (billing issue) or FIRST_PARTY_FRAUD (CM denies knowledge despite
+  granting access).
+
 - **High impersonation risk from auth assessment** →
   Increase THIRD_PARTY_FRAUD. If the caller may not be the real cardholder,
   the account may have been taken over.
