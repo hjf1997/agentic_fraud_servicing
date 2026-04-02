@@ -156,9 +156,10 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         r"\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b"
     )),
 
-    # Address — US street address patterns
+    # Address — US street address patterns.
+    # Cap word repetitions at {1,4} to prevent backtracking on long text.
     ("ADDRESS", re.compile(
-        r"\b\d+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z]?[a-zA-Z]+)*\s+"
+        r"\b\d+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z]?[a-zA-Z]+){0,4}\s+"
         r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr"
         r"|Lane|Ln|Way|Court|Ct|Place|Pl|Circle|Cir|Trail|Trl"
         r"|Parkway|Pkwy|Highway|Hwy)\b\.?",
@@ -207,9 +208,20 @@ class FirewallRedactor:
         self._reverse[placeholder] = original
         return placeholder
 
+    # Maximum text length to process. Beyond this, skip redaction to avoid
+    # regex backtracking on very large inputs (e.g., system events with
+    # embedded full context). 10 KB covers any realistic single utterance.
+    _MAX_TEXT_LEN = 10_000
+
     def redact_text(self, text: str) -> str:
         """Replace all sensitive patterns in *text* with placeholders."""
         if not text:
+            return text
+        if len(text) > self._MAX_TEXT_LEN:
+            logger.warning(
+                "Firewall redactor skipping text of length %d (exceeds %d)",
+                len(text), self._MAX_TEXT_LEN,
+            )
             return text
 
         # 1. Collect every match across all pattern categories
