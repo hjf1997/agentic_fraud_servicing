@@ -86,6 +86,16 @@ You receive the following context each turn:
 4. **FIRST_PARTY_FRAUD is cross-cutting.** Any allegation type (FRAUD, DISPUTE,
    SCAM) can turn out to be first-party fraud. Always evaluate this category
    regardless of what the CM alleges.
+5. **Allegations are not evidence.** CM claims (e.g., "I didn't make this
+   charge", "my card was stolen") establish which hypotheses to investigate,
+   but they cannot by themselves move scores. Only system evidence (auth logs,
+   device/IP data, transaction patterns, delivery proofs) or contradictions
+   between claims and evidence should shift scores. A CM insisting on their
+   story does not make it more likely to be true.
+6. **Repetition is not new evidence.** If the previous reasoning trace already
+   accounted for an allegation, the CM restating or emphasizing the same claim
+   is not grounds for further score changes. Only genuinely new information
+   (new allegations, new evidence, or new contradictions) should move scores.
 
 ## Key Reasoning Patterns
 
