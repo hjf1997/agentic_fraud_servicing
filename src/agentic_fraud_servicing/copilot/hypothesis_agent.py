@@ -66,7 +66,11 @@ You receive the following context each turn:
    events, customer profile, device enrollment, delivery proofs.
 4. **Current Hypothesis Scores** — The previous turn's probability distribution
    across the 4 categories. Use these as a Bayesian prior to update.
-5. **Conversation Summary** — Running summary of the call so far.
+5. **Previous Reasoning Trace** — Your own per-category reasoning, contradictions,
+   and assessment summary from the last assessment turn. Use this to ground your
+   update: identify what new evidence or allegations have appeared since then,
+   and explain how they shift (or reinforce) each score.
+6. **Conversation Summary** — Running summary of the call so far.
 
 ## Scoring Rules
 
@@ -75,9 +79,10 @@ You receive the following context each turn:
 2. **Scores should approximate a probability distribution** — they should sum to
    roughly 1.0. Small deviations are acceptable but avoid scores that sum to
    more than 1.2 or less than 0.8.
-3. **Use previous scores as a prior.** Update them based on new evidence rather
-   than scoring from scratch each turn. Scores should shift gradually unless
-   strong contradictory evidence emerges.
+3. **Use previous scores and reasoning as a prior.** Compare the current
+   evidence against the previous reasoning trace to identify what changed.
+   Explain the delta — why each score moved up, down, or stayed the same.
+   Scores should shift gradually unless strong contradictory evidence emerges.
 4. **FIRST_PARTY_FRAUD is cross-cutting.** Any allegation type (FRAUD, DISPUTE,
    SCAM) can turn out to be first-party fraud. Always evaluate this category
    regardless of what the CM alleges.
@@ -163,6 +168,7 @@ async def run_hypothesis(
     current_scores: dict[str, float],
     conversation_summary: str,
     model_provider: ModelProvider,
+    previous_reasoning: HypothesisAssessment | None = None,
 ) -> HypothesisAssessment:
     """Run the hypothesis agent to score investigation categories.
 
@@ -173,6 +179,9 @@ async def run_hypothesis(
         current_scores: Previous hypothesis scores (4-key dict).
         conversation_summary: Running summary of the call so far.
         model_provider: LLM model provider for inference.
+        previous_reasoning: Full HypothesisAssessment from the last successful
+            run. Provides the reasoning trace so the agent can reason about
+            what changed since the last assessment.
 
     Returns:
         HypothesisAssessment with updated scores, reasoning, and contradictions.
@@ -183,11 +192,30 @@ async def run_hypothesis(
     # Format previous scores for the prompt
     scores_text = ", ".join(f"{k}: {v:.2f}" for k, v in current_scores.items())
 
+    # Format previous reasoning trace
+    prev_reasoning_text = "First assessment — no prior reasoning."
+    if previous_reasoning is not None:
+        reasoning_lines = [
+            f"- {k}: {v}" for k, v in previous_reasoning.reasoning.items() if v
+        ]
+        parts = []
+        if reasoning_lines:
+            parts.append("Per-category reasoning:\n" + "\n".join(reasoning_lines))
+        if previous_reasoning.contradictions:
+            parts.append(
+                "Contradictions: " + "; ".join(previous_reasoning.contradictions)
+            )
+        if previous_reasoning.assessment_summary:
+            parts.append(f"Summary: {previous_reasoning.assessment_summary}")
+        if parts:
+            prev_reasoning_text = "\n".join(parts)
+
     user_msg = (
         f"## Accumulated Allegations\n{allegations_summary}\n\n"
         f"## Auth Assessment\n{auth_summary}\n\n"
         f"## Retrieved Evidence\n{evidence_summary}\n\n"
         f"## Current Hypothesis Scores\n{scores_text}\n\n"
+        f"## Previous Reasoning Trace\n{prev_reasoning_text}\n\n"
         f"## Conversation Summary\n{conversation_summary}"
     )
 

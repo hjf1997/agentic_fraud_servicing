@@ -94,6 +94,7 @@ class CopilotOrchestrator:
         self.transcript_history: list[TranscriptEvent] = []
         self.accumulated_allegations: list[AllegationExtraction] = []
         self._retrieval_result: RetrievalResult | None = None
+        self._last_hypothesis: HypothesisAssessment | None = None
         self._recent_suggestions: list[list[str]] = []
         self._turn_count: int = 0
         self._cm_turn_count: int = 0
@@ -330,6 +331,7 @@ class CopilotOrchestrator:
                 pass
         if hypothesis_result is not None:
             self.hypothesis_scores = dict(hypothesis_result.scores)
+            self._last_hypothesis = hypothesis_result
 
         # 8. Track recent suggestions for dedup in subsequent turns
         suggested_questions = case_advisory.questions if case_advisory else []
@@ -697,6 +699,7 @@ class CopilotOrchestrator:
                 current_scores=dict(self.hypothesis_scores),
                 conversation_summary=self._format_conversation_for_hypothesis(),
                 model_provider=self.model_provider,
+                previous_reasoning=self._last_hypothesis,
             )
             self._log_agent_trace("hypothesis", "run", (time.perf_counter() - t0) * 1000)
             return result
