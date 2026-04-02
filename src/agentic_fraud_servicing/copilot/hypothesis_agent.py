@@ -124,7 +124,7 @@ Apply these evidence-to-hypothesis mappings:
   behavioral red flag for misrepresentation.
 
 - **CM authorized a third party who made the disputed transactions** →
-  Strongly decrease THIRD_PARTY_FRAUD. If the CM granted access (employee,
+  Decrease THIRD_PARTY_FRAUD. If the CM granted access (employee,
   family, delegate, agency), the transactions are not unauthorized — increase
   DISPUTE (billing issue) or FIRST_PARTY_FRAUD (CM denies knowledge despite
   granting access).

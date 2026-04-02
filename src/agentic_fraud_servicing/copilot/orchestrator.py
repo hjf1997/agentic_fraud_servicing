@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
+from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
+from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_hypothesis
 from agentic_fraud_servicing.copilot.langfuse_tracing import (
     extract_http_error,
     get_langfuse,
@@ -25,12 +27,11 @@ from agentic_fraud_servicing.copilot.langfuse_tracing import (
     tag_agent_error,
     tag_firewall_block,
 )
-from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
-from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_hypothesis
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult, run_retrieval
 from agentic_fraud_servicing.copilot.triage_agent import run_triage
 from agentic_fraud_servicing.gateway.tool_gateway import AuthContext, ToolGateway
 from agentic_fraud_servicing.gateway.tools.write_tools import append_evidence_node
+from agentic_fraud_servicing.ingestion.firewall_redactor import FirewallRedactor
 from agentic_fraud_servicing.models.allegations import (
     AllegationExtraction,
     AllegationExtractionResult,
@@ -97,6 +98,7 @@ class CopilotOrchestrator:
         self._turn_count: int = 0
         self._cm_turn_count: int = 0
         self._last_assessed_idx: int = 0
+        self._firewall_redactor = FirewallRedactor()
 
     async def process_event(
         self, event: TranscriptEvent, *, is_last: bool = False
@@ -211,7 +213,10 @@ class CopilotOrchestrator:
         context_start = max(0, new_start - context_trailing)
         window = history[context_start:]
         new_turn_offset = new_start - context_start
-        conversation_window = [(e.speaker.value, e.text) for e in window]
+        conversation_window = [
+            (e.speaker.value, self._firewall_redactor.redact_text(e.text))
+            for e in window
+        ]
         allegation_summary = (
             self._format_allegations_for_hypothesis()
             if self.accumulated_allegations
@@ -240,7 +245,8 @@ class CopilotOrchestrator:
                     risk_flags, conversation_window, new_turn_offset, allegation_summary
                 ),
                 self._run_auth_safe(
-                    event.text, auth_events, customer_profile, risk_flags,
+                    self._firewall_redactor.redact_text(event.text),
+                    auth_events, customer_profile, risk_flags,
                     conversation_window,
                 ),
                 self._run_retrieval_safe(risk_flags),
@@ -511,7 +517,10 @@ class CopilotOrchestrator:
         context_trailing = 4
         context_start = max(0, self._last_assessed_idx - context_trailing)
         window = self.transcript_history[context_start:]
-        lines = [f"{e.speaker.value}: {e.text}" for e in window]
+        lines = [
+            f"{e.speaker.value}: {self._firewall_redactor.redact_text(e.text)}"
+            for e in window
+        ]
         return f"{len(self.transcript_history)} turns total. Recent:\n" + "\n".join(lines)
 
     def _update_missing_fields(self) -> None:

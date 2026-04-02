@@ -1,0 +1,244 @@
+"""Firewall-aware content redactor for LLM prompts.
+
+Detects and replaces sensitive data patterns with reversible placeholders
+before sending agent prompts to the upstream LLM. Acts as a proactive
+guardrail against enterprise firewall/DLP policy blocks that can reject
+entire prompts when sensitive patterns are detected.
+
+Adapted from the OpenCode-ConnectChain Gateway redactor. Patterns that are
+too aggressive for fraud investigation context (where dollar amounts, dates,
+and transaction details are essential for reasoning) are disabled.
+
+A single Redactor instance should be used per orchestrator session so the
+same original value always maps to the same placeholder, keeping the
+conversation coherent across turns.
+"""
+
+import logging
+import re
+from collections import defaultdict
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Pattern definitions
+# ---------------------------------------------------------------------------
+# Order: most specific first -> broadest last.
+# When matches overlap, the earlier (more specific) pattern wins.
+#
+# Each entry: (category_name, compiled_regex)
+# The category name is used in placeholders: [REDACTED_{category}_{n}]
+#
+# DISABLED patterns are commented out with rationale — they strip information
+# that agents need for fraud investigation reasoning.
+
+_PATTERNS: list[tuple[str, re.Pattern]] = [
+
+    # === PII — specific formats ===
+
+    # SSN  (123-45-6789)
+    ("SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+
+    # Credit card — AMEX (3xxx xxxxxx xxxxx, 15 digits) then generic 16-digit
+    ("CREDIT_CARD", re.compile(
+        r"\b(?:"
+        r"3[47]\d{2}[\s-]?\d{6}[\s-]?\d{5}"           # AMEX
+        r"|(?:\d{4}[\s-]?){3}\d{4}"                     # Visa / MC / Discover
+        r")\b"
+    )),
+
+    # Phone — US formats:  +1 (212) 555-0123 / 212-555-0123 / 2125550123 etc.
+    ("PHONE", re.compile(
+        r"(?<!\d)"                                       # no digit before
+        r"(?:\+?1[\s.-]?)?"                              # optional country code
+        r"\(?\d{3}\)?[\s.-]?"                            # area code
+        r"\d{3}[\s.-]?\d{4}"
+        r"(?!\d)"                                        # no digit after
+    )),
+
+    # Email
+    ("EMAIL", re.compile(
+        r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"
+    )),
+
+    # === Financial ===
+
+    # DISABLED: Dollar amounts are critical for fraud reasoning (transaction
+    # amounts, dispute values, refund calculations).
+    # ("DOLLAR_AMOUNT", re.compile(r"\$[\d,]+(?:\.\d{1,2})?")),
+
+    # DISABLED: Percentages appear in hypothesis scores and risk assessments.
+    # ("PERCENTAGE", re.compile(r"\b\d+(?:\.\d+)?%")),
+
+    # === Date / Time ===
+
+    # DISABLED: Dates are essential for fraud investigation — transaction dates,
+    # incident timelines, card loss dates, delivery dates.
+    # ("DATE", re.compile(...)),
+
+    # DISABLED: Times appear in auth logs and transaction records.
+    # ("TIME", re.compile(...)),
+
+    # === Demographic — keyword lists ===
+
+    # Gender
+    ("GENDER", re.compile(
+        r"\b(?:male|female|non-binary|nonbinary|transgender|cisgender"
+        r"|genderqueer|genderfluid|agender|bigender|intersex)\b",
+        re.IGNORECASE,
+    )),
+
+    # Gender expression / pronouns
+    ("GENDER_EXPRESSION", re.compile(
+        r"\b(?:he/him|she/her|they/them|ze/zir|xe/xem)\b",
+        re.IGNORECASE,
+    )),
+
+    # Religion
+    ("RELIGION", re.compile(
+        r"\b(?:Christian(?:ity)?|Catholic(?:ism)?|Protestant(?:ism)?"
+        r"|Baptist|Methodist|Lutheran|Presbyterian|Evangelical"
+        r"|Orthodox|Muslim|Islam(?:ic)?|Jewish|Judaism"
+        r"|Hindu(?:ism)?|Buddhist|Buddhism|Sikh(?:ism)?"
+        r"|Mormon|Latter.?day|Jehovah|Scientolog\w*"
+        r"|Baha.?i|Jain(?:ism)?|Shinto(?:ism)?"
+        r"|Taoist|Taoism|Confucian(?:ism)?|Zoroastrian(?:ism)?"
+        r"|Pagan(?:ism)?|Wiccan|Atheist|Agnostic)\b",
+        re.IGNORECASE,
+    )),
+
+    # Nationality (major)
+    ("NATIONALITY", re.compile(
+        r"\b(?:American|British|Canadian|Mexican|Chinese|Japanese|Korean"
+        r"|Indian|Pakistani|Bangladeshi|Filipino|Vietnamese|Thai"
+        r"|Indonesian|Malaysian|Brazilian|Colombian|Argentin\w+"
+        r"|Peruvian|Chilean|French|German|Italian|Spanish|Portuguese"
+        r"|Dutch|Belgian|Swedish|Norwegian|Danish|Finnish|Polish"
+        r"|Czech|Romanian|Russian|Ukrainian|Turkish|Iranian|Iraqi"
+        r"|Saudi|Egyptian|Nigerian|Kenyan|South\s?African|Ethiopian"
+        r"|Ghanaian|Australian|New\s?Zealand\w*)\b",
+        re.IGNORECASE,
+    )),
+
+    # Medical terms
+    ("MEDICAL", re.compile(
+        r"\b(?:diagnosis|prognosis|prescription|medication|surgery"
+        r"|therapy|treatment|symptom|disorder|disease|allergy|allergic"
+        r"|disability|handicap|impairment|chronic|acute|terminal"
+        r"|mental\s?health|depression|anxiety|PTSD|bipolar"
+        r"|schizophren\w*|diabetes|cancer|HIV|AIDS|hepatitis"
+        r"|epilepsy|asthma|hypertension|cholesterol|insulin"
+        r"|chemotherapy|radiation|rehabilitation|prosthetic"
+        r"|wheelchair|hearing\s?aid)\b",
+        re.IGNORECASE,
+    )),
+
+    # Medical accommodation
+    ("MEDICAL_ACCOMMODATION", re.compile(
+        r"\b(?:accommodation|ADA|FMLA|medical\s?leave|sick\s?leave"
+        r"|reasonable\s?accommodation|modified\s?duty|light\s?duty"
+        r"|ergonomic|assistive\s?technology|service\s?animal)\b",
+        re.IGNORECASE,
+    )),
+
+    # Security-question responses (best-effort pattern matching)
+    ("SECURITY_QUESTION", re.compile(
+        r"(?:mother'?s?\s+maiden\s+name|first\s+pet|elementary\s+school"
+        r"|favorite\s+(?:color|movie|book|food|teacher|sport)"
+        r"|city\s+(?:born|grew\s+up)|street\s+grew\s+up)"
+        r"[\s:]+\S+",
+        re.IGNORECASE,
+    )),
+
+    # Person name — title-prefixed (full NER would require spaCy / similar)
+    ("PERSON_NAME", re.compile(
+        r"\b(?:Mr|Mrs|Ms|Miss|Dr|Prof|Sr|Jr)"
+        r"\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b"
+    )),
+
+    # Address — US street address patterns
+    ("ADDRESS", re.compile(
+        r"\b\d+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z]?[a-zA-Z]+)*\s+"
+        r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr"
+        r"|Lane|Ln|Way|Court|Ct|Place|Pl|Circle|Cir|Trail|Trl"
+        r"|Parkway|Pkwy|Highway|Hwy)\b\.?",
+        re.IGNORECASE,
+    )),
+
+    # DISABLED: Zip codes are needed for location claims in fraud investigation
+    # (CM alleges they were in a different location).
+    # ("ZIP_CODE", re.compile(r"\b\d{5}(?:-\d{4})?\b")),
+
+    # === Broad patterns (aggressive — ordered last) ===
+
+    # DISABLED: OTP pattern matches ANY 3-digit number — far too aggressive.
+    # Catches CVV references, partial amounts, counts, turn numbers.
+    # ("OTP", re.compile(r"\b\d{3}\b")),
+
+    # Numbers with 4+ digits — looks like card numbers to DLP filters.
+    ("LONG_NUMBER", re.compile(r"\b\d{4,}\b")),
+]
+
+
+# ---------------------------------------------------------------------------
+# Redactor class
+# ---------------------------------------------------------------------------
+
+class FirewallRedactor:
+    """Detects and replaces sensitive data with reversible, numbered placeholders.
+
+    A single instance should be used for the entire orchestrator session so the
+    same original value always maps to the same placeholder, keeping the
+    conversation coherent across turns.
+    """
+
+    def __init__(self) -> None:
+        self._vault: dict[str, str] = {}               # original -> placeholder
+        self._reverse: dict[str, str] = {}              # placeholder -> original
+        self._counters: dict[str, int] = defaultdict(int)
+
+    def _get_placeholder(self, category: str, original: str) -> str:
+        """Return a consistent placeholder for *original*, creating one if needed."""
+        if original in self._vault:
+            return self._vault[original]
+        self._counters[category] += 1
+        placeholder = f"[REDACTED_{category}_{self._counters[category]}]"
+        self._vault[original] = placeholder
+        self._reverse[placeholder] = original
+        return placeholder
+
+    def redact_text(self, text: str) -> str:
+        """Replace all sensitive patterns in *text* with placeholders."""
+        if not text:
+            return text
+
+        # 1. Collect every match across all pattern categories
+        matches: list[tuple[int, int, str, str]] = []   # (start, end, category, value)
+        for category, pattern in _PATTERNS:
+            for m in pattern.finditer(text):
+                matches.append((m.start(), m.end(), category, m.group()))
+
+        if not matches:
+            return text
+
+        # 2. Sort by start position; for ties keep the longer match
+        matches.sort(key=lambda x: (x[0], -(x[1] - x[0])))
+
+        # 3. Discard overlapping matches (first / longest wins)
+        filtered: list[tuple[int, int, str, str]] = []
+        last_end = 0
+        for start, end, category, value in matches:
+            if start >= last_end:
+                filtered.append((start, end, category, value))
+                last_end = end
+
+        # 4. Replace from right to left so earlier indices stay valid
+        result = text
+        for start, end, category, value in reversed(filtered):
+            placeholder = self._get_placeholder(category, value)
+            result = result[:start] + placeholder + result[end:]
+
+        if filtered:
+            logger.debug("Firewall redactor replaced %d matches", len(filtered))
+
+        return result

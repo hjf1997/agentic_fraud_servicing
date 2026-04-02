@@ -1,5 +1,6 @@
 """Transcript ingestion and redaction pipeline."""
 
+from agentic_fraud_servicing.ingestion.firewall_redactor import FirewallRedactor
 from agentic_fraud_servicing.ingestion.redaction import (
     RedactionError,
     redact_address,
@@ -16,6 +17,7 @@ from agentic_fraud_servicing.ingestion.transcript import (
 )
 
 __all__ = [
+    "FirewallRedactor",
     "RedactionError",
     "parse_transcript_batch",
     "parse_transcript_event",
