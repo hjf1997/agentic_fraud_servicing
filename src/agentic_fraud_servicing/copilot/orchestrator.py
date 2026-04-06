@@ -385,6 +385,10 @@ class CopilotOrchestrator:
             running_summary=self._build_allegations_summary(),
             safety_guidance=self._build_safety_guidance(),
             hypothesis_scores=dict(self.hypothesis_scores),
+            specialist_likelihoods={
+                cat: a.likelihood
+                for cat, a in (self._last_specialist_assessments or {}).items()
+            },
             impersonation_risk=self.impersonation_risk,
             case_eligibility=case_eligibility,
             case_advisory_summary=case_advisory_summary,

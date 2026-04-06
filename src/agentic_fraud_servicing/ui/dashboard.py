@@ -387,6 +387,63 @@ def _build_eligibility_chart(suggestions: list[dict]) -> plt.Figure | None:
     return fig
 
 
+def _build_specialist_chart(suggestions: list[dict]) -> plt.Figure | None:
+    """Build a matplotlib line chart of specialist likelihood evolution."""
+    if not suggestions:
+        return None
+
+    turns: list[int] = []
+    likelihoods: dict[str, list[float]] = {
+        "THIRD_PARTY_FRAUD": [],
+        "SCAM": [],
+        "DISPUTE": [],
+    }
+
+    for s in suggestions:
+        turn = s.get("turn", 0)
+        suggestion = s.get("suggestion", {})
+        spec = suggestion.get("specialist_likelihoods", {})
+        if not spec:
+            continue
+        turns.append(turn)
+        for key in likelihoods:
+            likelihoods[key].append(spec.get(key, 0.0))
+
+    if not turns:
+        return None
+
+    fig, ax = plt.subplots(figsize=(7, 3.5))
+    colors = {
+        "THIRD_PARTY_FRAUD": AMEX_BLUE,
+        "SCAM": "#F57C00",
+        "DISPUTE": "#388E3C",
+    }
+    for key, vals in likelihoods.items():
+        ax.plot(
+            turns,
+            vals,
+            marker="s",
+            markersize=4,
+            linewidth=2,
+            color=colors[key],
+            label=key.replace("_", " ").title(),
+        )
+
+    ax.set_xlabel("Turn", fontsize=10)
+    ax.set_ylabel("Likelihood", fontsize=10)
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_title(
+        "Specialist Likelihood Evolution",
+        fontsize=12,
+        fontweight="bold",
+        color=AMEX_NAVY,
+    )
+    ax.legend(fontsize=8, loc="upper left")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    return fig
+
+
 def _build_copilot_final_html(
     state: dict | None,
     suggestions: list[dict] | None = None,
@@ -1105,6 +1162,7 @@ def _load_scenario(scenario_name: str) -> tuple:
         _build_case_overview_html(case),
         _build_transcript_html(turns),
         _build_hypothesis_chart(suggestions),
+        _build_specialist_chart(suggestions),
         _build_eligibility_chart(suggestions),
         _build_copilot_final_html(final_state, suggestions),
         _build_copilot_turns_html(suggestions),
@@ -1159,12 +1217,15 @@ def create_dashboard_app() -> gr.Blocks:
             '<div class="section-header" style="color:white;">'
             "Conversation &amp; Copilot Analysis</div>"
         )
-        # Top row: hypothesis chart (left) + eligibility chart (right)
+        # Top row: hypothesis chart (left) + specialist chart (right)
         with gr.Row():
-            with gr.Column(scale=3):
+            with gr.Column(scale=1):
                 chart_plot = gr.Plot(label="Hypothesis Scores")
-            with gr.Column(scale=2):
-                elig_chart_plot = gr.Plot(label="Case Eligibility")
+            with gr.Column(scale=1):
+                specialist_chart_plot = gr.Plot(label="Specialist Likelihoods")
+        # Second row: eligibility chart (full width)
+        with gr.Row():
+            elig_chart_plot = gr.Plot(label="Case Eligibility")
         # Middle row: final copilot state (full width)
         final_state_html = gr.HTML()
         # Bottom row: transcript (left) + per-turn copilot details (right)
@@ -1196,6 +1257,7 @@ def create_dashboard_app() -> gr.Blocks:
                 case_html,
                 transcript_html,
                 chart_plot,
+                specialist_chart_plot,
                 elig_chart_plot,
                 final_state_html,
                 copilot_turns_html,

@@ -126,6 +126,71 @@ def _render_hypothesis_chart_base64(suggestions: list[dict]) -> str:
     return f'<img src="data:image/png;base64,{b64}" style="width:100%; max-width:800px;" />'
 
 
+def _render_specialist_chart_base64(suggestions: list[dict]) -> str:
+    """Render the specialist likelihood evolution chart as a base64-encoded PNG."""
+    if not suggestions:
+        return '<p style="color:#666;">No specialist data available.</p>'
+
+    turns: list[int] = []
+    likelihoods: dict[str, list[float]] = {
+        "THIRD_PARTY_FRAUD": [],
+        "SCAM": [],
+        "DISPUTE": [],
+    }
+
+    for s in suggestions:
+        turn = s.get("turn", 0)
+        suggestion = s.get("suggestion", {})
+        spec = suggestion.get("specialist_likelihoods", {})
+        if not spec:
+            continue
+        turns.append(turn)
+        for key in likelihoods:
+            likelihoods[key].append(spec.get(key, 0.0))
+
+    if not turns:
+        return '<p style="color:#666;">No specialist data available.</p>'
+
+    colors = {
+        "THIRD_PARTY_FRAUD": AMEX_BLUE,
+        "SCAM": "#F57C00",
+        "DISPUTE": "#388E3C",
+    }
+
+    fig, ax = plt.subplots(figsize=(8, 3.5))
+    for key, vals in likelihoods.items():
+        ax.plot(
+            turns,
+            vals,
+            marker="s",
+            markersize=4,
+            linewidth=2,
+            color=colors[key],
+            label=key.replace("_", " ").title(),
+        )
+
+    ax.set_xlabel("Turn", fontsize=10)
+    ax.set_ylabel("Likelihood", fontsize=10)
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_title(
+        "Specialist Likelihood Evolution",
+        fontsize=12,
+        fontweight="bold",
+        color=AMEX_NAVY,
+    )
+    ax.legend(fontsize=8, loc="upper left")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    b64 = base64.b64encode(buf.read()).decode("ascii")
+
+    return f'<img src="data:image/png;base64,{b64}" style="width:100%; max-width:800px;" />'
+
+
 def _render_eligibility_chart_base64(suggestions: list[dict]) -> str:
     """Render the case eligibility evolution chart as a base64-encoded PNG.
 
@@ -256,6 +321,7 @@ def _build_full_report(scenario_name: str) -> str:
     case_overview = _build_case_overview_html(case)
     transcript = _build_transcript_html(turns)
     hypothesis_chart = _render_hypothesis_chart_base64(suggestions)
+    specialist_chart = _render_specialist_chart_base64(suggestions)
     eligibility_chart = _render_eligibility_chart_base64(suggestions)
     copilot_final = _build_copilot_final_html(final_state, suggestions)
     copilot_turns = _build_copilot_turns_html(suggestions)
@@ -350,6 +416,9 @@ def _build_full_report(scenario_name: str) -> str:
     <div class="section-header">Conversation &amp; Copilot Analysis</div>
     <div class="two-col" style="margin-bottom:12px;">
       <div class="card">{hypothesis_chart}</div>
+      <div class="card">{specialist_chart}</div>
+    </div>
+    <div class="two-col" style="margin-bottom:12px;">
       <div class="card">{eligibility_chart}</div>
     </div>
     {copilot_final}

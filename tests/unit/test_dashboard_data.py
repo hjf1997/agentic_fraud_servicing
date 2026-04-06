@@ -117,6 +117,11 @@ def _seed_traces(db_dir: str) -> None:
             output_data=json.dumps(
                 {
                     "hypothesis_scores": {"THIRD_PARTY_FRAUD": 0.5, "FIRST_PARTY_FRAUD": 0.1},
+                    "specialist_likelihoods": {
+                        "THIRD_PARTY_FRAUD": 0.4,
+                        "SCAM": 0.2,
+                        "DISPUTE": 0.3,
+                    },
                     "suggested_questions": [f"Question for turn {turn_num}"],
                     "risk_flags": [],
                 }
