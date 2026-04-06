@@ -274,11 +274,9 @@ class CopilotOrchestrator:
             self._retrieval_result = retrieval_result
 
         # 3c. Process parallel results: triage
-        _invalidate_retrieval = False
         if triage_result is not None and triage_result.allegations:
             self.accumulated_allegations.extend(triage_result.allegations)
             self._persist_allegations(triage_result.allegations)
-            _invalidate_retrieval = True  # Evidence store changed; refresh next turn
 
         # 3c'. Advance the assessment index so the next assessment knows
         # which turns have already been processed by triage.
@@ -342,11 +340,8 @@ class CopilotOrchestrator:
         if len(self._recent_suggestions) > 3:
             self._recent_suggestions = self._recent_suggestions[-3:]
 
-        # 9. Invalidate retrieval cache if evidence changed this turn, so the
-        # next assessment re-fetches fresh data. Done after hypothesis/advisor
-        # have consumed this turn's retrieval result.
-        if _invalidate_retrieval:
-            self._retrieval_result = None
+        # 9. (Retrieval cache is never invalidated — the retrieval agent fetches
+        # all case data regardless of allegations, so re-running adds no value.)
 
         # 10. Build and return the suggestion
         return self._build_suggestion(
