@@ -180,10 +180,10 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     ("LONG_NUMBER", re.compile(r"\b\d{4,}\b")),
 ]
 
-# Subset of patterns for structured data (dicts) via redact_dict(). Since
-# redact_dict only touches string values (not bare ints/floats), LONG_NUMBER
-# is safe to include. Demographic patterns are excluded as irrelevant for
-# evidence data fields.
+# Subset of patterns safe for structured data (dicts/JSON). Excludes patterns
+# that target numeric values (LONG_NUMBER) which would break JSON structure
+# when applied to bare ints/floats, and demographic patterns that are too
+# aggressive for evidence data fields.
 _SAFE_PATTERNS: list[tuple[str, re.Pattern]] = [
     # PII — high-risk patterns that DLP firewalls commonly block
     ("SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
@@ -222,11 +222,8 @@ _SAFE_PATTERNS: list[tuple[str, re.Pattern]] = [
         re.IGNORECASE,
     )),
 
-    # LONG_NUMBER is safe here because redact_dict only applies patterns to
-    # string values — bare numeric ints/floats are never touched.
-    ("LONG_NUMBER", re.compile(r"\b\d{4,}\b")),
-
-    # DISABLED for safe mode — irrelevant for structured evidence data:
+    # DISABLED for safe mode — too aggressive for structured evidence data:
+    # ("LONG_NUMBER", ...) — breaks bare numeric JSON values
     # ("GENDER", ...) — irrelevant for transaction/auth data
     # ("GENDER_EXPRESSION", ...) — irrelevant for transaction/auth data
     # ("RELIGION", ...) — irrelevant for transaction/auth data
