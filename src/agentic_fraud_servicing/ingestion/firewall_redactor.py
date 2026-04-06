@@ -180,6 +180,58 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     ("LONG_NUMBER", re.compile(r"\b\d{4,}\b")),
 ]
 
+# Subset of patterns safe for structured data (dicts/JSON). Excludes patterns
+# that target numeric values (LONG_NUMBER) which would break JSON structure
+# when applied to bare ints/floats, and demographic patterns that are too
+# aggressive for evidence data fields.
+_SAFE_PATTERNS: list[tuple[str, re.Pattern]] = [
+    # PII — high-risk patterns that DLP firewalls commonly block
+    ("SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("CREDIT_CARD", re.compile(
+        r"\b(?:"
+        r"3[47]\d{2}[\s-]?\d{6}[\s-]?\d{5}"
+        r"|(?:\d{4}[\s-]?){3}\d{4}"
+        r")\b"
+    )),
+    ("PHONE", re.compile(
+        r"(?<!\d)"
+        r"(?:\+?1[\s.-]?)?"
+        r"\(?\d{3}\)?[\s.-]?"
+        r"\d{3}[\s.-]?\d{4}"
+        r"(?!\d)"
+    )),
+    ("EMAIL", re.compile(
+        r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"
+    )),
+    ("PERSON_NAME", re.compile(
+        r"\b(?:Mr|Mrs|Ms|Miss|Dr|Prof|Sr|Jr)"
+        r"\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b"
+    )),
+    ("ADDRESS", re.compile(
+        r"\b\d+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z]?[a-zA-Z]+){0,4}\s+"
+        r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr"
+        r"|Lane|Ln|Way|Court|Ct|Place|Pl|Circle|Cir|Trail|Trl"
+        r"|Parkway|Pkwy|Highway|Hwy)\b\.?",
+        re.IGNORECASE,
+    )),
+    ("SECURITY_QUESTION", re.compile(
+        r"(?:mother'?s?\s+maiden\s+name|first\s+pet|elementary\s+school"
+        r"|favorite\s+(?:color|movie|book|food|teacher|sport)"
+        r"|city\s+(?:born|grew\s+up)|street\s+grew\s+up)"
+        r"[\s:]+\S+",
+        re.IGNORECASE,
+    )),
+
+    # DISABLED for safe mode — too aggressive for structured evidence data:
+    # ("LONG_NUMBER", ...) — breaks bare numeric JSON values
+    # ("GENDER", ...) — irrelevant for transaction/auth data
+    # ("GENDER_EXPRESSION", ...) — irrelevant for transaction/auth data
+    # ("RELIGION", ...) — irrelevant for transaction/auth data
+    # ("NATIONALITY", ...) — may appear in legitimate merchant/location data
+    # ("MEDICAL", ...) — irrelevant for transaction/auth data
+    # ("MEDICAL_ACCOMMODATION", ...) — irrelevant for transaction/auth data
+]
+
 
 # ---------------------------------------------------------------------------
 # Redactor class
@@ -214,7 +266,11 @@ class FirewallRedactor:
     _MAX_TEXT_LEN = 10_000
 
     def redact_text(self, text: str) -> str:
-        """Replace all sensitive patterns in *text* with placeholders."""
+        """Replace all sensitive patterns in *text* with placeholders.
+
+        Uses the full pattern list including LONG_NUMBER and demographic
+        patterns. For structured data (dicts), use redact_dict() instead.
+        """
         if not text:
             return text
         if len(text) > self._MAX_TEXT_LEN:
@@ -223,20 +279,51 @@ class FirewallRedactor:
                 len(text), self._MAX_TEXT_LEN,
             )
             return text
+        return self._redact_with_patterns(text, _PATTERNS)
 
-        # 1. Collect every match across all pattern categories
-        matches: list[tuple[int, int, str, str]] = []   # (start, end, category, value)
-        for category, pattern in _PATTERNS:
+    def redact_dict(self, data: dict | list) -> dict | list:
+        """Redact sensitive patterns in string values of a dict/list structure.
+
+        Walks the structure recursively, applying the safe pattern subset to
+        string values only. Dict keys, numeric values, booleans, and None are
+        left untouched to preserve JSON-serializable structure.
+
+        Args:
+            data: A dict or list (typically from evidence store query results).
+
+        Returns:
+            A new dict/list with string values redacted. Original is not mutated.
+        """
+        return self._walk(data)
+
+    def _walk(self, node: object) -> object:
+        """Recursively walk a data structure, redacting string values."""
+        if isinstance(node, dict):
+            return {k: self._walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [self._walk(item) for item in node]
+        if isinstance(node, str):
+            return self._redact_with_patterns(node, _SAFE_PATTERNS)
+        # int, float, bool, None — pass through unchanged
+        return node
+
+    def _redact_with_patterns(
+        self, text: str, patterns: list[tuple[str, re.Pattern]]
+    ) -> str:
+        """Apply a specific pattern list to a text string."""
+        if not text or len(text) > self._MAX_TEXT_LEN:
+            return text
+
+        matches: list[tuple[int, int, str, str]] = []
+        for category, pattern in patterns:
             for m in pattern.finditer(text):
                 matches.append((m.start(), m.end(), category, m.group()))
 
         if not matches:
             return text
 
-        # 2. Sort by start position; for ties keep the longer match
         matches.sort(key=lambda x: (x[0], -(x[1] - x[0])))
 
-        # 3. Discard overlapping matches (first / longest wins)
         filtered: list[tuple[int, int, str, str]] = []
         last_end = 0
         for start, end, category, value in matches:
@@ -244,13 +331,9 @@ class FirewallRedactor:
                 filtered.append((start, end, category, value))
                 last_end = end
 
-        # 4. Replace from right to left so earlier indices stay valid
         result = text
         for start, end, category, value in reversed(filtered):
             placeholder = self._get_placeholder(category, value)
             result = result[:start] + placeholder + result[end:]
-
-        if filtered:
-            logger.debug("Firewall redactor replaced %d matches", len(filtered))
 
         return result

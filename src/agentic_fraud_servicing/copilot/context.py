@@ -16,7 +16,11 @@ from agentic_fraud_servicing.gateway.tools.read_tools import (
     lookup_transactions,
     query_auth_logs,
 )
+from agentic_fraud_servicing.ingestion.firewall_redactor import FirewallRedactor
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
+
+# Shared redactor for tool responses — uses safe patterns only via redact_dict
+_tool_redactor = FirewallRedactor()
 
 
 @dataclass
@@ -66,7 +70,7 @@ async def tool_lookup_transactions(ctx: RunContextWrapper[CopilotContext]) -> st
     copilot_ctx = ctx.context
     auth = _make_auth_ctx(copilot_ctx)
     results = lookup_transactions(copilot_ctx.gateway, auth, copilot_ctx.case_id)
-    return json.dumps(results)
+    return json.dumps(_tool_redactor.redact_dict(results))
 
 
 @function_tool
@@ -79,7 +83,7 @@ async def tool_query_auth_logs(ctx: RunContextWrapper[CopilotContext]) -> str:
     copilot_ctx = ctx.context
     auth = _make_auth_ctx(copilot_ctx)
     results = query_auth_logs(copilot_ctx.gateway, auth, copilot_ctx.case_id)
-    return json.dumps(results)
+    return json.dumps(_tool_redactor.redact_dict(results))
 
 
 @function_tool
@@ -92,4 +96,5 @@ async def tool_fetch_customer_profile(ctx: RunContextWrapper[CopilotContext]) ->
     copilot_ctx = ctx.context
     auth = _make_auth_ctx(copilot_ctx)
     result = fetch_customer_profile(copilot_ctx.gateway, auth, copilot_ctx.case_id)
-    return json.dumps(result)
+    redacted = _tool_redactor.redact_dict(result) if result else result
+    return json.dumps(redacted)

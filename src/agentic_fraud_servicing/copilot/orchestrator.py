@@ -93,7 +93,7 @@ class CopilotOrchestrator:
         self.evidence_collected: list[str] = []
         self.transcript_history: list[TranscriptEvent] = []
         self.accumulated_allegations: list[AllegationExtraction] = []
-        self._session_id: str = f"case-unknown-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        self._session_id: str = ""
         self._retrieval_result: RetrievalResult | None = None
         self._last_hypothesis: HypothesisAssessment | None = None
         self._recent_suggestions: list[list[str]] = []
@@ -132,6 +132,7 @@ class CopilotOrchestrator:
         if self.case_id is None:
             self.case_id = f"case-{event.call_id}"
             self.call_id = event.call_id
+        if not self._session_id:
             self._session_id = f"{self.case_id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
 
         # 2. Non-CARDMEMBER events: record in history, no assessment needed
