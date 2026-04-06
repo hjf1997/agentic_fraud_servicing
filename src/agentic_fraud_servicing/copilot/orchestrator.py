@@ -297,7 +297,7 @@ class CopilotOrchestrator:
         # 5. Collect retrieved facts from retrieval result
         if self._retrieval_result is not None:
             self.evidence_collected = [
-                f"disputed_txn:{len(self._retrieval_result.transactions)}",
+                f"txn_summary:{'yes' if self._retrieval_result.transaction_summary else 'no'}",
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
@@ -486,8 +486,6 @@ class CopilotOrchestrator:
         # Transaction summary (pre-formatted by transaction_summarizer)
         if r.transaction_summary:
             parts.append(r.transaction_summary)
-        elif r.transactions:
-            parts.append(f"Disputed transactions: {len(r.transactions)} found (no summary).")
         else:
             parts.append("No transactions found.")
 

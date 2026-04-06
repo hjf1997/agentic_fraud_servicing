@@ -18,7 +18,7 @@ class TestRetrievalResult:
     def test_defaults(self):
         """RetrievalResult with all defaults has correct empty values."""
         result = RetrievalResult()
-        assert result.transactions == []
+        assert result.transaction_summary == ""
         assert result.auth_events == []
         assert result.customer_profile is None
         assert result.retrieval_summary == ""
@@ -27,13 +27,13 @@ class TestRetrievalResult:
     def test_all_fields(self):
         """RetrievalResult accepts all fields with correct types."""
         result = RetrievalResult(
-            transactions=[{"amount": 100.0, "merchant": "ACME"}],
+            transaction_summary="== Disputed Transactions (1 total, $100.00) ==",
             auth_events=[{"auth_type": "sms_otp", "result": "success"}],
             customer_profile={"name": "Jane Doe", "risk_level": "low"},
             retrieval_summary="Found 1 transaction, 1 auth event, and customer profile.",
             data_gaps=["No delivery proof found"],
         )
-        assert len(result.transactions) == 1
+        assert "Disputed Transactions" in result.transaction_summary
         assert len(result.auth_events) == 1
         assert result.customer_profile is not None
         assert "1 transaction" in result.retrieval_summary
@@ -42,7 +42,7 @@ class TestRetrievalResult:
     def test_round_trip_json(self):
         """RetrievalResult survives JSON round-trip serialization."""
         original = RetrievalResult(
-            transactions=[{"amount": 50.0}],
+            transaction_summary="== Disputed Transactions (1 total, $50.00) ==",
             auth_events=[],
             customer_profile={"id": "cust-1"},
             retrieval_summary="Found 1 transaction.",
@@ -99,7 +99,7 @@ class TestRunRetrieval:
     def sample_retrieval_result(self):
         """Create a sample RetrievalResult for mocking."""
         return RetrievalResult(
-            transactions=[{"amount": 200.0, "merchant": "STORE"}],
+            transaction_summary="== Disputed Transactions (1 total, $200.00) ==",
             auth_events=[{"auth_type": "password", "result": "success"}],
             customer_profile={"name": "John Doe"},
             retrieval_summary="Retrieved 1 transaction, 1 auth event, profile.",
@@ -121,7 +121,7 @@ class TestRunRetrieval:
             result = await run_retrieval("case-1", "call-1", mock_gateway, mock_provider)
 
         assert isinstance(result, RetrievalResult)
-        assert len(result.transactions) == 1
+        assert "Disputed Transactions" in result.transaction_summary
         assert result.customer_profile is not None
 
     async def test_run_retrieval_passes_model_provider(self, mock_provider, mock_gateway):

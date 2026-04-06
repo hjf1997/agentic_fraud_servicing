@@ -81,11 +81,10 @@ def _mock_auth_result(
     return result
 
 
-def _mock_retrieval_result(transactions=None, auth_events=None, customer_profile=None):
+def _mock_retrieval_result(auth_events=None, customer_profile=None, transaction_summary=None):
     """Create a mock RetrievalResult."""
     result = MagicMock()
-    result.transactions = transactions or [{"amount": 100.0, "is_disputed": True}]
-    result.transaction_summary = (
+    result.transaction_summary = transaction_summary or (
         "== Disputed Transactions (1 total, $100.00) ==\n"
         "2024-01-01:\n- $100.00 at TestMerchant"
     )
@@ -544,16 +543,14 @@ class TestHypothesisScoring:
         """Evidence summary includes transaction_summary text and JSON for auth/profile."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
-        retrieval = _mock_retrieval_result(
-            transactions=[{"amount": 2847.99, "is_disputed": True}],
+        mock_retrieval.return_value = _mock_retrieval_result(
+            transaction_summary=(
+                "== Disputed Transactions (1 total, $2,847.99) ==\n"
+                "2024-01-01:\n- $2,847.99 at TechVault, chip_pin"
+            ),
             auth_events=[{"auth_type": "chip_pin", "result": "success", "device_id": "dev-001"}],
             customer_profile={"customer_id": "cust-001", "name": "John Smith"},
         )
-        retrieval.transaction_summary = (
-            "== Disputed Transactions (1 total, $2,847.99) ==\n"
-            "2024-01-01:\n- $2,847.99 at TechVault, chip_pin"
-        )
-        mock_retrieval.return_value = retrieval
         mock_hypothesis.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 

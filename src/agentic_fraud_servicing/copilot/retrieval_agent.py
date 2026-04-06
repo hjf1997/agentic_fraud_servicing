@@ -38,9 +38,11 @@ Your role is to gather all relevant data for a case using the available tools.
 
 **Instructions**:
 - Call ALL three tools to gather comprehensive data for the case.
-- Set `transactions` to the `disputed_transactions` list from tool_lookup_transactions.
 - Set `transaction_summary` to the `summary` text from tool_lookup_transactions.
   Copy it exactly — do NOT rephrase, truncate, or modify the summary text.
+- Use the `disputed_transactions` from tool_lookup_transactions for data gap
+  analysis only (e.g., cross-referencing with auth events). Do NOT copy them
+  into the output — the summary already contains all needed detail.
 - Summarize what was retrieved in plain language in `retrieval_summary`.
 - Identify data gaps — for example, if no auth events exist for a disputed
   transaction period, or if the customer profile is missing.
@@ -55,7 +57,6 @@ class RetrievalResult(BaseModel):
     """Structured output from the retrieval agent.
 
     Attributes:
-        transactions: Disputed transaction dicts only (for data gap analysis).
         transaction_summary: Pre-formatted text summary of all transactions
             (disputed detail + undisputed aggregates). Passed through to
             downstream agents as-is.
@@ -65,7 +66,6 @@ class RetrievalResult(BaseModel):
         data_gaps: Notable data gaps identified during retrieval.
     """
 
-    transactions: list[dict] = Field(default_factory=list)
     transaction_summary: str = ""
     auth_events: list[dict] = Field(default_factory=list)
     customer_profile: dict | None = None
