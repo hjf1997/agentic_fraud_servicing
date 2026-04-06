@@ -167,7 +167,8 @@ and expected entities are listed.
    empty allegations list if the new turns contain no new allegations (e.g.,
    only CCP questions, SYSTEM events, or repeated statements).
 4. Each allegation MUST have a detail_type, description, and confidence score.
-5. The description should paraphrase what the CM said — not your analysis.
+5. The description must be a single brief phrase (under 15 words) paraphrasing
+   what the CM alleged — not your analysis. Omit filler words and context.
 6. Entities must be structured name-value pairs extracted from the conversation.
    If a value is not explicitly stated, omit it rather than guessing.
 7. Set confidence based on how clearly the CM expressed the allegation:

@@ -14,6 +14,7 @@ at module import time and embedded in the agent's system prompt.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
@@ -29,11 +30,11 @@ from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERE
 class CaseTypeAssessment(BaseModel):
     """Assessment for a single case type (fraud or dispute)."""
 
-    case_type: str
-    """'fraud' or 'dispute'."""
+    case_type: Literal["fraud", "dispute"]
+    """Case opening type: exactly 'fraud' or 'dispute'."""
 
-    eligibility: str
-    """'eligible', 'blocked', or 'incomplete'."""
+    eligibility: Literal["eligible", "blocked", "incomplete"]
+    """Eligibility status."""
 
     met_criteria: list[str] = Field(default_factory=list)
     """Criteria that are satisfied."""

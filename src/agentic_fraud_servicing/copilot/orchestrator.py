@@ -93,6 +93,7 @@ class CopilotOrchestrator:
         self.evidence_collected: list[str] = []
         self.transcript_history: list[TranscriptEvent] = []
         self.accumulated_allegations: list[AllegationExtraction] = []
+        self._session_id: str = f"case-unknown-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         self._retrieval_result: RetrievalResult | None = None
         self._last_hypothesis: HypothesisAssessment | None = None
         self._recent_suggestions: list[list[str]] = []
@@ -131,6 +132,7 @@ class CopilotOrchestrator:
         if self.case_id is None:
             self.case_id = f"case-{event.call_id}"
             self.call_id = event.call_id
+            self._session_id = f"{self.case_id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
 
         # 2. Non-CARDMEMBER events: record in history, no assessment needed
         if event.speaker != SpeakerType.CARDMEMBER:
@@ -163,7 +165,7 @@ class CopilotOrchestrator:
                 )
                 _lf_obs_ctx.__enter__()
                 _lf_prop_ctx = propagate_attributes(
-                    session_id=self.case_id or "unknown",
+                    session_id=self._session_id,
                     tags=["copilot"],
                     metadata={
                         "cm_turn": str(self._cm_turn_count),
