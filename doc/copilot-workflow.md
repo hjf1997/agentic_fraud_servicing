@@ -25,16 +25,23 @@ flowchart TD
         Retrieval["Retrieval Agent<br/>─────────────<br/>Fetch transactions,<br/>auth logs, customer<br/>profile (idempotent)"]
     end
 
-    Phase1 --> StateUpdate["State Updates<br/>─────────────<br/>accumulated_allegations += new<br/>impersonation_risk updated<br/>_retrieval_result cached<br/>missing_fields pruned<br/>evidence_collected updated"]
+    Phase1 --> StateUpdate["State Updates<br/>─────────────<br/>accumulated_allegations += new<br/>impersonation_risk updated<br/>_retrieval_result cached<br/>evidence_collected updated"]
 
-    subgraph Phase2["Phase 2: Parallel — asyncio.gather()"]
-        direction LR
-        Hyp["Hypothesis Agent<br/>─────────────<br/>Bayesian scoring:<br/>THIRD_PARTY_FRAUD<br/>FIRST_PARTY_FRAUD<br/>SCAM | DISPUTE"]
-        CaseAdv["Case Advisor<br/>─────────────<br/>Policy-aware<br/>eligibility check<br/>+ 0-3 questions<br/>+ stopping signal"]
+    StateUpdate --> Phase2a
+
+    subgraph Phase2a["Phase 2a: Specialist Panel"]
+        Specs["run_specialists()<br/>─────────────<br/>3 parallel specialists:<br/>Dispute · Scam · Fraud<br/>Each: likelihood, eligibility,<br/>evidence_gaps, policy_citations"]
     end
 
-    StateUpdate --> Phase2
-    Phase2 --> Output["CopilotSuggestion<br/>─────────────<br/>suggested_questions<br/>risk_flags<br/>hypothesis_scores<br/>impersonation_risk<br/>case_eligibility<br/>information_sufficient<br/>running_summary<br/>safety_guidance<br/>retrieved_facts"]
+    Phase2a --> Phase2b
+
+    subgraph Phase2b["Phase 2b: Parallel — asyncio.gather()"]
+        direction LR
+        Arb["Arbitrator Agent<br/>─────────────<br/>Bayesian scoring:<br/>THIRD_PARTY_FRAUD<br/>FIRST_PARTY_FRAUD<br/>SCAM | DISPUTE"]
+        CaseAdv["Case Advisor<br/>─────────────<br/>Question planner<br/>consuming specialist<br/>evidence gaps<br/>+ 0-3 questions<br/>+ stopping signal"]
+    end
+
+    Phase2b --> Output["CopilotSuggestion<br/>─────────────<br/>suggested_questions<br/>risk_flags<br/>hypothesis_scores<br/>impersonation_risk<br/>case_eligibility<br/>information_sufficient<br/>running_summary<br/>safety_guidance<br/>retrieved_facts"]
 
     Auth -.- AuthNote["Turns 1-3: always<br/>Turn 4+: only if risk ≥ 0.4"]
     Retrieval -.- RetrNote["Runs once per session<br/>(cached thereafter)"]
@@ -53,7 +60,8 @@ Only **CARDMEMBER** events trigger the agent pipeline, and only on **assessment 
 For assessment turns the pipeline is:
 
 1. **Phase 1 (parallel)**: Triage + Auth (conditional) + Retrieval
-2. **Phase 2 (parallel, turn 4+)**: Hypothesis + Case Advisor — or Hypothesis only on turns 1-3
+2. **Phase 2a**: Specialist Panel (3 parallel specialists: Dispute, Scam, Fraud)
+3. **Phase 2b (parallel)**: Arbitrator + Case Advisor — or Arbitrator only on turns 1-3
 
 ---
 
@@ -82,7 +90,6 @@ For assessment turns the pipeline is:
 **Side effects**:
 - Accumulated into `orchestrator.accumulated_allegations`
 - Persisted as `AllegationStatement` evidence nodes via the Tool Gateway
-- Entity keys used to resolve `missing_fields`
 
 ---
 
@@ -140,24 +147,57 @@ For assessment turns the pipeline is:
 
 **Side effects**:
 - Cached in `orchestrator._retrieval_result`
-- Fed into Auth Agent (`auth_events`, `customer_profile`) and Hypothesis Agent (`evidence_summary`)
+- Fed into Auth Agent (`auth_events`, `customer_profile`) and Specialist Panel (`evidence_summary`)
 
 ---
 
-## Phase 2 — Hypothesis + Case Advisor (parallel on turn 4+)
+## Phase 2a — Specialist Panel
 
-### 4. Hypothesis Agent
+### 4. Specialist Panel (`run_specialists`)
 
-**Role**: Score 4 investigation categories as a probability distribution.
+**Role**: Three parallel category specialists evaluate allegations and evidence against policy checklists.
+
+Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party Fraud**. They run in parallel via `asyncio.gather` and produce independent assessments including likelihood, eligibility, evidence gaps, and policy citations. Their outputs are consumed by both the Arbitrator (for scoring) and the Case Advisor (for question generation).
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
 | **INPUT** | `allegations_summary` | `str` | All accumulated allegations formatted with types, descriptions, confidence, and entities |
-| **INPUT** | `auth_summary` | `str` | Formatted auth assessment (impersonation risk, risk factors, step-up method, summary) |
 | **INPUT** | `evidence_summary` | `str` | Structured JSON of transactions, auth events, customer profile from retrieval |
-| **INPUT** | `current_scores` | `dict[str, float]` | Previous turn's hypothesis scores (Bayesian prior): `{THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE}` |
 | **INPUT** | `conversation_summary` | `str` | Last 5 turns + total turn count |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
+| **INPUT** | `previous_assessments` | `dict[str, SpecialistAssessment] \| None` | Previous turn's specialist outputs for continuity |
+
+| Direction | Field | Type | Description |
+|-----------|-------|------|-------------|
+| **OUTPUT** | `assessments` | `dict[str, SpecialistAssessment]` | Keyed by category: `DISPUTE`, `SCAM`, `THIRD_PARTY_FRAUD` |
+| | `.category` | `str` | The investigation category |
+| | `.likelihood` | `float` | 0.0-1.0 likelihood this category explains the case |
+| | `.reasoning` | `str` | Explanation of the assessment |
+| | `.supporting_evidence` | `list[str]` | Evidence supporting this category |
+| | `.contradicting_evidence` | `list[str]` | Evidence contradicting this category |
+| | `.policy_citations` | `list[str]` | Specific policy text cited |
+| | `.evidence_gaps` | `list[str]` | Information still needed for this category |
+| | `.eligibility` | `str` | `"eligible"` \| `"blocked"` — whether the case can proceed under this category |
+
+**Side effects**:
+- Cached in `orchestrator._last_specialist_assessments` for next-turn continuity
+
+---
+
+## Phase 2b — Arbitrator + Case Advisor (parallel on turn 4+)
+
+### 5. Arbitrator Agent
+
+**Role**: Score 4 investigation categories as a probability distribution, synthesizing specialist assessments.
+
+| Direction | Field | Type | Description |
+|-----------|-------|------|-------------|
+| **INPUT** | `specialist_assessments` | `dict[str, SpecialistAssessment]` | Outputs from the specialist panel |
+| **INPUT** | `allegations_summary` | `str` | All accumulated allegations formatted with types, descriptions, confidence, and entities |
+| **INPUT** | `auth_summary` | `str` | Formatted auth assessment (impersonation risk, risk factors, step-up method, summary) |
+| **INPUT** | `current_scores` | `dict[str, float]` | Previous turn's hypothesis scores (Bayesian prior): `{THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE}` |
+| **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
+| **INPUT** | `previous_reasoning` | `HypothesisAssessment \| None` | Previous turn's full assessment for reasoning continuity |
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
@@ -168,41 +208,37 @@ For assessment turns the pipeline is:
 
 **Side effects**:
 - Updates `orchestrator.hypothesis_scores`
+- `specialist_assessments` attached to result for downstream access
 
 ---
 
-### 5. Case Advisor (parallel with Hypothesis on turn 4+)
+### 6. Case Advisor (parallel with Arbitrator on turn 4+)
 
-**Role**: Policy-aware case eligibility assessment with integrated question planning and stopping condition.
+**Role**: Question planner consuming specialist outputs — generates next-best questions targeting evidence gaps identified by specialists.
 
-**Condition**: Skipped on turns 1-3 (not enough info yet). On turn 4+, runs in parallel with Hypothesis Agent using the **previous turn's** hypothesis scores (acceptable since scores shift incrementally via the Bayesian prior design).
+**Condition**: Skipped on turns 1-3 (not enough info yet). On turn 4+, runs in parallel with the Arbitrator using the **previous turn's** hypothesis scores (acceptable since scores shift incrementally via the Bayesian prior design).
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
-| **INPUT** | `allegations_summary` | `str` | All accumulated allegations (same as hypothesis) |
-| **INPUT** | `evidence_summary` | `str` | Retrieved evidence JSON (same as hypothesis) |
+| **INPUT** | `specialist_assessments` | `dict[str, SpecialistAssessment]` | Outputs from the specialist panel (eligibility, evidence gaps, policy citations) |
 | **INPUT** | `hypothesis_scores` | `dict[str, float]` | Previous turn's scores (Bayesian prior) |
 | **INPUT** | `conversation_window` | `list[(speaker, text)]` | Assessment-based conversation window (context + new turns) |
-| **INPUT** | `missing_fields` | `list[str] \| None` | Entity-based missing fields from triage extraction |
 | **INPUT** | `recent_questions` | `list[str] \| None` | Previously suggested questions (last 3 turns, flattened) for dedup |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
 
-**Context**: Embedded policy documents from `docs/policies/*.md` (loaded at module import time).
-
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
-| **OUTPUT** | `assessments` | `list[CaseTypeAssessment]` | One per case type (fraud, dispute, scam) |
-| | `.case_type` | `str` | `"fraud"`, `"dispute"`, or `"scam"` |
-| | `.eligibility` | `str` | `"eligible"` \| `"blocked"` \| `"incomplete"` |
-| | `.met_criteria` | `list[str]` | Criteria that are satisfied |
-| | `.unmet_criteria` | `list[str]` | Criteria not yet satisfied |
-| | `.blockers` | `list[str]` | Active blocking rules with explanations |
-| | `.policy_citations` | `list[str]` | Specific policy text cited |
+| **OUTPUT** | `assessments` | `list[CaseTypeAssessment]` | Mapped from specialist eligibility: one per case type (fraud, dispute) |
+| | `.case_type` | `str` | `"fraud"` or `"dispute"` |
+| | `.eligibility` | `str` | `"eligible"` \| `"blocked"` — mapped from specialist output |
+| | `.unmet_criteria` | `list[str]` | Specialist-identified evidence gaps |
+| | `.blockers` | `list[str]` | Blocking reasons from specialist reasoning (when blocked) |
+| | `.policy_citations` | `list[str]` | Specific policy text cited by specialists |
 | **OUTPUT** | `general_warnings` | `list[str]` | Cross-cutting warnings (escalation triggers, etc.) |
 | **OUTPUT** | `questions` | `list[str]` | 0-3 suggested next-best questions (empty when sufficient) |
 | **OUTPUT** | `rationale` | `list[str]` | Parallel list — why each question matters |
-| **OUTPUT** | `priority_field` | `str` | Most important missing field targeted, or "" when sufficient |
-| **OUTPUT** | `information_sufficient` | `bool` | `True` when all required info is gathered per policy checklist |
+| **OUTPUT** | `priority_field` | `str` | Most important evidence gap targeted, or "" when sufficient |
+| **OUTPUT** | `information_sufficient` | `bool` | `True` when leading hypothesis case type is eligible or all blocked |
 | **OUTPUT** | `summary` | `str` | 2-4 sentence eligibility landscape + next steps |
 
 **Stopping condition**: When the leading hypothesis case type is `eligible` or all types are `blocked` for non-resolvable reasons, `information_sufficient` is set to `True` and `questions` is empty. This signals to the CCP that enough information has been gathered to proceed.
@@ -224,8 +260,8 @@ All agent results are assembled into a single `CopilotSuggestion`:
 | `risk_flags` | `list[str]` | Auth Agent + all agent error flags |
 | `retrieved_facts` | `list[str]` | Retrieval Agent summary |
 | `running_summary` | `str` | Accumulated allegations summary |
-| `safety_guidance` | `str` | Orchestrator logic (impersonation risk + missing fields) |
-| `hypothesis_scores` | `dict[str, float]` | Hypothesis Agent |
+| `safety_guidance` | `str` | Orchestrator logic (impersonation risk) |
+| `hypothesis_scores` | `dict[str, float]` | Arbitrator Agent |
 | `impersonation_risk` | `float` | Auth Agent |
 | `case_eligibility` | `list[dict]` | Case Advisor assessments |
 | `case_advisory_summary` | `str` | Case Advisor summary |
@@ -236,18 +272,18 @@ All agent results are assembled into a single `CopilotSuggestion`:
 ## Data Flow Summary
 
 ```
-Triage --> accumulated_allegations --> Hypothesis --> hypothesis_scores
-                                   |                                  |
-                                   +-> Case Advisor <-----------------+
-                                   |   (eligibility + questions       |
-                                   |    + stopping signal)            |
-Retrieval --> transactions     ----+                                  |
-           |  auth_events ---------+                                  |
-           +- customer_profile ----+                                  |
-                  |                                                   |
-                  +-> Auth Agent --> impersonation_risk ---------------+
-                                 |  risk_flags
-                                 +-> Hypothesis (auth_summary)
+Triage --> accumulated_allegations --+
+                                     |
+Retrieval --> transactions ----------+-> Specialists --+--> Arbitrator --> hypothesis_scores
+           |  auth_events -----------+   (Dispute,     |
+           +- customer_profile ------+    Scam,        +--> Case Advisor
+                  |                       Fraud)            (questions + stopping signal)
+                  |                          |
+                  +-> Auth Agent             +-- eligibility, evidence_gaps,
+                       |                        policy_citations per category
+                       +--> impersonation_risk
+                       +--> risk_flags
+                       +--> Arbitrator (auth_summary)
 ```
 
 ---
@@ -255,11 +291,13 @@ Retrieval --> transactions     ----+                                  |
 ## Key Design Points
 
 - **Hub-and-spoke**: The orchestrator explicitly controls which agents run and when. No free handoffs.
-- **5 specialist agents**: Triage, Auth, Retrieval, Hypothesis, Case Advisor. The former Question Planner has been merged into Case Advisor for reduced latency and policy-aware question generation.
+- **6 agents in 3 phases**: Triage, Auth, Retrieval (Phase 1) → 3 category Specialists (Phase 2a) → Arbitrator + Case Advisor (Phase 2b).
+- **Specialist panel as shared resource**: Three category specialists (Dispute, Scam, Third-Party Fraud) run once in Phase 2a. Their outputs feed both the Arbitrator (for Bayesian scoring) and the Case Advisor (for question generation), eliminating redundant policy evaluation.
+- **Specialist eligibility**: Each specialist outputs `eligible` or `blocked` plus `evidence_gaps` and `policy_citations`. The Case Advisor maps these directly to `CaseTypeAssessment` objects — no separate eligibility evaluation needed.
 - **Conditional auth**: Auth agent is skipped after turn 3 if impersonation risk drops below 0.4, saving an LLM call.
 - **Retrieval with cache invalidation**: Retrieval caches its result but invalidates when triage persists new allegations (evidence store changed). Re-fetches in parallel on the next assessment turn.
-- **Case advisor gating + parallelism**: Skipped on turns 1-3. On turn 4+, runs in parallel with Hypothesis Agent using the previous turn's scores.
-- **Integrated question planning**: Case Advisor generates 0-3 questions when info is incomplete and returns `information_sufficient=True` with 0 questions when ready.
+- **Case advisor gating + parallelism**: Skipped on turns 1-3. On turn 4+, runs in parallel with the Arbitrator using the previous turn's scores.
+- **Lightweight case advisor**: Case Advisor is a question planner only — it consumes specialist-provided eligibility and evidence gaps rather than evaluating policies itself.
 - **Question dedup**: Case Advisor receives the last 3 turns of suggested questions to avoid repetition.
 - **All agents traced**: Every invocation is logged to the trace store with agent name, duration, and status.
 - **Error isolation**: Each agent is wrapped in a `_run_*_safe` method. Failures append to `risk_flags` but never crash the pipeline.
@@ -291,13 +329,13 @@ When `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, LangFuse is enable
 ### What's Captured
 
 **Auto-instrumented** (via `openinference-instrumentation-openai-agents`):
-- Every `Runner.run()` LLM call across all 5 agents: prompts, completions, tokens, model, latency
+- Every `Runner.run()` LLM call across all 6 agents (including 3 specialists): prompts, completions, tokens, model, latency
 - Tool invocations with arguments and return values
 - Agent handoffs
 
 **Orchestrator-added context** (via `propagate_attributes` + `start_as_current_observation`):
 - `session_id` — groups all turns for one case
-- Phase spans: `phase1_parallel`, `phase2_hypothesis_advisor`
+- Phase spans: `phase1_parallel`, `phase2a_specialists`, `phase2b_arbitrator_advisor`
 - Turn metadata: `cm_turn`, `assess_interval`
 
 ### Trace Hierarchy
@@ -308,8 +346,12 @@ Trace: "copilot_turn" (session_id=case_id)
 │  ├─ auto: triage → LLM generation + tool calls
 │  ├─ auto: auth → LLM generation
 │  └─ auto: retrieval → LLM generation + tool calls
-└─ Span: "phase2_hypothesis_advisor"
-   ├─ auto: hypothesis → LLM generation
+├─ Span: "phase2a_specialists"
+│  ├─ auto: dispute_specialist → LLM generation
+│  ├─ auto: scam_specialist → LLM generation
+│  └─ auto: fraud_specialist → LLM generation
+└─ Span: "phase2b_arbitrator_advisor"
+   ├─ auto: arbitrator → LLM generation
    └─ auto: case_advisor → LLM generation
 ```
 

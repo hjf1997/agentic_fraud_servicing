@@ -405,10 +405,6 @@ def _build_copilot_final_html(
         for k, v in h_scores.items()
     )
     imp_risk = state.get("impersonation_risk", 0.0)
-    all_missing = state.get("missing_fields", [])
-    # Separate case-advisor criteria (prefixed with [type]) from entity-based fields
-    entity_fields = [f for f in all_missing if not f.startswith("[")]
-    missing_str = ", ".join(entity_fields) if entity_fields else "None"
 
     # Extract final case eligibility from the last copilot suggestion
     elig_html = ""
@@ -454,7 +450,6 @@ def _build_copilot_final_html(
       <p><strong>Impersonation Risk:</strong> {imp_risk:.2f}</p>
       <p><strong>Hypothesis Scores:</strong></p>
       <ul style="margin:4px 0;">{score_items}</ul>
-      <p><strong>Missing Fields:</strong> {missing_str}</p>
       {elig_html}
       {advisory_html}
     </div>"""

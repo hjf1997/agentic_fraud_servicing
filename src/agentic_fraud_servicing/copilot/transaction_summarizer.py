@@ -9,7 +9,6 @@ get per-merchant aggregates with representative samples.
 from collections import Counter, defaultdict
 from datetime import datetime
 
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------

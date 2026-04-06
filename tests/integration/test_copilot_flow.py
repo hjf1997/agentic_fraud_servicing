@@ -14,15 +14,15 @@ import pytest
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, CaseTypeAssessment
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment
+from agentic_fraud_servicing.copilot.hypothesis_specialists import SpecialistAssessment
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
-from agentic_fraud_servicing.models.enums import SpeakerType
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult
 from agentic_fraud_servicing.models.allegations import (
     AllegationExtraction,
     AllegationExtractionResult,
 )
 from agentic_fraud_servicing.models.case import CopilotSuggestion
-from agentic_fraud_servicing.models.enums import AllegationDetailType
+from agentic_fraud_servicing.models.enums import AllegationDetailType, SpeakerType
 from agentic_fraud_servicing.ui.helpers import load_transcript_file
 
 # Path to the sample transcript fixture
@@ -79,11 +79,36 @@ _HYPOTHESIS_RESULT = HypothesisAssessment(
     assessment_summary="Likely third-party fraud based on initial claim analysis.",
 )
 
+_SPECIALIST_OUTPUTS = {
+    "DISPUTE": SpecialistAssessment(
+        category="DISPUTE",
+        likelihood=0.15,
+        reasoning="Merchant identified, amount confirmed. No merchant issue.",
+        eligibility="eligible",
+        evidence_gaps=[],
+        policy_citations=[],
+    ),
+    "SCAM": SpecialistAssessment(
+        category="SCAM",
+        likelihood=0.15,
+        reasoning="No social engineering indicators detected.",
+        eligibility="eligible",
+    ),
+    "THIRD_PARTY_FRAUD": SpecialistAssessment(
+        category="THIRD_PARTY_FRAUD",
+        likelihood=0.60,
+        reasoning="CM claims unauthorized charge, no contradictions yet.",
+        eligibility="eligible",
+        evidence_gaps=["Identity verification pending", "Date reported missing"],
+        policy_citations=["Per fraud_case_checklist.md: 'Identity must be verified'"],
+    ),
+}
+
 _CASE_ADVISORY = CaseAdvisory(
     assessments=[
         CaseTypeAssessment(
             case_type="fraud",
-            eligibility="incomplete",
+            eligibility="eligible",
             met_criteria=["Transaction identified", "Card status active"],
             unmet_criteria=["Identity verification pending", "Date reported missing"],
             blockers=[],
@@ -109,21 +134,22 @@ _CASE_ADVISORY = CaseAdvisory(
     ],
     priority_field="auth_method",
     information_sufficient=False,
-    summary="Fraud case incomplete pending identity verification. Dispute case eligible.",
+    summary="Fraud case eligible pending identity verification. Dispute case eligible.",
 )
 
 
-# -- Patch targets for the 5 specialist run_* functions --
+# -- Patch targets for the specialist run_* functions --
 _PATCH_TRIAGE = "agentic_fraud_servicing.copilot.orchestrator.run_triage"
 _PATCH_AUTH = "agentic_fraud_servicing.copilot.orchestrator.run_auth_assessment"
 _PATCH_RETRIEVAL = "agentic_fraud_servicing.copilot.orchestrator.run_retrieval"
-_PATCH_HYPOTHESIS = "agentic_fraud_servicing.copilot.orchestrator.run_hypothesis"
+_PATCH_SPECIALISTS = "agentic_fraud_servicing.copilot.orchestrator.run_specialists"
+_PATCH_ARBITRATOR = "agentic_fraud_servicing.copilot.orchestrator.run_arbitrator"
 _PATCH_CASE_ADVISOR = "agentic_fraud_servicing.copilot.orchestrator.run_case_advisor"
 
 
 @pytest.fixture()
 def _mock_specialists():
-    """Patch all 5 specialist run_* functions with canned results."""
+    """Patch all specialist run_* functions with canned results."""
     with (
         patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
         patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
@@ -131,8 +157,11 @@ def _mock_specialists():
             _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
         ) as m_retrieval,
         patch(
-            _PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
-        ) as m_hypothesis,
+            _PATCH_SPECIALISTS, new_callable=AsyncMock, return_value=_SPECIALIST_OUTPUTS
+        ) as m_specialists,
+        patch(
+            _PATCH_ARBITRATOR, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
+        ) as m_arbitrator,
         patch(
             _PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY
         ) as m_case_advisor,
@@ -141,7 +170,8 @@ def _mock_specialists():
             "triage": m_triage,
             "auth": m_auth,
             "retrieval": m_retrieval,
-            "hypothesis": m_hypothesis,
+            "specialists": m_specialists,
+            "arbitrator": m_arbitrator,
             "case_advisor": m_case_advisor,
         }
 
@@ -237,7 +267,7 @@ class TestCopilotSuggestionOutput:
         result = await orch.process_event(sample_transcript_events[1])
         assert len(result.case_eligibility) == 2
         assert result.case_eligibility[0]["case_type"] == "fraud"
-        assert result.case_eligibility[0]["eligibility"] == "incomplete"
+        assert result.case_eligibility[0]["eligibility"] == "eligible"
         assert result.case_eligibility[1]["case_type"] == "dispute"
         assert result.case_eligibility[1]["eligibility"] == "eligible"
 
@@ -252,7 +282,7 @@ class TestCopilotSuggestionOutput:
 
         # Use CARDMEMBER event (index 1) — only CARDMEMBER triggers agents
         result = await orch.process_event(sample_transcript_events[1])
-        assert "Fraud case incomplete" in result.case_advisory_summary
+        assert "Fraud case eligible" in result.case_advisory_summary
         assert "Dispute case eligible" in result.case_advisory_summary
 
 
@@ -358,7 +388,10 @@ class TestPipelineOptimizations:
                 _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
             ) as m_retrieval,
             patch(
-                _PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
+                _PATCH_SPECIALISTS, new_callable=AsyncMock, return_value=_SPECIALIST_OUTPUTS
+            ) as m_specs,
+            patch(
+                _PATCH_ARBITRATOR, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
             ) as m_hypo,
             patch(
                 _PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY
@@ -373,6 +406,7 @@ class TestPipelineOptimizations:
             # SYSTEM events skip ALL agents
             m_triage.assert_not_awaited()
             m_auth.assert_not_awaited()
+            m_specs.assert_not_awaited()
             m_hypo.assert_not_awaited()
             m_retrieval.assert_not_awaited()
             m_advisor.assert_not_awaited()
@@ -387,7 +421,8 @@ class TestPipelineOptimizations:
             patch(
                 _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
             ) as m_retrieval,
-            patch(_PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT),
+            patch(_PATCH_SPECIALISTS, new_callable=AsyncMock, return_value=_SPECIALIST_OUTPUTS),
+            patch(_PATCH_ARBITRATOR, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT),
             patch(_PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY),
         ):
             gateway = gateway_factory(tmp_path)
@@ -403,7 +438,7 @@ class TestPipelineOptimizations:
     async def test_cardmember_full_pipeline(
         self, sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
     ):
-        """CARDMEMBER events should invoke all 5 agents."""
+        """CARDMEMBER events should invoke all agents."""
         with (
             patch(_PATCH_TRIAGE, new_callable=AsyncMock, return_value=_TRIAGE_RESULT) as m_triage,
             patch(_PATCH_AUTH, new_callable=AsyncMock, return_value=_AUTH_ASSESSMENT) as m_auth,
@@ -411,7 +446,10 @@ class TestPipelineOptimizations:
                 _PATCH_RETRIEVAL, new_callable=AsyncMock, return_value=_RETRIEVAL_RESULT
             ) as m_retrieval,
             patch(
-                _PATCH_HYPOTHESIS, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
+                _PATCH_SPECIALISTS, new_callable=AsyncMock, return_value=_SPECIALIST_OUTPUTS
+            ) as m_specs,
+            patch(
+                _PATCH_ARBITRATOR, new_callable=AsyncMock, return_value=_HYPOTHESIS_RESULT
             ) as m_hypo,
             patch(
                 _PATCH_CASE_ADVISOR, new_callable=AsyncMock, return_value=_CASE_ADVISORY
@@ -419,7 +457,7 @@ class TestPipelineOptimizations:
         ):
             gateway = gateway_factory(tmp_path)
             orch = CopilotOrchestrator(gateway, mock_model_provider, assess_interval=1)
-            # Advance past early-turn gates so all 5 agents run:
+            # Advance past early-turn gates so all agents run:
             # turn > 3 for case advisor, impersonation_risk >= 0.4 for auth
             orch._turn_count = 3
             orch.impersonation_risk = 0.5
@@ -427,10 +465,11 @@ class TestPipelineOptimizations:
             # Process CARDMEMBER event (index 1) — full pipeline
             await orch.process_event(sample_transcript_events[1])
 
-            # All 5 agents should be called
+            # All agents should be called
             m_triage.assert_awaited_once()
             m_auth.assert_awaited_once()
             m_retrieval.assert_awaited_once()
+            m_specs.assert_awaited_once()
             m_hypo.assert_awaited_once()
             m_advisor.assert_awaited_once()
 

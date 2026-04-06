@@ -137,7 +137,6 @@ def _seed_traces(db_dir: str) -> None:
             {
                 "hypothesis_scores": {"THIRD_PARTY_FRAUD": 0.3, "FIRST_PARTY_FRAUD": 0.6},
                 "impersonation_risk": 0.1,
-                "missing_fields": [],
                 "evidence_collected": ["txn-001"],
             }
         ),

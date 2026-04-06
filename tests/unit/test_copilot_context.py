@@ -37,12 +37,11 @@ class TestCopilotContext:
         ctx = CopilotContext(case_id="C-1", call_id="CALL-1", gateway=gw)
         assert ctx.hypothesis_scores == {}
         assert ctx.impersonation_risk == 0.0
-        assert ctx.missing_fields == []
         assert ctx.evidence_collected == []
         assert ctx.transcript_history == []
 
     def test_all_fields(self) -> None:
-        """CopilotContext accepts all 8 fields."""
+        """CopilotContext accepts all 7 fields."""
         gw = MagicMock()
         event = TranscriptEvent(
             call_id="CALL-1",
@@ -57,13 +56,11 @@ class TestCopilotContext:
             gateway=gw,
             hypothesis_scores={"fraud": 0.7},
             impersonation_risk=0.3,
-            missing_fields=["cvv"],
             evidence_collected=["ref-1"],
             transcript_history=[event],
         )
         assert ctx.hypothesis_scores == {"fraud": 0.7}
         assert ctx.impersonation_risk == 0.3
-        assert ctx.missing_fields == ["cvv"]
         assert ctx.evidence_collected == ["ref-1"]
         assert len(ctx.transcript_history) == 1
 
@@ -107,8 +104,12 @@ class TestToolLookupTransactions:
         wrapper_ctx.context = copilot_ctx
 
         fake_txns = [
-            {"amount": 100.00, "merchant_name": "SHOP", "is_disputed": True,
-             "transaction_date": "2024-06-01"},
+            {
+                "amount": 100.00,
+                "merchant_name": "SHOP",
+                "is_disputed": True,
+                "transaction_date": "2024-06-01",
+            },
         ]
         with patch(
             "agentic_fraud_servicing.copilot.context.lookup_transactions",

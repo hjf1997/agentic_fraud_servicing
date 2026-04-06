@@ -10,13 +10,13 @@ from dataclasses import dataclass, field
 
 from agents import RunContextWrapper, function_tool
 
+from agentic_fraud_servicing.copilot.transaction_summarizer import summarize_transactions
 from agentic_fraud_servicing.gateway.tool_gateway import AuthContext, ToolGateway
 from agentic_fraud_servicing.gateway.tools.read_tools import (
     fetch_customer_profile,
     lookup_transactions,
     query_auth_logs,
 )
-from agentic_fraud_servicing.copilot.transaction_summarizer import summarize_transactions
 from agentic_fraud_servicing.ingestion.firewall_redactor import FirewallRedactor
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
@@ -49,7 +49,6 @@ class CopilotContext:
         gateway: ToolGateway instance for mediated data access.
         hypothesis_scores: Running scores for fraud/dispute/scam hypotheses.
         impersonation_risk: Current impersonation risk score (0.0-1.0).
-        missing_fields: Fields still needed from the caller.
         evidence_collected: Evidence references gathered so far.
         transcript_history: Transcript events processed so far.
     """
@@ -59,7 +58,6 @@ class CopilotContext:
     gateway: ToolGateway
     hypothesis_scores: dict[str, float] = field(default_factory=dict)
     impersonation_risk: float = 0.0
-    missing_fields: list[str] = field(default_factory=list)
     evidence_collected: list[str] = field(default_factory=list)
     transcript_history: list[TranscriptEvent] = field(default_factory=list)
 

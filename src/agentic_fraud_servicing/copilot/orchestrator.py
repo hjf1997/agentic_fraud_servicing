@@ -19,7 +19,11 @@ from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
-from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_hypothesis
+from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_arbitrator
+from agentic_fraud_servicing.copilot.hypothesis_specialists import (
+    SpecialistAssessment,
+    run_specialists,
+)
 from agentic_fraud_servicing.copilot.langfuse_tracing import (
     extract_http_error,
     get_langfuse,
@@ -41,14 +45,6 @@ from agentic_fraud_servicing.models.enums import EvidenceSourceType, SpeakerType
 from agentic_fraud_servicing.models.evidence import AllegationStatement
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
-# Standard fields to gather during a dispute call
-_INITIAL_MISSING_FIELDS = [
-    "transaction_date",
-    "merchant_name",
-    "amount",
-    "auth_method",
-]
-
 
 class CopilotOrchestrator:
     """Central orchestrator for the realtime copilot.
@@ -65,7 +61,6 @@ class CopilotOrchestrator:
         call_id: Set from the first transcript event.
         hypothesis_scores: Running 4-category investigation hypothesis scores.
         impersonation_risk: Current impersonation risk (0.0-1.0).
-        missing_fields: Fields still needed from the caller.
         evidence_collected: Evidence references gathered so far.
         transcript_history: All transcript events processed.
         accumulated_allegations: All allegations extracted across turns.
@@ -89,13 +84,13 @@ class CopilotOrchestrator:
             "DISPUTE": 0.0,
         }
         self.impersonation_risk: float = 0.0
-        self.missing_fields: list[str] = list(_INITIAL_MISSING_FIELDS)
         self.evidence_collected: list[str] = []
         self.transcript_history: list[TranscriptEvent] = []
         self.accumulated_allegations: list[AllegationExtraction] = []
         self._session_id: str = ""
         self._retrieval_result: RetrievalResult | None = None
         self._last_hypothesis: HypothesisAssessment | None = None
+        self._last_specialist_assessments: dict[str, SpecialistAssessment] | None = None
         self._recent_suggestions: list[list[str]] = []
         self._turn_count: int = 0
         self._cm_turn_count: int = 0
@@ -289,40 +284,43 @@ class CopilotOrchestrator:
                 risk_flags.append(f"Step-up auth recommended: {auth_result.step_up_method}")
             risk_flags.extend(auth_result.risk_factors)
 
-        # 4. Update missing fields from triage-extracted entities
-        self._update_missing_fields()
-
-        # 5. Collect retrieved facts from retrieval result
+        # 4. Collect retrieved facts from retrieval result
         if self._retrieval_result is not None:
             self.evidence_collected = [
                 f"txn_summary:{'yes' if self._retrieval_result.transaction_summary else 'no'}",
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
-        # 6-7. Run hypothesis agent and case advisor (merged: eligibility + questions).
-        # On turns > 3, run both in PARALLEL — case advisor uses previous turn's
-        # hypothesis_scores (acceptable since scores shift incrementally).
+        # 5. Run specialists (shared by arbitrator and case advisor).
         _lf_p2 = None
         if lf is not None:
             try:
                 _lf_p2 = lf.start_as_current_observation(
-                    as_type="chain", name="phase2_hypothesis_advisor",
+                    as_type="chain", name="phase2_specialists_arbitrator_advisor",
                 )
                 _lf_p2.__enter__()
             except Exception:
                 _lf_p2 = None
 
+        specialist_assessments = await self._run_specialists_safe(risk_flags)
+        if specialist_assessments is not None:
+            self._last_specialist_assessments = specialist_assessments
+        specs = specialist_assessments or {}
+
+        # 6-7. Run arbitrator + case advisor in parallel.
+        # Both consume specialist outputs. On turns > 3, case advisor runs
+        # alongside the arbitrator for question planning.
         case_advisory = None
         if self._turn_count > 3:
             hypothesis_result, case_advisory = await asyncio.gather(
-                self._run_hypothesis_safe(
-                    auth_result=auth_result, risk_flags=risk_flags
+                self._run_arbitrator_safe(
+                    specs, auth_result=auth_result, risk_flags=risk_flags
                 ),
-                self._run_case_advisor_safe(risk_flags, conversation_window),
+                self._run_case_advisor_safe(specs, risk_flags, conversation_window),
             )
         else:
-            hypothesis_result = await self._run_hypothesis_safe(
-                auth_result=auth_result, risk_flags=risk_flags
+            hypothesis_result = await self._run_arbitrator_safe(
+                specs, auth_result=auth_result, risk_flags=risk_flags
             )
 
         if _lf_p2 is not None:
@@ -513,26 +511,11 @@ class CopilotOrchestrator:
         ]
         return f"{len(self.transcript_history)} turns total. Recent:\n" + "\n".join(lines)
 
-    def _update_missing_fields(self) -> None:
-        """Remove missing fields resolved by triage-extracted entities.
-
-        Iterates accumulated allegations and collects entity keys. If an
-        entity key matches a missing field name (e.g., 'merchant_name',
-        'amount'), the field is considered resolved and removed.
-        """
-        entity_keys: set[str] = set()
-        for allegation in self.accumulated_allegations:
-            entity_keys.update(allegation.entities.keys())
-
-        self.missing_fields = [f for f in self.missing_fields if f not in entity_keys]
-
     def _build_safety_guidance(self) -> str:
         """Build safety guidance string based on current state."""
         parts = []
         if self.impersonation_risk >= 0.6:
             parts.append("HIGH impersonation risk — verify caller identity before proceeding.")
-        if self.missing_fields:
-            parts.append(f"Still need: {', '.join(self.missing_fields)}.")
         parts.append("Never ask for full PAN or CVV.")
         return " ".join(parts)
 
@@ -669,73 +652,117 @@ class CopilotOrchestrator:
                 risk_flags.append(self._format_error("Auth", exc))
             return None
 
-    async def _run_hypothesis_safe(
+    async def _run_specialists_safe(
+        self, risk_flags: list[str]
+    ) -> dict[str, SpecialistAssessment] | None:
+        """Run category specialists in parallel with error handling.
+
+        On failure, returns None and the previous specialist outputs are
+        reused by the orchestrator.
+        """
+        t0 = time.perf_counter()
+        try:
+            result = await run_specialists(
+                allegations_summary=self._format_allegations_for_hypothesis(),
+                evidence_summary=self._format_evidence_for_hypothesis(),
+                conversation_summary=self._format_conversation_for_hypothesis(),
+                model_provider=self.model_provider,
+                previous_assessments=self._last_specialist_assessments,
+            )
+            self._log_agent_trace(
+                "specialists", "run", (time.perf_counter() - t0) * 1000
+            )
+            return result
+        except Exception as exc:
+            self._log_agent_trace(
+                "specialists", "run", (time.perf_counter() - t0) * 1000, status="error"
+            )
+            tag_agent_error("specialists", exc)
+            if is_firewall_block(exc):
+                tag_firewall_block("specialists", str(exc))
+                risk_flags.append(
+                    "FIREWALL BLOCKED: specialists prompt rejected by policy"
+                )
+            else:
+                risk_flags.append(self._format_error("Specialists", exc))
+            return None
+
+    async def _run_arbitrator_safe(
         self,
+        specialist_assessments: dict[str, SpecialistAssessment],
         auth_result: AuthAssessment | None,
         risk_flags: list[str],
     ) -> HypothesisAssessment | None:
-        """Run hypothesis agent with error handling.
+        """Run arbitrator agent with error handling.
 
         On failure, scores remain unchanged from the previous turn.
         """
         t0 = time.perf_counter()
         try:
-            result = await run_hypothesis(
+            result = await run_arbitrator(
+                specialist_assessments=specialist_assessments,
                 allegations_summary=self._format_allegations_for_hypothesis(),
                 auth_summary=self._format_auth_for_hypothesis(auth_result),
-                evidence_summary=self._format_evidence_for_hypothesis(),
                 current_scores=dict(self.hypothesis_scores),
-                conversation_summary=self._format_conversation_for_hypothesis(),
                 model_provider=self.model_provider,
                 previous_reasoning=self._last_hypothesis,
             )
-            self._log_agent_trace("hypothesis", "run", (time.perf_counter() - t0) * 1000)
+            # Attach specialist outputs for next-turn incremental reasoning
+            result.specialist_assessments = specialist_assessments
+            self._log_agent_trace(
+                "arbitrator", "run", (time.perf_counter() - t0) * 1000
+            )
             return result
         except Exception as exc:
             self._log_agent_trace(
-                "hypothesis", "run", (time.perf_counter() - t0) * 1000, status="error"
+                "arbitrator", "run", (time.perf_counter() - t0) * 1000, status="error"
             )
             tag_agent_error("hypothesis", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("hypothesis", str(exc))
-                risk_flags.append("FIREWALL BLOCKED: hypothesis agent prompt rejected by policy")
+                risk_flags.append(
+                    "FIREWALL BLOCKED: hypothesis agent prompt rejected by policy"
+                )
             else:
                 risk_flags.append(self._format_error("Hypothesis", exc))
             return None
 
     async def _run_case_advisor_safe(
         self,
+        specialist_assessments: dict[str, SpecialistAssessment],
         risk_flags: list[str],
         conversation_window: list[tuple[str, str]],
     ) -> CaseAdvisory | None:
         """Run case advisor agent with error handling.
 
-        The merged case advisor handles both eligibility assessment and
-        question planning. It receives the assessment-based conversation
-        window, missing fields, and recent questions for deduplication.
+        The case advisor plans questions based on specialist-identified
+        evidence gaps and determines information sufficiency.
         """
         recent_questions = [q for qs in self._recent_suggestions for q in qs]
         t0 = time.perf_counter()
         try:
             result = await run_case_advisor(
-                allegations_summary=self._format_allegations_for_hypothesis(),
-                evidence_summary=self._format_evidence_for_hypothesis(),
+                specialist_assessments=specialist_assessments,
                 hypothesis_scores=dict(self.hypothesis_scores),
                 conversation_window=conversation_window,
                 model_provider=self.model_provider,
-                missing_fields=self.missing_fields if self.missing_fields else None,
                 recent_questions=recent_questions if recent_questions else None,
             )
-            self._log_agent_trace("case_advisor", "run", (time.perf_counter() - t0) * 1000)
+            self._log_agent_trace(
+                "case_advisor", "run", (time.perf_counter() - t0) * 1000
+            )
             return result
         except Exception as exc:
             self._log_agent_trace(
-                "case_advisor", "run", (time.perf_counter() - t0) * 1000, status="error"
+                "case_advisor", "run", (time.perf_counter() - t0) * 1000,
+                status="error",
             )
             tag_agent_error("case_advisor", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("case_advisor", str(exc))
-                risk_flags.append("FIREWALL BLOCKED: case_advisor agent prompt rejected by policy")
+                risk_flags.append(
+                    "FIREWALL BLOCKED: case_advisor agent prompt rejected by policy"
+                )
             else:
                 risk_flags.append(self._format_error("Case advisor", exc))
             return None

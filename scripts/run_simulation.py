@@ -711,7 +711,6 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
     print(f"\n{BOLD}Final Copilot State:{RESET}")
     print(f"  Hypothesis scores: {json.dumps(copilot.hypothesis_scores, indent=2)}")
     print(f"  Impersonation risk: {copilot.impersonation_risk:.2f}")
-    print(f"  Missing fields: {copilot.missing_fields}")
     print(f"  Evidence collected: {copilot.evidence_collected}")
     print(f"  Transcript events processed: {len(copilot.transcript_history)}")
     print(f"  Allegations extracted: {len(copilot.accumulated_allegations)}")
@@ -727,7 +726,6 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
             {
                 "hypothesis_scores": copilot.hypothesis_scores,
                 "impersonation_risk": copilot.impersonation_risk,
-                "missing_fields": copilot.missing_fields,
                 "evidence_collected": copilot.evidence_collected,
                 "allegations_extracted": len(copilot.accumulated_allegations),
             }

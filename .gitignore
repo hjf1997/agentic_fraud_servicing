@@ -10,7 +10,7 @@ dist/
 *.egg
 .gradio
 .CLAUDE.md
-
+/docs
 # Virtual environments
 venv/
 .venv/

@@ -1,14 +1,13 @@
-"""Case Advisor agent — policy-aware eligibility assessment and question planning.
+"""Case Advisor agent — question planner consuming specialist assessments.
 
-Merges the former Case Advisor and Question Planner into a single agent that:
-- Evaluates case eligibility per type (eligible/blocked/incomplete)
-- Suggests 0-3 next-best questions when information is insufficient
-- Signals information_sufficient=True when all required info is gathered
+Plans targeted questions based on specialist-identified evidence gaps and
+eligibility status. Does NOT load policies — specialists handle policy-
+grounded reasoning and eligibility assessment. The case advisor translates
+their findings into CCP-friendly questions and determines when enough
+information has been gathered.
 
-Provides Pydantic output models (CaseTypeAssessment, CaseAdvisory), a
-policy document loader (load_policies), the Case Advisor Agent instance,
-and the run_case_advisor async runner function. Policy documents are loaded
-at module import time and embedded in the agent's system prompt.
+Provides Pydantic output models (CaseTypeAssessment, CaseAdvisory), the
+Case Advisor Agent instance, and the run_case_advisor async runner function.
 """
 
 from __future__ import annotations
@@ -20,7 +19,9 @@ from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
 from pydantic import BaseModel, Field
 
-from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
+from agentic_fraud_servicing.copilot.hypothesis_specialists import (
+    SpecialistAssessment,
+)
 
 # ---------------------------------------------------------------------------
 # Output models
@@ -53,10 +54,11 @@ class CaseAdvisory(BaseModel):
     """Full output from the Case Advisor agent."""
 
     assessments: list[CaseTypeAssessment] = Field(default_factory=list)
-    """One per case type evaluated."""
+    """One per case type evaluated. Populated programmatically from specialist
+    eligibility, not produced by the LLM."""
 
     general_warnings: list[str] = Field(default_factory=list)
-    """Cross-cutting warnings from general guidelines."""
+    """Cross-cutting warnings (e.g., escalation triggers)."""
 
     questions: list[str] = Field(default_factory=list)
     """0-3 suggested next-best questions for the CCP to ask.
@@ -71,15 +73,15 @@ class CaseAdvisory(BaseModel):
     """The most impactful missing information item, or empty when sufficient."""
 
     information_sufficient: bool = False
-    """True when all required information has been gathered per the policy
-    checklists. The CCP can proceed to case opening."""
+    """True when all required information has been gathered. The CCP can
+    proceed to case opening."""
 
     summary: str = ""
     """2-4 sentence summary of the eligibility landscape and next steps."""
 
 
 # ---------------------------------------------------------------------------
-# Policy document loader
+# Policy document loader (kept for backward compatibility)
 # ---------------------------------------------------------------------------
 
 
@@ -95,6 +97,12 @@ def _find_project_root() -> Path:
 
 def load_policies(policies_dir: str | Path | None = None) -> str:
     """Load all .md policy files and concatenate with separators.
+
+    .. deprecated::
+        Policy loading is now handled by individual specialists via
+        ``hypothesis_specialists.load_specialist_policies()``. This function
+        is retained for backward compatibility but is no longer called at
+        module import time.
 
     Args:
         policies_dir: Directory containing .md policy files.
@@ -112,144 +120,67 @@ def load_policies(policies_dir: str | Path | None = None) -> str:
     if not policies_dir.is_dir():
         return ""
 
-    md_files = sorted(policies_dir.glob("*.md"))
+    md_files = sorted(policies_dir.rglob("*.md"))
     if not md_files:
         return ""
 
     sections: list[str] = []
     for md_file in md_files:
-        sections.append(f"--- {md_file.name} ---")
+        relative = md_file.relative_to(policies_dir)
+        sections.append(f"--- {relative} ---")
         sections.append(md_file.read_text(encoding="utf-8").strip())
 
     return "\n\n".join(sections)
 
 
 # ---------------------------------------------------------------------------
-# System prompt — policies loaded once at module import time
+# System prompt — no policies, consumes specialist outputs
 # ---------------------------------------------------------------------------
 
-_POLICY_TEXT = load_policies()
-
-CASE_ADVISOR_INSTRUCTIONS = f"""\
-You are a Case Advisor specialist for AMEX card dispute servicing. Your role is
-to help the Contact Center Professional (CCP) by assessing case eligibility AND
-suggesting targeted questions to fill information gaps — all in a single step.
+CASE_ADVISOR_INSTRUCTIONS = """\
+You are a Case Advisor for AMEX card dispute servicing. Your role is to help
+the Contact Center Professional (CCP) by suggesting targeted questions to fill
+information gaps identified by category specialists.
 
 This is ADVISORY only — the CCP makes the final decision.
 
-## Investigation Categories
+## Your Input
 
-{INVESTIGATION_CATEGORIES_REFERENCE}
+You receive:
+1. **Specialist Assessments** — Three independent evaluations (Dispute, Scam,
+   Third-Party Fraud), each with: likelihood score, eligibility status
+   (eligible/blocked), evidence gaps, policy-grounded reasoning, and policy
+   citations. Specialists have already evaluated the evidence against their
+   category's policies.
+2. **Hypothesis Scores** — Current 4-category probability distribution
+   (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE).
+3. **Recent Conversation** — Recent transcript turns for context.
+4. **Recently Suggested Questions** — For deduplication.
 
-## Policy Documents
+## Stopping Condition — information_sufficient
 
-The following policy documents define the criteria and rules for opening each
-case type. Read them carefully and cite specific passages in your determinations.
+Check the specialist eligibility statuses and evidence gaps. Set
+`information_sufficient = true` and return an empty questions list if:
 
-{_POLICY_TEXT}
-
-## Part 1A — Allegation Credibility Check (MANDATORY before eligibility)
-
-Before evaluating policy criteria, cross-reference EACH allegation against the
-retrieved evidence and hypothesis scores. Allegations are what the cardmember
-CLAIMS — they are not facts until corroborated by evidence.
-
-1. **For each allegation**, check whether retrieved evidence supports,
-   contradicts, or is neutral:
-   - **Contradicted**: Evidence directly refutes the allegation (e.g., signed
-     delivery proof vs. "never received"; chip+PIN auth from enrolled device
-     vs. "unauthorized transaction"; CM's own device/IP in auth logs vs.
-     "account takeover by stranger"). A contradicted allegation MUST NOT count
-     as satisfying a policy criterion.
-   - **Supported**: Evidence corroborates the allegation (e.g., auth logs show
-     unfamiliar device matching CM's "unauthorized" claim; no delivery record
-     matching CM's "never received" claim).
-   - **Unverified**: No evidence available to confirm or refute. Treat as
-     tentatively meeting the criterion but flag it as requiring verification.
-
-2. **Factor in hypothesis scores**: If FIRST_PARTY_FRAUD hypothesis is
-   elevated (≥ 0.3), apply heightened scrutiny to all allegations — look
-   harder for contradictions and do NOT treat unverified allegations as
-   meeting eligibility criteria. Instead, mark those criteria as `unmet`
-   until corroborating evidence is gathered.
-
-3. **Flag contradictions** in `general_warnings` with the specific allegation,
-   the contradicting evidence, and the impact on eligibility.
-
-## Part 1B — Eligibility Assessment
-
-Given the credibility check above, the current case state, and the policy
-documents, evaluate eligibility for each case type:
-
-### For each case type (fraud, dispute):
-
-1. **Determine eligibility status**:
-   - `eligible` — All required criteria from the policy checklist are met
-     BY CORROBORATED OR UNCONTRADICTED ALLEGATIONS and no blocking rules
-     apply. The CCP can proceed to open this case type. A criterion satisfied
-     only by a contradicted allegation is NOT met.
-   - `blocked` — An active blocking rule prevents opening this case type,
-     OR evidence directly contradicts the foundational allegation for this
-     case type (e.g., proven authorized transaction blocks fraud case).
-     Cite the specific blocking rule or contradicting evidence.
-   - `incomplete` — Some required criteria are not yet satisfied but no
-     blocking rules apply. The case could become eligible once more information
-     is gathered. Criteria backed only by unverified allegations when
-     FIRST_PARTY_FRAUD is elevated should be treated as incomplete.
-
-2. **List met criteria** — Which policy requirements are satisfied by
-   supported or uncontradicted allegations, with brief evidence references.
-
-3. **List unmet criteria** — Which policy requirements are NOT yet satisfied.
-   Include criteria where the allegation is contradicted by evidence —
-   explain what evidence contradicts the claim.
-
-4. **List blockers** — Any active blocking rules that prevent opening this
-   case type, including evidence-based contradictions that undermine the
-   case foundation. Cite the exact policy text or evidence.
-
-5. **Cite policy text** — For every determination, reference the specific
-   policy document and passage. Use the format:
-   "Per [filename]: '[quoted policy text]'"
-
-### General warnings
-
-Review the general guidelines document and flag any cross-cutting warnings
-that apply to the current case (e.g., escalation triggers, priority rules,
-case type conflicts, documentation requirements, allegation credibility
-concerns from Part 1A).
-
-## Part 2 — Question Planning
-
-Based on the eligibility assessment above, determine whether more information
-is needed and suggest targeted questions.
-
-### Stopping condition — information_sufficient
-
-Check the unmet_criteria across ALL case type assessments against what has
-already been gathered. If ALL of the following are true, set
-`information_sufficient = true` and return an empty questions list:
-
-- The leading hypothesis case type has status `eligible` (all criteria met,
-  no blockers), OR
-- All case types are `blocked` for reasons that cannot be resolved by
-  gathering more information from the cardmember (e.g., regulatory blocks,
-  account-level restrictions).
+- The leading hypothesis specialist has eligibility `eligible` AND has no
+  critical evidence gaps remaining, OR
+- All specialists have eligibility `blocked` for reasons that cannot be
+  resolved by gathering more information from the cardmember.
 
 Otherwise, set `information_sufficient = false` and suggest questions.
 
-### Question generation rules (when information is insufficient)
+## Question Generation Rules
 
-1. **Prioritize by impact**: Identify the single most important unmet criterion
-   from the policy checklists — set this as `priority_field`. Target the
-   question(s) at resolving it first.
+1. **Prioritize by impact**: Identify the most critical evidence gap across
+   all specialists — set this as `priority_field`. Focus on gaps from the
+   specialist whose category aligns with the leading hypothesis.
 
 2. **Suggest 1-3 questions**: Craft open-ended questions that target the
-   priority field and any secondary gaps. Questions should be natural and
-   conversational — suitable for a live phone call.
+   priority evidence gaps. Questions should be natural and conversational —
+   suitable for a live phone call.
 
 3. **Provide rationale**: For each question, briefly explain what information
-   it aims to elicit and which policy criterion it addresses.
+   it aims to elicit and which specialist's evidence gap it addresses.
 
 4. **Deduplication**: If recently suggested questions are provided, do NOT
    repeat them. Ask about the same topic from a different angle if needed.
@@ -259,8 +190,8 @@ Otherwise, set `information_sufficient = false` and suggest questions.
    distinguish between them.
 
 6. **First-party fraud probing**: If the FIRST_PARTY_FRAUD hypothesis is
-   elevated, suggest questions that probe for contradictions between the
-   cardmember's claims and verifiable facts (e.g., transaction details,
+   elevated (≥ 0.3), suggest questions that probe for contradictions between
+   the cardmember's claims and verifiable facts (e.g., transaction details,
    delivery, device usage) without being accusatory.
 
 7. **NEVER ask the customer to reveal their full card number (PAN) or
@@ -268,23 +199,32 @@ Otherwise, set `information_sufficient = false` and suggest questions.
 
 8. **Prefer open-ended questions** — avoid yes/no when possible.
 
-## Part 3 — Summary
+## Warnings
+
+Flag any cross-cutting concerns in `general_warnings`:
+- Contradictions detected across multiple specialists
+- Escalation triggers (high-value transactions, vulnerable cardholders)
+- First-party fraud indicators when FIRST_PARTY_FRAUD score is elevated
+
+## Summary
 
 Provide a 2-4 sentence summary covering:
-- Which case types are available, blocked, or incomplete.
+- Which case types are available or blocked (based on specialist eligibility).
 - What the CCP should focus on gathering next (if anything).
-- Whether the case is ready to proceed (if information_sufficient is true).
+- Whether the case is ready to proceed.
 
 ## Output Format
 
 Return structured output with:
-- assessments: list of CaseTypeAssessment (one per case type: fraud, dispute)
-- general_warnings: list of applicable cross-cutting warnings
+- general_warnings: list of cross-cutting warnings
 - questions: 0-3 suggested questions (empty list when information_sufficient)
 - rationale: parallel list with questions
-- priority_field: most impactful missing field, or "" when sufficient
+- priority_field: most impactful evidence gap, or "" when sufficient
 - information_sufficient: true when ready, false when more info needed
 - summary: 2-4 sentence eligibility and next-steps summary
+
+NOTE: Do NOT include assessments in your output — those are populated
+separately from specialist data.
 """
 
 
@@ -300,34 +240,120 @@ case_advisor = Agent(
 
 
 # ---------------------------------------------------------------------------
+# Formatting helpers
+# ---------------------------------------------------------------------------
+
+
+def _format_specialists_for_advisor(
+    assessments: dict[str, SpecialistAssessment],
+) -> str:
+    """Format specialist outputs into the case advisor's user message."""
+    _LABELS = {
+        "DISPUTE": "Dispute Specialist",
+        "SCAM": "Scam Specialist",
+        "THIRD_PARTY_FRAUD": "Fraud Specialist (Third-Party)",
+    }
+    parts: list[str] = []
+    for category in ("DISPUTE", "SCAM", "THIRD_PARTY_FRAUD"):
+        a = assessments.get(category)
+        if a is None:
+            parts.append(f"### {_LABELS[category]}\nNot available.")
+            continue
+        gaps = ", ".join(a.evidence_gaps) if a.evidence_gaps else "none identified"
+        citations = (
+            "\n".join(f"  - {c}" for c in a.policy_citations)
+            if a.policy_citations
+            else "  none"
+        )
+        parts.append(
+            f"### {_LABELS[category]}\n"
+            f"Likelihood: {a.likelihood:.2f}\n"
+            f"Eligibility: {a.eligibility}\n"
+            f"Reasoning: {a.reasoning}\n"
+            f"Evidence gaps: {gaps}\n"
+            f"Policy citations:\n{citations}"
+        )
+    return "\n\n".join(parts)
+
+
+def _map_specialists_to_case_types(
+    assessments: dict[str, SpecialistAssessment],
+) -> list[CaseTypeAssessment]:
+    """Map specialist eligibility to CaseTypeAssessment for dashboard compat.
+
+    Only DISPUTE and THIRD_PARTY_FRAUD map to case opening types (dispute
+    and fraud respectively). SCAM does not have a separate case type — scam
+    cases are opened under the fraud case type.
+    """
+    result: list[CaseTypeAssessment] = []
+
+    dispute_spec = assessments.get("DISPUTE")
+    if dispute_spec:
+        # Map specialist "eligible"/"blocked" to CaseTypeAssessment
+        # If blocked, the reasoning explains why
+        blockers = (
+            [dispute_spec.reasoning] if dispute_spec.eligibility == "blocked" else []
+        )
+        result.append(
+            CaseTypeAssessment(
+                case_type="dispute",
+                eligibility=dispute_spec.eligibility,
+                met_criteria=list(dispute_spec.supporting_evidence),
+                unmet_criteria=list(dispute_spec.evidence_gaps),
+                blockers=blockers,
+                policy_citations=list(dispute_spec.policy_citations),
+            )
+        )
+
+    fraud_spec = assessments.get("THIRD_PARTY_FRAUD")
+    if fraud_spec:
+        blockers = (
+            [fraud_spec.reasoning] if fraud_spec.eligibility == "blocked" else []
+        )
+        result.append(
+            CaseTypeAssessment(
+                case_type="fraud",
+                eligibility=fraud_spec.eligibility,
+                met_criteria=list(fraud_spec.supporting_evidence),
+                unmet_criteria=list(fraud_spec.evidence_gaps),
+                blockers=blockers,
+                policy_citations=list(fraud_spec.policy_citations),
+            )
+        )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Runner wrapper
 # ---------------------------------------------------------------------------
 
 
 async def run_case_advisor(
-    allegations_summary: str,
-    evidence_summary: str,
+    specialist_assessments: dict[str, SpecialistAssessment],
     hypothesis_scores: dict[str, float],
     conversation_window: list[tuple[str, str]],
     model_provider: ModelProvider,
-    missing_fields: list[str] | None = None,
     recent_questions: list[str] | None = None,
 ) -> CaseAdvisory:
-    """Run the Case Advisor agent to assess eligibility and suggest questions.
+    """Run the Case Advisor agent to suggest questions.
+
+    Takes specialist assessments as primary input — the case advisor does
+    not load policies. Eligibility assessments are mapped programmatically
+    from specialist outputs after the LLM returns.
 
     Args:
-        allegations_summary: Formatted allegations with types and entities.
-        evidence_summary: Retrieved evidence text (transactions, auth events).
+        specialist_assessments: Specialist outputs keyed by category
+            (DISPUTE, SCAM, THIRD_PARTY_FRAUD).
         hypothesis_scores: Current 4-category hypothesis score distribution.
         conversation_window: Recent (speaker, text) turns from the assessment-
-            based conversation window (consistent with other agents).
+            based conversation window.
         model_provider: LLM model provider for inference.
-        missing_fields: Triage-extracted fields still missing (supplementary
-            input — the agent also derives gaps from policy checklists).
         recent_questions: Previously suggested questions to avoid repeating.
 
     Returns:
-        CaseAdvisory with eligibility assessments, questions, and stopping signal.
+        CaseAdvisory with questions, stopping signal, and eligibility
+        assessments mapped from specialist outputs.
 
     Raises:
         RuntimeError: If the agent SDK call fails.
@@ -335,8 +361,8 @@ async def run_case_advisor(
     scores_text = ", ".join(f"{k}: {v:.2f}" for k, v in hypothesis_scores.items())
 
     parts = [
-        f"## Allegations\n{allegations_summary}",
-        f"## Evidence\n{evidence_summary}",
+        f"## Specialist Assessments\n\n"
+        f"{_format_specialists_for_advisor(specialist_assessments)}",
         f"## Current Hypothesis Scores\n{scores_text}",
     ]
 
@@ -344,11 +370,6 @@ async def run_case_advisor(
     if conversation_window:
         turn_lines = [f"{speaker}: {text}" for speaker, text in conversation_window]
         parts.append("## Recent Conversation\n" + "\n".join(turn_lines))
-
-    # Supplementary missing fields from triage entity tracking
-    if missing_fields:
-        fields_str = ", ".join(missing_fields)
-        parts.append(f"## Missing Fields (from triage)\n{fields_str}")
 
     # Deduplication: recently suggested questions
     if recent_questions:
@@ -365,6 +386,9 @@ async def run_case_advisor(
             input=user_msg,
             run_config=RunConfig(model_provider=model_provider),
         )
-        return result.final_output
+        advisory: CaseAdvisory = result.final_output
+        # Populate eligibility assessments from specialist data (not LLM)
+        advisory.assessments = _map_specialists_to_case_types(specialist_assessments)
+        return advisory
     except Exception as exc:
         raise RuntimeError(f"Case advisor agent failed: {exc}") from exc

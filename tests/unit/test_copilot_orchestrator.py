@@ -10,10 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, CaseTypeAssessment
-from agentic_fraud_servicing.copilot.orchestrator import (
-    _INITIAL_MISSING_FIELDS,
-    CopilotOrchestrator,
-)
+from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
 from agentic_fraud_servicing.models.allegations import (
     AllegationExtraction,
     AllegationExtractionResult,
@@ -22,12 +19,11 @@ from agentic_fraud_servicing.models.case import CopilotSuggestion
 from agentic_fraud_servicing.models.enums import AllegationDetailType, SpeakerType
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
+
 @pytest.fixture(autouse=True)
 def _disable_langfuse():
     """Disable LangFuse in all orchestrator tests."""
-    with patch(
-        "agentic_fraud_servicing.copilot.orchestrator.get_langfuse", return_value=None
-    ):
+    with patch("agentic_fraud_servicing.copilot.orchestrator.get_langfuse", return_value=None):
         yield
 
 
@@ -85,8 +81,7 @@ def _mock_retrieval_result(auth_events=None, customer_profile=None, transaction_
     """Create a mock RetrievalResult."""
     result = MagicMock()
     result.transaction_summary = transaction_summary or (
-        "== Disputed Transactions (1 total, $100.00) ==\n"
-        "2024-01-01:\n- $100.00 at TestMerchant"
+        "== Disputed Transactions (1 total, $100.00) ==\n2024-01-01:\n- $100.00 at TestMerchant"
     )
     result.auth_events = auth_events or [{"type": "chip"}]
     result.customer_profile = customer_profile
@@ -115,6 +110,36 @@ def _mock_hypothesis_result(scores=None):
     return result
 
 
+def _mock_specialist_outputs():
+    """Create mock SpecialistAssessment outputs for the specialist panel."""
+    from agentic_fraud_servicing.copilot.hypothesis_specialists import SpecialistAssessment
+
+    return {
+        "DISPUTE": SpecialistAssessment(
+            category="DISPUTE",
+            likelihood=0.2,
+            reasoning="No merchant issue identified.",
+            eligibility="blocked",
+            evidence_gaps=[],
+            policy_citations=["Per dispute_case_checklist.md: 'Cannot open if fraud case active'"],
+        ),
+        "SCAM": SpecialistAssessment(
+            category="SCAM",
+            likelihood=0.1,
+            reasoning="No scam pattern.",
+            eligibility="eligible",
+        ),
+        "THIRD_PARTY_FRAUD": SpecialistAssessment(
+            category="THIRD_PARTY_FRAUD",
+            likelihood=0.5,
+            reasoning="Unfamiliar device used.",
+            eligibility="eligible",
+            evidence_gaps=["Identity verification pending", "Authorization method unclear"],
+            policy_citations=["Per fraud_case_checklist.md: 'Identity must be verified'"],
+        ),
+    }
+
+
 def _mock_case_advisory(
     questions=None,
     information_sufficient=False,
@@ -126,7 +151,7 @@ def _mock_case_advisory(
         assessments=[
             CaseTypeAssessment(
                 case_type="fraud",
-                eligibility="incomplete",
+                eligibility="eligible",
                 met_criteria=["Transaction identified", "Card status verified"],
                 unmet_criteria=["Identity verification pending", "Authorization method unclear"],
                 blockers=[],
@@ -148,7 +173,7 @@ def _mock_case_advisory(
         rationale=["Need transaction date"],
         priority_field="transaction_date",
         information_sufficient=information_sufficient,
-        summary="Fraud case is incomplete pending identity verification. Dispute is blocked.",
+        summary="Fraud case eligible. Dispute is blocked.",
     )
 
 
@@ -159,11 +184,12 @@ def _make_orchestrator() -> CopilotOrchestrator:
     return CopilotOrchestrator(gateway=gateway, model_provider=model_provider, assess_interval=1)
 
 
-# Patch paths for the 5 specialist run_* functions
+# Patch paths for the specialist run_* functions
 _TRIAGE_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_triage"
 _AUTH_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_auth_assessment"
 _RETRIEVAL_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_retrieval"
-_HYPOTHESIS_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_hypothesis"
+_SPECIALISTS_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_specialists"
+_ARBITRATOR_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_arbitrator"
 _CASE_ADVISOR_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_case_advisor"
 
 
@@ -185,7 +211,6 @@ class TestCopilotOrchestratorInit:
             "DISPUTE": 0.0,
         }
         assert orch.impersonation_risk == 0.0
-        assert orch.missing_fields == list(_INITIAL_MISSING_FIELDS)
         assert orch.evidence_collected == []
         assert orch.transcript_history == []
         assert orch.accumulated_allegations == []
@@ -203,18 +228,26 @@ class TestProcessEvent:
     """Tests for the process_event method."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_returns_copilot_suggestion(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """process_event returns a CopilotSuggestion instance."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -225,18 +258,26 @@ class TestProcessEvent:
         assert result.timestamp_ms == 1000
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_sets_case_id_from_first_event(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """case_id and call_id are set from the first event."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -246,18 +287,26 @@ class TestProcessEvent:
         assert orch.call_id == "call-42"
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_accumulates_transcript_history(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """transcript_history grows with each event."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -269,18 +318,26 @@ class TestProcessEvent:
         assert orch.transcript_history[1].event_id == "evt-2"
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_updates_impersonation_risk(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """impersonation_risk updates from auth assessment."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result(impersonation_risk=0.75)
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -290,18 +347,26 @@ class TestProcessEvent:
         assert result.impersonation_risk == 0.75
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_includes_suggested_questions_from_case_advisor(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """CopilotSuggestion includes questions from the case advisor."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = _mock_case_advisory(
             questions=["What was the transaction amount?", "Where was the charge?"]
         )
@@ -318,18 +383,26 @@ class TestParallelExecution:
     """Tests for the asyncio.gather() parallel execution of triage, auth, and retrieval."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_triage_auth_retrieval_all_called_on_first_event(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Triage, auth, and retrieval are all invoked on the first event."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -340,18 +413,26 @@ class TestParallelExecution:
         mock_retrieval.assert_awaited_once()
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_retrieval_not_reinvoked_when_no_allegations(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Retrieval is cached when triage extracts no allegations."""
         mock_triage.return_value = AllegationExtractionResult(allegations=[])
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -369,12 +450,19 @@ class TestAccumulatedAllegations:
     """Tests for accumulated allegations growing across events."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_accumulated_allegations_grow(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """accumulated_allegations grows with each process_event call."""
         allegation1 = AllegationExtraction(
@@ -395,7 +483,8 @@ class TestAccumulatedAllegations:
         ]
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -409,18 +498,26 @@ class TestAccumulatedAllegations:
         assert orch.accumulated_allegations[1].detail_type == AllegationDetailType.CARD_POSSESSION
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_empty_triage_does_not_add_allegations(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """No allegations added when triage returns empty list."""
         mock_triage.return_value = AllegationExtractionResult(allegations=[])
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -428,18 +525,26 @@ class TestAccumulatedAllegations:
         assert len(orch.accumulated_allegations) == 0
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_running_summary_built_from_allegations(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """running_summary in CopilotSuggestion reflects accumulated allegations."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -453,12 +558,19 @@ class TestHypothesisScoring:
     """Tests for hypothesis agent integration."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_scores_come_from_hypothesis_agent(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """hypothesis_scores are set from hypothesis agent output."""
         custom_scores = {
@@ -470,7 +582,8 @@ class TestHypothesisScoring:
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result(scores=custom_scores)
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result(scores=custom_scores)
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -480,18 +593,26 @@ class TestHypothesisScoring:
         assert result.hypothesis_scores == custom_scores
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_suggestion_contains_all_four_hypothesis_keys(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """CopilotSuggestion.hypothesis_scores has all 4 category keys."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -505,42 +626,58 @@ class TestHypothesisScoring:
         }
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_hypothesis_called_with_accumulated_context(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+    async def test_arbitrator_called_with_accumulated_context(
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
-        """Hypothesis agent receives claims, auth, evidence, scores, and conversation."""
+        """Arbitrator receives specialist assessments, allegations, auth, and scores."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
         await orch.process_event(_make_event())
 
-        mock_hypothesis.assert_awaited_once()
-        call_kwargs = mock_hypothesis.call_args.kwargs
+        mock_arbitrator.assert_awaited_once()
+        call_kwargs = mock_arbitrator.call_args.kwargs
         assert "UNRECOGNIZED_TRANSACTION" in call_kwargs["allegations_summary"]
         assert "Impersonation risk" in call_kwargs["auth_summary"]
-        # Evidence summary should contain the transaction summary text
-        evidence = call_kwargs["evidence_summary"]
-        assert "Disputed Transactions" in evidence
         assert "THIRD_PARTY_FRAUD" in str(call_kwargs["current_scores"])
-        assert "CARDMEMBER" in call_kwargs["conversation_summary"]
+        # Specialist assessments are passed directly
+        assert "specialist_assessments" in call_kwargs
+        specs = call_kwargs["specialist_assessments"]
+        assert "DISPUTE" in specs
+        assert "THIRD_PARTY_FRAUD" in specs
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_evidence_summary_contains_transaction_summary_and_json(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+    async def test_specialists_receive_evidence_and_conversation(
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
-        """Evidence summary includes transaction_summary text and JSON for auth/profile."""
+        """Specialists receive evidence and conversation context from orchestrator."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result(
@@ -551,38 +688,43 @@ class TestHypothesisScoring:
             auth_events=[{"auth_type": "chip_pin", "result": "success", "device_id": "dev-001"}],
             customer_profile={"customer_id": "cust-001", "name": "John Smith"},
         )
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
         await orch.process_event(_make_event())
 
-        call_kwargs = mock_hypothesis.call_args.kwargs
+        mock_specialists.assert_awaited_once()
+        call_kwargs = mock_specialists.call_args.kwargs
+        # Evidence summary is passed to specialists
         evidence = call_kwargs["evidence_summary"]
-        # Transaction summary text is included directly
         assert "Disputed Transactions" in evidence
         assert "2,847.99" in evidence
-        assert "TechVault" in evidence
-        # Auth event and customer profile still as JSON
-        assert "auth_type" in evidence
-        assert "device_id" in evidence
-        assert "dev-001" in evidence
-        assert "customer_id" in evidence
-        assert "cust-001" in evidence
+        # Conversation summary also passed to specialists
+        assert "CARDMEMBER" in call_kwargs["conversation_summary"]
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_hypothesis_failure_leaves_scores_unchanged(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """When hypothesis agent fails, scores carry over from previous state."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.side_effect = RuntimeError("LLM timeout")
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.side_effect = RuntimeError("LLM timeout")
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -602,95 +744,30 @@ class TestHypothesisScoring:
         assert any("Hypothesis failed" in f for f in result.risk_flags)
 
 
-class TestMissingFieldsUpdate:
-    """Tests for entity-based missing field resolution."""
-
-    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
-    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
-    @patch(_AUTH_PATCH, new_callable=AsyncMock)
-    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_resolves_field_from_entities(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
-    ):
-        """Fields are resolved when triage extracts a matching entity key."""
-        mock_triage.return_value = _mock_triage_result(
-            allegations=[
-                AllegationExtraction(
-                    detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
-                    description="Unauthorized purchase at TechVault",
-                    entities={"merchant_name": "TechVault", "amount": "$500"},
-                    confidence=0.9,
-                )
-            ]
-        )
-        mock_auth.return_value = _mock_auth_result()
-        mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
-        mock_advisor.return_value = None
-
-        orch = _make_orchestrator()
-        await orch.process_event(_make_event())
-
-        # Entity keys merchant_name and amount should resolve those fields
-        assert "merchant_name" not in orch.missing_fields
-        assert "amount" not in orch.missing_fields
-        # transaction_date and auth_method still missing (no matching entities)
-        assert "transaction_date" in orch.missing_fields
-        assert "auth_method" in orch.missing_fields
-
-    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
-    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
-    @patch(_AUTH_PATCH, new_callable=AsyncMock)
-    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_keyword_text_does_not_resolve_field(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
-    ):
-        """Text containing keywords but no entity extraction does NOT resolve fields."""
-        # Triage returns empty entities — keywords in text should not matter
-        mock_triage.return_value = _mock_triage_result(
-            allegations=[
-                AllegationExtraction(
-                    detail_type=AllegationDetailType.UNRECOGNIZED_TRANSACTION,
-                    description="Mentioned merchant store and amount",
-                    entities={},
-                    confidence=0.5,
-                )
-            ]
-        )
-        mock_auth.return_value = _mock_auth_result()
-        mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
-        mock_advisor.return_value = None
-
-        orch = _make_orchestrator()
-        # Text has keywords "amount" and "merchant" but no entities extracted
-        await orch.process_event(_make_event(text="What about the merchant store and the amount?"))
-
-        # All fields should still be missing — keyword text alone doesn't resolve
-        assert "merchant_name" in orch.missing_fields
-        assert "amount" in orch.missing_fields
-        assert "transaction_date" in orch.missing_fields
-        assert "auth_method" in orch.missing_fields
-
-
 class TestGracefulDegradation:
     """Tests for specialist failure handling."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_triage_failure_continues(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """If triage fails, orchestrator continues and records error."""
         mock_triage.side_effect = RuntimeError("LLM timeout")
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -700,18 +777,26 @@ class TestGracefulDegradation:
         assert any("Triage failed" in flag for flag in result.risk_flags)
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_all_specialists_fail(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """If all specialists fail, result still returned with error flags."""
         mock_triage.side_effect = RuntimeError("triage error")
         mock_auth.side_effect = RuntimeError("auth error")
         mock_retrieval.side_effect = RuntimeError("retrieval error")
-        mock_hypothesis.side_effect = RuntimeError("hypothesis error")
+        mock_specialists.side_effect = RuntimeError("specialists error")
+        mock_arbitrator.side_effect = RuntimeError("hypothesis error")
         mock_advisor.side_effect = RuntimeError("case advisor error")
 
         orch = _make_orchestrator()
@@ -725,6 +810,7 @@ class TestGracefulDegradation:
         assert any("Triage failed" in f for f in result.risk_flags)
         assert any("Auth failed" in f for f in result.risk_flags)
         assert any("Retrieval failed" in f for f in result.risk_flags)
+        assert any("Specialists failed" in f for f in result.risk_flags)
         assert any("Hypothesis failed" in f for f in result.risk_flags)
         assert any("Case advisor failed" in f for f in result.risk_flags)
 
@@ -733,12 +819,19 @@ class TestStepUpAuth:
     """Tests for step-up auth risk flag propagation."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_step_up_auth_in_risk_flags(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Step-up recommendation appears in risk_flags."""
         mock_triage.return_value = _mock_triage_result()
@@ -748,7 +841,8 @@ class TestStepUpAuth:
             step_up_method="SMS_OTP",
         )
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -761,18 +855,26 @@ class TestSafetyGuidance:
     """Tests for safety guidance generation."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_safety_guidance_includes_pan_warning(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Safety guidance always includes PAN/CVV warning."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -785,12 +887,19 @@ class TestSpeakerFastPath:
     """Tests for speaker-based fast path routing."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_system_event_skips_all_agents(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """SYSTEM events skip all agents — only CARDMEMBER events trigger agents."""
         orch = _make_orchestrator()
@@ -800,17 +909,24 @@ class TestSpeakerFastPath:
         assert result is None
         mock_triage.assert_not_awaited()
         mock_auth.assert_not_awaited()
-        mock_hypothesis.assert_not_awaited()
+        mock_arbitrator.assert_not_awaited()
         mock_retrieval.assert_not_awaited()
         mock_advisor.assert_not_awaited()
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_system_event_returns_previous_hypothesis_scores(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """SYSTEM events return None and do not alter hypothesis scores."""
         orch = _make_orchestrator()
@@ -828,12 +944,19 @@ class TestSpeakerFastPath:
         assert orch.hypothesis_scores["FIRST_PARTY_FRAUD"] == 0.1
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_ccp_event_skips_all_agents(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """CCP events skip all agents — only CARDMEMBER events trigger agents."""
         orch = _make_orchestrator()
@@ -843,23 +966,31 @@ class TestSpeakerFastPath:
         assert result is None
         mock_triage.assert_not_awaited()
         mock_auth.assert_not_awaited()
-        mock_hypothesis.assert_not_awaited()
+        mock_arbitrator.assert_not_awaited()
         mock_retrieval.assert_not_awaited()
         mock_advisor.assert_not_awaited()
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_cardmember_event_runs_full_pipeline(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """CARDMEMBER events run all 5 agents."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -869,21 +1000,29 @@ class TestSpeakerFastPath:
         mock_triage.assert_awaited_once()
         mock_auth.assert_awaited_once()
         mock_retrieval.assert_awaited_once()
-        mock_hypothesis.assert_awaited_once()
+        mock_arbitrator.assert_awaited_once()
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_transcript_history_updated_for_all_speakers(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Transcript history grows for SYSTEM, CCP, and CARDMEMBER events."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -901,18 +1040,26 @@ class TestConditionalAuth:
     """Tests for conditional auth invocation after identity established."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_auth_runs_on_first_three_turns(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Auth agent is called on turns 1, 2, and 3 unconditionally."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -922,18 +1069,26 @@ class TestConditionalAuth:
         assert mock_auth.await_count == 3
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_auth_skipped_on_turn_4_low_risk(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Auth agent is NOT called on turn 4 when impersonation_risk < 0.4."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -947,18 +1102,26 @@ class TestConditionalAuth:
         assert mock_auth.await_count == 3  # Still 3, not 4
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_auth_runs_on_turn_4_high_risk(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Auth agent IS called on turn 4 when impersonation_risk >= 0.4."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result(impersonation_risk=0.5)
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -972,18 +1135,26 @@ class TestConditionalAuth:
         assert mock_auth.await_count == 4
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_impersonation_risk_preserved_when_auth_skipped(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """When auth is skipped, impersonation_risk retains its previous value."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result(impersonation_risk=0.2)
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1003,18 +1174,26 @@ class TestAuthGateCountsCMTurns:
     """Tests that auth gating uses CM turn count, not total turn count."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_auth_runs_on_first_cm_turn_after_system_events(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Auth runs on the first CM turn even if preceded by SYSTEM/CCP events."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1030,18 +1209,26 @@ class TestAuthGateCountsCMTurns:
         assert mock_auth.await_count == 1
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_auth_runs_3_cm_turns_with_interleaved_ccp(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Auth runs on first 3 CM turns regardless of interleaved CCP/SYSTEM events."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result(impersonation_risk=0.1)
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1065,42 +1252,58 @@ class TestRetrievalCacheInvalidation:
     """Tests for retrieval cache invalidation after evidence writes."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_retrieval_reinvoked_after_allegations_persisted(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+    async def test_retrieval_not_reinvoked_after_allegations(
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
-        """Retrieval is called again after triage extracts allegations (cache invalidated)."""
+        """Retrieval is NOT re-run after triage extracts allegations — it fetches
+        all case data unconditionally, so new allegations don't change results."""
         mock_triage.return_value = _mock_triage_result()  # has allegations
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
         await orch.process_event(_make_event(event_id="evt-1"))
         assert mock_retrieval.await_count == 1
 
-        # Second event — triage returned allegations on evt-1, so cache was
-        # invalidated and retrieval should run again
+        # Second event — retrieval cache is permanent, not invalidated
         await orch.process_event(_make_event(event_id="evt-2"))
-        assert mock_retrieval.await_count == 2
+        assert mock_retrieval.await_count == 1
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_retrieval_cached_when_no_allegations(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Retrieval stays cached when triage extracts no allegations."""
         mock_triage.return_value = AllegationExtractionResult(allegations=[])
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1116,18 +1319,26 @@ class TestCaseAdvisorIntegration:
     """Tests for case advisor integration in the pipeline."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_case_eligibility_populated(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """CopilotSuggestion.case_eligibility is populated from CaseAdvisory."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = _mock_case_advisory()
 
         orch = _make_orchestrator()
@@ -1136,44 +1347,60 @@ class TestCaseAdvisorIntegration:
 
         assert len(result.case_eligibility) == 2
         assert result.case_eligibility[0]["case_type"] == "fraud"
-        assert result.case_eligibility[0]["eligibility"] == "incomplete"
+        assert result.case_eligibility[0]["eligibility"] == "eligible"
         assert result.case_eligibility[1]["case_type"] == "dispute"
         assert result.case_eligibility[1]["eligibility"] == "blocked"
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_case_advisory_summary_populated(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """CopilotSuggestion.case_advisory_summary is populated."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = _mock_case_advisory()
 
         orch = _make_orchestrator()
         orch._turn_count = 3  # Case advisor only runs after turn 3
         result = await orch.process_event(_make_event())
 
-        assert "Fraud case is incomplete" in result.case_advisory_summary
+        assert "Fraud case eligible" in result.case_advisory_summary
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_questions_from_case_advisor_in_suggestion(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """CopilotSuggestion.suggested_questions comes from case advisory questions."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = _mock_case_advisory(
             questions=["What date was this transaction?", "Do you still have the card?"]
         )
@@ -1188,18 +1415,26 @@ class TestCaseAdvisorIntegration:
         ]
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_information_sufficient_propagated(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """information_sufficient from case advisory propagates to CopilotSuggestion."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = _mock_case_advisory(
             questions=[],
             information_sufficient=True,
@@ -1213,18 +1448,26 @@ class TestCaseAdvisorIntegration:
         assert result.suggested_questions == []
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_case_advisor_failure_graceful(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Case advisor failure does not break the pipeline."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.side_effect = RuntimeError("LLM timeout")
 
         orch = _make_orchestrator()
@@ -1243,18 +1486,26 @@ class TestTriageAssessmentWindow:
     """Tests for the assessment-based window applied to triage agent input."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_first_assessment_all_turns_are_new(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """On the first assessment, all turns are new (new_turn_offset=0)."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1269,18 +1520,26 @@ class TestTriageAssessmentWindow:
         assert last_call.kwargs.get("allegation_summary") is None
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_second_assessment_has_context_and_new_turns(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Second assessment includes context from first + new turns."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1296,18 +1555,26 @@ class TestTriageAssessmentWindow:
         assert new_turn_offset == 1
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_context_trailing_limited_to_4(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Context trailing is capped at 4, old turns are excluded."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1325,18 +1592,26 @@ class TestTriageAssessmentWindow:
         assert "Turn 5 text" in conv_history[0][1]
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_allegation_summary_passed_when_allegations_exist(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Allegation summary is passed when accumulated_allegations is non-empty."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1349,18 +1624,26 @@ class TestTriageAssessmentWindow:
         assert "UNRECOGNIZED_TRANSACTION" in allegation_summary
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_first_call_no_allegation_summary(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """First assessment has no allegation summary (no prior allegations)."""
         mock_triage.return_value = AllegationExtractionResult(allegations=[])
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1370,18 +1653,26 @@ class TestTriageAssessmentWindow:
         assert last_call.kwargs.get("allegation_summary") is None
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_last_assessed_idx_advances(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """_last_assessed_idx advances after each assessment."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1398,18 +1689,26 @@ class TestCaseAdvisorContext:
     """Tests for conversation context and dedup passed to the case advisor."""
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_recent_suggestions_tracked_and_passed(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Previously suggested questions are passed to case advisor for dedup."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = _mock_case_advisory(
             questions=["When did the transaction occur?"]
         )
@@ -1429,18 +1728,26 @@ class TestCaseAdvisorContext:
         assert "When did the transaction occur?" in second_call_kwargs["recent_questions"]
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_recent_suggestions_limited_to_three(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """_recent_suggestions stores at most 3 entries."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
         orch = _make_orchestrator()
@@ -1450,18 +1757,26 @@ class TestCaseAdvisorContext:
         assert len(orch._recent_suggestions) == 3
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
-    @patch(_HYPOTHESIS_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
     async def test_conversation_window_passed_to_case_advisor(
-        self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
     ):
         """Case advisor receives the assessment-based conversation window."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
-        mock_hypothesis.return_value = _mock_hypothesis_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = _mock_case_advisory()
 
         orch = _make_orchestrator()

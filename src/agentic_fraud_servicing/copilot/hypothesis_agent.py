@@ -1,22 +1,26 @@
-"""Hypothesis scoring specialist agent for 4-category investigation assessment.
+"""Hypothesis scoring arbitrator for 4-category investigation assessment.
 
-Receives all accumulated context (allegations, auth assessment, retrieved evidence,
-conversation history, previous scores) and produces a holistic probability
-distribution across the 4 investigation categories via LLM reasoning. Replaces
-the formulaic weighted-average approach used previously in the orchestrator.
+Synthesizes three category specialist outputs (dispute, scam, fraud) into a
+holistic probability distribution across the 4 investigation categories.
+First-party fraud is detected cross-cuttingly by the arbitrator — it has no
+dedicated specialist. Specialists are run externally by the orchestrator.
 """
+
+from __future__ import annotations
 
 from agents import Agent, AgentOutputSchema, ModelProvider, Runner
 from agents.run_config import RunConfig
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
+from agentic_fraud_servicing.copilot.hypothesis_specialists import (
+    SpecialistAssessment,
+)
 
 # --- Output model ---
 
 
 class HypothesisAssessment(BaseModel):
-    """Structured output from the hypothesis scoring agent.
+    """Structured output from the hypothesis scoring arbitrator.
 
     Attributes:
         scores: Probability distribution across 4 investigation categories.
@@ -26,6 +30,9 @@ class HypothesisAssessment(BaseModel):
             Same 4 keys as scores.
         contradictions: Detected contradictions between CM allegations and evidence.
         assessment_summary: Overall assessment of the current situation.
+        specialist_assessments: Specialist outputs from this turn, carried
+            forward to the next turn for incremental reasoning. NOT produced
+            by the LLM — set programmatically after the arbitrator returns.
     """
 
     scores: dict[str, float] = {
@@ -42,119 +49,98 @@ class HypothesisAssessment(BaseModel):
     }
     contradictions: list[str] = []
     assessment_summary: str = ""
+    specialist_assessments: dict[str, SpecialistAssessment] = Field(
+        default_factory=dict, exclude=True
+    )
 
 
 # --- System prompt ---
 
-HYPOTHESIS_INSTRUCTIONS = f"""\
-You are a hypothesis scoring specialist for AMEX card dispute investigation.
-Your job is to assess the probability of each investigation category given ALL
-accumulated evidence, allegations, and conversation context.
-
-{INVESTIGATION_CATEGORIES_REFERENCE}
+HYPOTHESIS_INSTRUCTIONS = """\
+You are a hypothesis scoring arbitrator for AMEX card dispute investigation.
+You synthesize assessments from three category specialists (Dispute, Scam,
+Third-Party Fraud) into a final 4-category probability distribution.
 
 ## Your Input
 
 You receive the following context each turn:
 
-1. **Accumulated Allegations** — Structured allegations extracted from the conversation
-   so far, each with an AllegationDetailType (e.g., UNRECOGNIZED_TRANSACTION, CARD_POSSESSION,
-   GOODS_NOT_RECEIVED) and extracted entities (amounts, merchants, dates).
+1. **Specialist Assessments** — Three independent evaluations, each with a
+   likelihood score, policy-grounded reasoning, supporting/contradicting
+   evidence, and policy citations. Specialists evaluate their own category
+   in isolation and cite specific policy documents.
 2. **Auth Assessment** — Impersonation risk score, risk factors, and step-up
    auth recommendations from the authentication specialist.
-3. **Retrieved Evidence** — Verified system data: transactions, authentication
-   events, customer profile, device enrollment, delivery proofs.
+3. **Accumulated Allegations** — What the cardmember claims, with detail types
+   and extracted entities. Needed for cross-cutting first-party fraud detection.
 4. **Current Hypothesis Scores** — The previous turn's probability distribution
    across the 4 categories. Use these as a Bayesian prior to update.
-5. **Previous Reasoning Trace** — Your own per-category reasoning, contradictions,
-   and assessment summary from the last assessment turn. Use this to ground your
-   update: identify what new evidence or allegations have appeared since then,
-   and explain how they shift (or reinforce) each score.
-6. **Conversation Summary** — Running summary of the call so far.
+5. **Previous Reasoning Trace** — Your own per-category reasoning from the
+   last assessment turn. Use this to ground your update: identify what changed
+   and explain how it shifts each score.
 
 ## Scoring Rules
 
-1. **Score all 4 categories holistically.** Do not focus only on the most likely
-   category. Every category must receive a reasoned score.
-2. **Scores should approximate a probability distribution** — they should sum to
-   roughly 1.0. Small deviations are acceptable but avoid scores that sum to
-   more than 1.2 or less than 0.8.
-3. **Use previous scores and reasoning as a prior.** Compare the current
-   evidence against the previous reasoning trace to identify what changed.
-   Explain the delta — why each score moved up, down, or stayed the same.
-   Scores should shift gradually unless strong contradictory evidence emerges.
-4. **FIRST_PARTY_FRAUD is cross-cutting.** Any allegation type (FRAUD, DISPUTE,
-   SCAM) can turn out to be first-party fraud. Always evaluate this category
-   regardless of what the CM alleges.
-5. **Allegations are not evidence.** CM claims (e.g., "I didn't make this
-   charge", "my card was stolen") establish which hypotheses to investigate,
-   but they cannot by themselves move scores. Only system evidence (auth logs,
-   device/IP data, transaction patterns, delivery proofs) or contradictions
-   between claims and evidence should shift scores. A CM insisting on their
-   story does not make it more likely to be true.
+1. **Produce a 4-category distribution.** The three specialists cover Dispute,
+   Scam, and Third-Party Fraud. You must also score FIRST_PARTY_FRAUD —
+   this is your unique responsibility as the arbitrator.
+
+2. **Scores should approximate a probability distribution** — they should sum
+   to roughly 1.0. Small deviations are acceptable but avoid scores that sum
+   to more than 1.2 or less than 0.8.
+
+3. **Use previous scores as a prior.** Compare the current specialist outputs
+   against the previous reasoning trace. Scores should shift gradually unless
+   strong contradictory evidence emerges. Explain the delta for each category.
+
+4. **Weigh specialist assessments critically.** A specialist's high likelihood
+   means evidence fits that category well — but consider whether another
+   specialist's contradicting evidence undermines it. Look at the full picture
+   across all three assessments.
+
+5. **Allegations are not evidence.** CM claims establish which hypotheses to
+   investigate, but cannot by themselves move scores. Only system evidence,
+   specialist-cited policy findings, or contradictions should shift scores.
+
 6. **Repetition is not new evidence.** If the previous reasoning trace already
-   accounted for an allegation, the CM restating or emphasizing the same claim
-   is not grounds for further score changes. Only genuinely new information
-   (new allegations, new evidence, or new contradictions) should move scores.
+   accounted for an allegation, restating it is not grounds for score changes.
 
-## Key Reasoning Patterns
+## First-Party Fraud Detection (Your Unique Role)
 
-Apply these evidence-to-hypothesis mappings:
+FIRST_PARTY_FRAUD has no specialist — it is always an investigation finding
+detected by you through cross-specialist analysis. Score it based on:
 
-- **Chip+PIN auth from enrolled device contradicts "unauthorized" allegation** →
-  Strongly increase FIRST_PARTY_FRAUD. If the CM's own enrolled device was used
-  with chip+PIN, the transaction was very likely authorized by the CM.
+- **All specialists report low likelihood**: If dispute, scam, and fraud
+  specialists all find the evidence doesn't fit their category well, the
+  remaining probability mass should flow to first-party fraud.
 
-- **CM alleges card lost/stolen but device was enrolled and used recently** →
-  Increase FIRST_PARTY_FRAUD. A recently enrolled, actively used device
-  contradicts a lost/stolen narrative.
+- **Contradicting evidence without external manipulator**: If specialists
+  flag contradicting evidence (e.g., CM claims unauthorized but chip+PIN
+  from enrolled device) AND the scam specialist finds no evidence of an
+  external deceiver, this strongly indicates first-party fraud.
 
-- **Evidence of external manipulator** (coached language, urgency from a third
-  party, social-engineering patterns, payment to unfamiliar recipient) →
-  Increase SCAM. The presence of an identifiable external deceiver distinguishes
-  scam from first-party fraud.
+- **Auth assessment shows CM's own credentials**: If the auth assessment
+  confirms the CM's device/credentials were used for the disputed
+  transactions, increase first-party fraud.
 
-- **Contradictions WITHOUT an external manipulator** → FIRST_PARTY_FRAUD, not
-  SCAM. If the CM's story contradicts evidence but there is no sign of an
-  external scammer, the CM is likely misrepresenting.
+- **Inconsistencies across specialist findings**: If the dispute specialist
+  finds the CM did receive goods, the fraud specialist finds the CM's
+  device was used, and the scam specialist finds no external manipulator —
+  the convergence of contradictions points to first-party fraud.
 
-- **CM story consistent + auth logs show unfamiliar device/location** →
-  Increase THIRD_PARTY_FRAUD. When the CM's account shows genuinely suspicious
-  activity from unknown devices, the unauthorized fraud hypothesis strengthens.
-
-- **CM complaint about merchant service, no fraud indicators** →
-  Increase DISPUTE. When there are no contradictions or fraud signals and the
-  issue is about goods/services/billing, this is a merchant dispute.
-
-- **Signed delivery proof contradicts "never received" allegation** →
-  Increase FIRST_PARTY_FRAUD. Verified delivery evidence directly contradicts
-  the CM's goods-not-received allegation.
-
-- **CM accidentally reveals merchant familiarity before being told** →
-  Increase FIRST_PARTY_FRAUD. Knowledge of merchant details that should be
-  unknown to a fraud victim suggests the CM made the purchase.
-
-- **Story shifts or inconsistencies when confronted with evidence** →
-  Increase FIRST_PARTY_FRAUD. Changing the narrative under pressure is a
-  behavioral red flag for misrepresentation.
-
-- **CM authorized a third party who made the disputed transactions** →
-  Decrease THIRD_PARTY_FRAUD. If the CM granted access (employee,
-  family, delegate, agency), the transactions are not unauthorized — increase
-  DISPUTE (billing issue) or FIRST_PARTY_FRAUD (CM denies knowledge despite
-  granting access).
-
-- **High impersonation risk from auth assessment** →
-  Increase THIRD_PARTY_FRAUD. If the caller may not be the real cardholder,
-  the account may have been taken over.
+- **ANY allegation type can be first-party fraud**: A CM claiming fraud,
+  dispute, or scam can all turn out to be first-party fraud. Never rule it
+  out based on what the CM alleges.
 
 ## Output Format
 
 Provide your assessment as structured output with:
-- scores: dict with exactly 4 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM,
-  DISPUTE), each a float between 0.0 and 1.0
-- reasoning: dict with the same 4 keys, each a brief explanation (1-3 sentences)
-- contradictions: list of detected contradictions between allegations and evidence
+- scores: dict with exactly 4 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD,
+  SCAM, DISPUTE), each a float between 0.0 and 1.0
+- reasoning: dict with the same 4 keys, each a brief explanation (1-3
+  sentences) grounded in specialist findings and evidence
+- contradictions: list of detected contradictions between allegations and
+  evidence (consolidate from specialist findings + your own analysis)
 - assessment_summary: 2-4 sentence overall assessment
 """
 
@@ -168,41 +154,79 @@ hypothesis_agent = Agent(
 )
 
 
+# --- Formatting helpers ---
+
+
+def _format_specialist_for_arbitrator(
+    assessments: dict[str, SpecialistAssessment],
+) -> str:
+    """Format specialist outputs into the arbitrator's user message section."""
+    _LABELS = {
+        "DISPUTE": "Dispute Specialist",
+        "SCAM": "Scam Specialist",
+        "THIRD_PARTY_FRAUD": "Fraud Specialist (Third-Party)",
+    }
+    parts: list[str] = []
+    for category in ("DISPUTE", "SCAM", "THIRD_PARTY_FRAUD"):
+        a = assessments.get(category)
+        if a is None:
+            parts.append(f"### {_LABELS[category]}\nNot available.")
+            continue
+        supporting = ", ".join(a.supporting_evidence) if a.supporting_evidence else "none"
+        contradicting = ", ".join(a.contradicting_evidence) if a.contradicting_evidence else "none"
+        citations = (
+            "\n".join(f"  - {c}" for c in a.policy_citations)
+            if a.policy_citations
+            else "  none"
+        )
+        parts.append(
+            f"### {_LABELS[category]}\n"
+            f"Likelihood: {a.likelihood:.2f}\n"
+            f"Reasoning: {a.reasoning}\n"
+            f"Supporting evidence: {supporting}\n"
+            f"Contradicting evidence: {contradicting}\n"
+            f"Policy citations:\n{citations}"
+        )
+    return "\n\n".join(parts)
+
+
 # --- Runner wrapper ---
 
 
-async def run_hypothesis(
+async def run_arbitrator(
+    specialist_assessments: dict[str, SpecialistAssessment],
     allegations_summary: str,
     auth_summary: str,
-    evidence_summary: str,
     current_scores: dict[str, float],
-    conversation_summary: str,
     model_provider: ModelProvider,
     previous_reasoning: HypothesisAssessment | None = None,
 ) -> HypothesisAssessment:
-    """Run the hypothesis agent to score investigation categories.
+    """Run the arbitrator to score investigation categories.
+
+    Takes pre-computed specialist assessments (run externally by the
+    orchestrator) and synthesizes them into the final 4-category probability
+    distribution.
 
     Args:
+        specialist_assessments: Specialist outputs keyed by category
+            (DISPUTE, SCAM, THIRD_PARTY_FRAUD).
         allegations_summary: Formatted allegations with types and entities.
         auth_summary: Auth assessment text (impersonation risk, risk factors).
-        evidence_summary: Retrieved evidence text (transactions, auth events).
         current_scores: Previous hypothesis scores (4-key dict).
-        conversation_summary: Running summary of the call so far.
         model_provider: LLM model provider for inference.
         previous_reasoning: Full HypothesisAssessment from the last successful
-            run. Provides the reasoning trace so the agent can reason about
-            what changed since the last assessment.
+            run. Provides the reasoning trace for Bayesian updating.
 
     Returns:
-        HypothesisAssessment with updated scores, reasoning, and contradictions.
+        HypothesisAssessment with updated scores, reasoning, and
+        contradictions.
 
     Raises:
-        RuntimeError: If the agent SDK call fails.
+        RuntimeError: If the arbitrator agent SDK call fails.
     """
-    # Format previous scores for the prompt
+    # 1. Format arbitrator user message
     scores_text = ", ".join(f"{k}: {v:.2f}" for k, v in current_scores.items())
 
-    # Format previous reasoning trace
     prev_reasoning_text = "First assessment — no prior reasoning."
     if previous_reasoning is not None:
         reasoning_lines = [
@@ -221,14 +245,15 @@ async def run_hypothesis(
             prev_reasoning_text = "\n".join(parts)
 
     user_msg = (
-        f"## Accumulated Allegations\n{allegations_summary}\n\n"
+        f"## Specialist Assessments\n\n"
+        f"{_format_specialist_for_arbitrator(specialist_assessments)}\n\n"
         f"## Auth Assessment\n{auth_summary}\n\n"
-        f"## Retrieved Evidence\n{evidence_summary}\n\n"
+        f"## Accumulated Allegations\n{allegations_summary}\n\n"
         f"## Current Hypothesis Scores\n{scores_text}\n\n"
-        f"## Previous Reasoning Trace\n{prev_reasoning_text}\n\n"
-        f"## Conversation Summary\n{conversation_summary}"
+        f"## Previous Reasoning Trace\n{prev_reasoning_text}"
     )
 
+    # 2. Run arbitrator
     try:
         result = await Runner.run(
             hypothesis_agent,
