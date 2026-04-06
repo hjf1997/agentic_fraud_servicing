@@ -106,7 +106,10 @@ class TestToolLookupTransactions:
         wrapper_ctx = MagicMock()
         wrapper_ctx.context = copilot_ctx
 
-        fake_txns = [{"node_type": "TRANSACTION", "amount": "100.00"}]
+        fake_txns = [
+            {"amount": 100.00, "merchant_name": "SHOP", "is_disputed": True,
+             "transaction_date": "2024-06-01"},
+        ]
         with patch(
             "agentic_fraud_servicing.copilot.context.lookup_transactions",
             return_value=fake_txns,
@@ -120,7 +123,11 @@ class TestToolLookupTransactions:
 
         assert isinstance(result, str)
         parsed = json.loads(result)
-        assert parsed == fake_txns
+        # New format: {"disputed_transactions": [...], "summary": "..."}
+        assert "disputed_transactions" in parsed
+        assert "summary" in parsed
+        assert len(parsed["disputed_transactions"]) == 1
+        assert "Disputed Transactions" in parsed["summary"]
 
 
 class TestToolQueryAuthLogs:
@@ -138,7 +145,7 @@ class TestToolQueryAuthLogs:
         wrapper_ctx = MagicMock()
         wrapper_ctx.context = copilot_ctx
 
-        fake_logs = [{"node_type": "AUTH_EVENT", "result": "pass"}]
+        fake_logs = [{"result": "pass"}]
         with patch(
             "agentic_fraud_servicing.copilot.context.query_auth_logs",
             return_value=fake_logs,
@@ -166,7 +173,7 @@ class TestToolFetchCustomerProfile:
         wrapper_ctx = MagicMock()
         wrapper_ctx.context = copilot_ctx
 
-        fake_profile = {"node_type": "CUSTOMER", "name": "John"}
+        fake_profile = {"name": "John"}
         with patch(
             "agentic_fraud_servicing.copilot.context.fetch_customer_profile",
             return_value=fake_profile,

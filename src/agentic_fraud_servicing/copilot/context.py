@@ -16,6 +16,7 @@ from agentic_fraud_servicing.gateway.tools.read_tools import (
     lookup_transactions,
     query_auth_logs,
 )
+from agentic_fraud_servicing.copilot.transaction_summarizer import summarize_transactions
 from agentic_fraud_servicing.ingestion.firewall_redactor import FirewallRedactor
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
@@ -76,14 +77,19 @@ def _make_auth_ctx(copilot_ctx: CopilotContext) -> AuthContext:
 async def tool_lookup_transactions(ctx: RunContextWrapper[CopilotContext]) -> str:
     """Look up transaction evidence for the current case.
 
-    Fetches all TRANSACTION-type evidence nodes via the Tool Gateway,
-    with PAN fields masked. Returns a JSON array of transaction dicts.
+    Returns a JSON object with two fields:
+    - ``disputed_transactions``: Full dicts for disputed transactions only
+      (for data gap analysis).
+    - ``summary``: Pre-formatted text summary covering both disputed and
+      undisputed transactions (compact, ready for downstream agents).
     """
     copilot_ctx = ctx.context
     auth = _make_auth_ctx(copilot_ctx)
     results = lookup_transactions(copilot_ctx.gateway, auth, copilot_ctx.case_id)
     stripped = _strip_fields(results, _STRIP_TRANSACTION)
-    return json.dumps(_tool_redactor.redact_dict(stripped))
+    disputed_dicts, summary_text = summarize_transactions(stripped)
+    redacted_disputed = _tool_redactor.redact_dict(disputed_dicts)
+    return json.dumps({"disputed_transactions": redacted_disputed, "summary": summary_text})
 
 
 @function_tool

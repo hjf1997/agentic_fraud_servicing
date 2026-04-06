@@ -84,7 +84,11 @@ def _mock_auth_result(
 def _mock_retrieval_result(transactions=None, auth_events=None, customer_profile=None):
     """Create a mock RetrievalResult."""
     result = MagicMock()
-    result.transactions = transactions or [{"amount": 100.0}]
+    result.transactions = transactions or [{"amount": 100.0, "is_disputed": True}]
+    result.transaction_summary = (
+        "== Disputed Transactions (1 total, $100.00) ==\n"
+        "2024-01-01:\n- $100.00 at TestMerchant"
+    )
     result.auth_events = auth_events or [{"type": "chip"}]
     result.customer_profile = customer_profile
     result.retrieval_summary = "Found 1 transaction and 1 auth event"
@@ -523,10 +527,9 @@ class TestHypothesisScoring:
         call_kwargs = mock_hypothesis.call_args.kwargs
         assert "UNRECOGNIZED_TRANSACTION" in call_kwargs["allegations_summary"]
         assert "Impersonation risk" in call_kwargs["auth_summary"]
-        # Evidence summary should contain structured JSON with actual data
+        # Evidence summary should contain the transaction summary text
         evidence = call_kwargs["evidence_summary"]
-        assert "Transactions: 1 found" in evidence
-        assert "amount" in evidence
+        assert "Disputed Transactions" in evidence
         assert "THIRD_PARTY_FRAUD" in str(call_kwargs["current_scores"])
         assert "CARDMEMBER" in call_kwargs["conversation_summary"]
 
@@ -535,17 +538,22 @@ class TestHypothesisScoring:
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_evidence_summary_contains_structured_json(
+    async def test_evidence_summary_contains_transaction_summary_and_json(
         self, mock_triage, mock_auth, mock_retrieval, mock_hypothesis, mock_advisor
     ):
-        """Evidence summary includes structured JSON with transaction and auth fields."""
+        """Evidence summary includes transaction_summary text and JSON for auth/profile."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
-        mock_retrieval.return_value = _mock_retrieval_result(
-            transactions=[{"amount": 2847.99, "merchant": "TechVault", "auth_method": "chip_pin"}],
+        retrieval = _mock_retrieval_result(
+            transactions=[{"amount": 2847.99, "is_disputed": True}],
             auth_events=[{"auth_type": "chip_pin", "result": "success", "device_id": "dev-001"}],
             customer_profile={"customer_id": "cust-001", "name": "John Smith"},
         )
+        retrieval.transaction_summary = (
+            "== Disputed Transactions (1 total, $2,847.99) ==\n"
+            "2024-01-01:\n- $2,847.99 at TechVault, chip_pin"
+        )
+        mock_retrieval.return_value = retrieval
         mock_hypothesis.return_value = _mock_hypothesis_result()
         mock_advisor.return_value = None
 
@@ -554,15 +562,14 @@ class TestHypothesisScoring:
 
         call_kwargs = mock_hypothesis.call_args.kwargs
         evidence = call_kwargs["evidence_summary"]
-        # Structured transaction fields
-        assert "2847.99" in evidence
+        # Transaction summary text is included directly
+        assert "Disputed Transactions" in evidence
+        assert "2,847.99" in evidence
         assert "TechVault" in evidence
-        assert "chip_pin" in evidence
-        # Structured auth event fields
+        # Auth event and customer profile still as JSON
         assert "auth_type" in evidence
         assert "device_id" in evidence
         assert "dev-001" in evidence
-        # Customer profile included
         assert "customer_id" in evidence
         assert "cust-001" in evidence
 

@@ -23,11 +23,12 @@ You are a fast data retrieval specialist for AMEX card dispute servicing.
 Your role is to gather all relevant data for a case using the available tools.
 
 **Available tools**:
-1. **tool_lookup_transactions** — Fetches all TRANSACTION-type evidence nodes
-   for the current case, with PAN fields masked. Each transaction includes an
-   `is_disputed` boolean indicating whether the CCP has marked it as disputed
-   by the cardmember. Use this to distinguish disputed transactions from
-   normal account activity.
+1. **tool_lookup_transactions** — Returns a JSON object with two fields:
+   - `disputed_transactions`: Full transaction dicts for disputed transactions
+     only. Use these for data gap analysis (e.g., checking if auth events
+     exist for the disputed period).
+   - `summary`: Pre-formatted text summary covering both disputed and
+     undisputed transactions. Copy this directly into `transaction_summary`.
 2. **tool_query_auth_logs** — Fetches all AUTH_EVENT-type evidence nodes.
    Use this to check authentication methods, failed attempts, device changes,
    and login history around the time of disputed transactions.
@@ -37,11 +38,13 @@ Your role is to gather all relevant data for a case using the available tools.
 
 **Instructions**:
 - Call ALL three tools to gather comprehensive data for the case.
-- Summarize what was retrieved in plain language.
+- Set `transactions` to the `disputed_transactions` list from tool_lookup_transactions.
+- Set `transaction_summary` to the `summary` text from tool_lookup_transactions.
+  Copy it exactly — do NOT rephrase, truncate, or modify the summary text.
+- Summarize what was retrieved in plain language in `retrieval_summary`.
 - Identify data gaps — for example, if no auth events exist for a disputed
   transaction period, or if the customer profile is missing.
-- Note how many transactions are disputed vs. undisputed — if no transactions
-  are marked as disputed yet, flag this as a data gap.
+- If no disputed transactions exist, flag this as a data gap.
 - Do NOT fabricate data. Only report what the tools return.
 
 Respond with structured output only.
@@ -52,7 +55,10 @@ class RetrievalResult(BaseModel):
     """Structured output from the retrieval agent.
 
     Attributes:
-        transactions: Retrieved transaction records (PAN-masked).
+        transactions: Disputed transaction dicts only (for data gap analysis).
+        transaction_summary: Pre-formatted text summary of all transactions
+            (disputed detail + undisputed aggregates). Passed through to
+            downstream agents as-is.
         auth_events: Retrieved authentication event records.
         customer_profile: Customer profile if found, None otherwise.
         retrieval_summary: Brief summary of what was retrieved.
@@ -60,6 +66,7 @@ class RetrievalResult(BaseModel):
     """
 
     transactions: list[dict] = Field(default_factory=list)
+    transaction_summary: str = ""
     auth_events: list[dict] = Field(default_factory=list)
     customer_profile: dict | None = None
     retrieval_summary: str = ""

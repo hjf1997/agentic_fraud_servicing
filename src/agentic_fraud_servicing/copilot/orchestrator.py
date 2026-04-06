@@ -297,7 +297,7 @@ class CopilotOrchestrator:
         # 5. Collect retrieved facts from retrieval result
         if self._retrieval_result is not None:
             self.evidence_collected = [
-                f"txn:{len(self._retrieval_result.transactions)}",
+                f"disputed_txn:{len(self._retrieval_result.transactions)}",
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
@@ -471,45 +471,37 @@ class CopilotOrchestrator:
         )
 
     def _format_evidence_for_hypothesis(self) -> str:
-        """Format retrieved evidence as structured JSON for the hypothesis agent.
+        """Format retrieved evidence for the hypothesis agent.
 
-        Produces a summary line followed by detailed JSON containing actual
-        evidence node data (amounts, auth types, device IDs, etc.) so the
-        hypothesis agent's reasoning patterns can trigger on specific evidence.
+        Transaction data uses the pre-formatted text summary from the
+        retrieval agent (produced by the transaction_summarizer). Auth
+        events and customer profile are appended as JSON (typically small).
         """
         if self._retrieval_result is None:
             return "No evidence retrieved."
         r = self._retrieval_result
 
-        # Summary counts for quick reference
-        disputed_count = sum(1 for t in r.transactions if t.get("is_disputed"))
-        summary = (
-            f"Transactions: {len(r.transactions)} found ({disputed_count} disputed). "
-            f"Auth events: {len(r.auth_events)} found. "
-            f"Customer profile: {'available' if r.customer_profile else 'not available'}."
-        )
+        parts: list[str] = []
 
-        # Build structured evidence data
-        evidence_data: dict = {}
+        # Transaction summary (pre-formatted by transaction_summarizer)
+        if r.transaction_summary:
+            parts.append(r.transaction_summary)
+        elif r.transactions:
+            parts.append(f"Disputed transactions: {len(r.transactions)} found (no summary).")
+        else:
+            parts.append("No transactions found.")
 
-        if r.transactions:
-            disputed = [t for t in r.transactions if t.get("is_disputed")]
-            undisputed = [t for t in r.transactions if not t.get("is_disputed")]
-            if disputed:
-                evidence_data["disputed_transactions"] = disputed
-            if undisputed:
-                evidence_data["account_transactions"] = undisputed
-
+        # Auth events and customer profile as JSON (typically small)
+        supplementary: dict = {}
         if r.auth_events:
-            evidence_data["auth_events"] = r.auth_events
-
+            supplementary["auth_events"] = r.auth_events
         if r.customer_profile:
-            evidence_data["customer_profile"] = r.customer_profile
+            supplementary["customer_profile"] = r.customer_profile
 
-        if not evidence_data:
-            return f"{summary}\n{r.retrieval_summary}"
+        if supplementary:
+            parts.append(json.dumps(supplementary, indent=2, default=str))
 
-        return f"{summary}\n{json.dumps(evidence_data, indent=2, default=str)}"
+        return "\n\n".join(parts)
 
     def _format_conversation_for_hypothesis(self) -> str:
         """Format a conversation summary for the hypothesis agent.
