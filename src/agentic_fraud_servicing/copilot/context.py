@@ -22,6 +22,18 @@ from agentic_fraud_servicing.models.transcript import TranscriptEvent
 # Shared redactor for tool responses — uses safe patterns only via redact_dict
 _tool_redactor = FirewallRedactor()
 
+# Fields to strip from evidence dicts before sending to the LLM.
+# These are internal plumbing fields with no investigative value.
+_STRIP_COMMON = {"node_id", "case_id", "node_type", "source_type", "created_at"}
+_STRIP_TRANSACTION = _STRIP_COMMON | {"merchant_id"}
+_STRIP_AUTH_EVENT = _STRIP_COMMON
+_STRIP_CUSTOMER = _STRIP_COMMON | {"profile_hash"}
+
+
+def _strip_fields(records: list[dict], strip: set[str]) -> list[dict]:
+    """Remove internal fields from evidence dicts for LLM consumption."""
+    return [{k: v for k, v in rec.items() if k not in strip} for rec in records]
+
 
 @dataclass
 class CopilotContext:
@@ -70,7 +82,8 @@ async def tool_lookup_transactions(ctx: RunContextWrapper[CopilotContext]) -> st
     copilot_ctx = ctx.context
     auth = _make_auth_ctx(copilot_ctx)
     results = lookup_transactions(copilot_ctx.gateway, auth, copilot_ctx.case_id)
-    return json.dumps(_tool_redactor.redact_dict(results))
+    stripped = _strip_fields(results, _STRIP_TRANSACTION)
+    return json.dumps(_tool_redactor.redact_dict(stripped))
 
 
 @function_tool
@@ -83,7 +96,8 @@ async def tool_query_auth_logs(ctx: RunContextWrapper[CopilotContext]) -> str:
     copilot_ctx = ctx.context
     auth = _make_auth_ctx(copilot_ctx)
     results = query_auth_logs(copilot_ctx.gateway, auth, copilot_ctx.case_id)
-    return json.dumps(_tool_redactor.redact_dict(results))
+    stripped = _strip_fields(results, _STRIP_AUTH_EVENT)
+    return json.dumps(_tool_redactor.redact_dict(stripped))
 
 
 @function_tool
@@ -96,5 +110,7 @@ async def tool_fetch_customer_profile(ctx: RunContextWrapper[CopilotContext]) ->
     copilot_ctx = ctx.context
     auth = _make_auth_ctx(copilot_ctx)
     result = fetch_customer_profile(copilot_ctx.gateway, auth, copilot_ctx.case_id)
-    redacted = _tool_redactor.redact_dict(result) if result else result
-    return json.dumps(redacted)
+    if result:
+        stripped = _strip_fields([result], _STRIP_CUSTOMER)[0]
+        result = _tool_redactor.redact_dict(stripped)
+    return json.dumps(result)
