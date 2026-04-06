@@ -25,17 +25,28 @@ from pydantic import BaseModel, Field
 class SpecialistAssessment(BaseModel):
     """Output from a single category specialist.
 
+    Likelihood and eligibility serve different decision points:
+    - ``likelihood`` is grounded in currently available evidence only.
+      It answers: "how well does this category explain what we see now?"
+    - ``eligibility`` is forward-looking. It answers: "should we open a
+      case to investigate further?" Opening enables offline evidence
+      collection (merchant records, device forensics, etc.).
+    Low likelihood does NOT imply blocked — only contradicting evidence
+    or a hard policy rule should trigger blocked.
+
     Attributes:
         category: The investigation category this specialist evaluates.
-        likelihood: How well this category explains the evidence (0.0-1.0).
-        reasoning: Policy-grounded explanation (2-4 sentences).
+        likelihood: How well current evidence supports this category (0.0-1.0).
+        reasoning: Policy-grounded explanation (2-4 sentences). When eligibility
+            is ``blocked``, must start with "BLOCKED:" and the specific reason.
         supporting_evidence: Evidence items supporting this category.
         contradicting_evidence: Evidence items contradicting this category.
         policy_citations: Specific policy passages cited.
-        evidence_gaps: Information still needed to complete the evaluation.
-        eligibility: Whether this case type can be opened. Default is
-            ``eligible`` — blocked only when a specific policy rule or
-            evidence directly prevents case opening.
+        evidence_gaps: Information still needed. Items suffixed with ``[offline]``
+            are only obtainable after case opening.
+        eligibility: Whether a case should be opened under this category.
+            Default is ``eligible`` — blocked only when evidence actively
+            contradicts the hypothesis or a policy rule prevents case opening.
     """
 
     category: str
@@ -151,6 +162,31 @@ credentials.
 - Investigation question: "Did the cardmember actually authorize the transaction?"
 """
 
+_EVIDENCE_AVAILABILITY = """\
+## Evidence Availability — Live Call vs. Offline Investigation
+
+**Available during live call** (used for likelihood scoring):
+- AMEX transaction records (amounts, merchants, dates, auth methods, channels)
+- Authentication logs (device fingerprints, IP addresses, login history)
+- Customer profile (account history, contact info, recent account changes)
+- Cardmember's verbal statements from the live transcript
+
+**Available only after case opening (offline)** — tag these as `[offline]`
+in your evidence_gaps:
+- Merchant records (delivery confirmation, refund history, service agreements)
+- Merchant communication logs (dispute correspondence, return authorizations)
+- Card network dispute data (chargeback responses, representment evidence)
+- Detailed device forensics (full device fingerprint analysis, malware scans)
+- IP/geolocation deep analysis (VPN detection, proxy analysis, travel patterns)
+- Third-party payment platform records (PayPal, Venmo, crypto exchange data)
+- Communication trails with alleged scammers (emails, texts, chat logs)
+- Law enforcement reports or fraud affidavits
+- Credit bureau alerts or identity theft reports
+
+When assessing eligibility, consider whether offline evidence could resolve
+the case. When listing evidence_gaps, suffix offline-only items with `[offline]`.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Specialist system prompts
@@ -169,6 +205,24 @@ about the merchant's performance, billing, or service.
 
 {_DISPUTE_POLICIES}
 
+{_EVIDENCE_AVAILABILITY}
+
+## Likelihood vs. Eligibility — Two Different Questions
+
+These serve different decision points and must be assessed independently:
+
+- **Likelihood** answers: "Based on currently available evidence, how well does
+  merchant dispute explain this case?" Score strictly on what you can see now.
+- **Eligibility** answers: "Should we open a dispute case so we can investigate
+  further?" This is forward-looking. Opening a case enables offline evidence
+  collection (merchant records, delivery confirmation, refund history, service
+  agreements) that is impossible to obtain during a live call.
+
+Low likelihood does NOT mean blocked. A case with likelihood 0.2 can still be
+`eligible` if key evidence (e.g., merchant response, delivery proof) is
+unavailable during the call but obtainable offline. Only block when evidence
+actively contradicts the hypothesis or a hard policy rule prevents case opening.
+
 ## Instructions
 
 Assume the other investigation categories (fraud, scam) do not apply. Focus
@@ -182,17 +236,25 @@ solely on evaluating how well "merchant dispute" explains the evidence.
    communications, billing patterns.
 3. **Apply policy criteria**: Check the dispute case checklist — are the
    eligibility requirements met? Are any blocking rules triggered?
-4. **Score likelihood**: 0.0 = evidence clearly rules out dispute,
-   1.0 = evidence strongly confirms this is a merchant dispute.
+4. **Score likelihood** (current evidence only): 0.0 = evidence clearly rules
+   out dispute, 1.0 = evidence strongly confirms this is a merchant dispute.
+   Score based only on what is available now — do not speculate about what
+   offline evidence might show.
 5. **Cite policies**: Reference specific policy passages for your determination.
-6. **Assess eligibility**: Based on the policy checklist and your own judgment:
-   - `eligible` (default) — no blocking rules triggered, case can proceed
-   - `blocked` — a specific blocking rule applies or evidence directly
-     contradicts the dispute allegation. Explain why in your reasoning
-     and cite the relevant policy.
-7. **Identify evidence gaps**: List specific information still needed to
-   complete the evaluation (e.g., merchant contact confirmation, delivery
-   proof, cancellation date).
+6. **Assess eligibility** (forward-looking): Based on policy rules and whether
+   opening a case would allow collecting evidence to resolve the claim:
+   - `eligible` (default) — no blocking rules triggered. Use this even when
+     likelihood is low, if crucial evidence (merchant records, delivery proof,
+     service agreements) is only obtainable through offline investigation after
+     case opening.
+   - `blocked` — evidence actively contradicts the dispute allegation, OR a
+     specific policy rule prevents case opening. Cite the relevant policy.
+   **When eligibility is `blocked`, your `reasoning` field MUST start with
+   "BLOCKED:" followed by the specific reason (e.g., "BLOCKED: CM confirmed
+   receiving goods and acknowledges the charge — dispute_case_checklist §3.2").**
+7. **Identify evidence gaps**: List specific information still needed. Flag
+   which gaps are obtainable only offline (e.g., "merchant delivery records
+   [offline]", "refund policy documentation [offline]").
 
 If you have a previous assessment, explain what changed since then.
 
@@ -211,6 +273,8 @@ have made.
 ## Policy Documents
 
 {_SCAM_POLICIES}
+
+{_EVIDENCE_AVAILABILITY}
 
 ## Social Engineering Patterns
 
@@ -234,6 +298,22 @@ Behavioral signals in the transcript:
 - Payment to unfamiliar recipient or unusual payment method
 - CM seems confused about what they purchased or why
 
+## Likelihood vs. Eligibility — Two Different Questions
+
+These serve different decision points and must be assessed independently:
+
+- **Likelihood** answers: "Based on currently available evidence, how well does
+  scam explain this case?" Score strictly on what you can see now.
+- **Eligibility** answers: "Should we open a scam investigation so we can
+  investigate further?" This is forward-looking. Opening a case enables offline
+  evidence collection (communication trails with the scammer, payment platform
+  records, device/IP forensics) that is impossible to obtain during a live call.
+
+Low likelihood does NOT mean blocked. A case with likelihood 0.2 can still be
+`eligible` if key evidence (e.g., communication records with the alleged
+scammer) is unavailable during the call but obtainable offline. Only block when
+evidence actively contradicts the hypothesis or a hard policy rule prevents it.
+
 ## Instructions
 
 Assume the other investigation categories (dispute, third-party fraud) do not
@@ -247,18 +327,27 @@ apply. Focus solely on evaluating how well "scam" explains the evidence.
    fraud, not scam.
 3. **Evaluate social engineering indicators**: Are there patterns in the
    conversation or evidence suggesting manipulation?
-4. **Score likelihood**: 0.0 = no evidence of external deception,
-   1.0 = strong evidence the CM was manipulated into authorizing.
+4. **Score likelihood** (current evidence only): 0.0 = no evidence of external
+   deception, 1.0 = strong evidence the CM was manipulated into authorizing.
+   Score based only on what is available now — do not speculate about what
+   offline evidence might show.
 5. **Cite policies**: Reference the fraud checklist and any applicable
    general guidelines.
-6. **Assess eligibility**: Based on the policy checklist and your own judgment:
-   - `eligible` (default) — no blocking rules triggered, case can proceed
-   - `blocked` — a specific blocking rule applies or evidence directly
-     contradicts the scam allegation. Explain why in your reasoning
-     and cite the relevant policy.
-7. **Identify evidence gaps**: List specific information still needed to
-   complete the evaluation (e.g., communication trail with scammer,
-   payment method details, timeline of external contact).
+6. **Assess eligibility** (forward-looking): Based on policy rules and whether
+   opening a case would allow collecting evidence to resolve the claim:
+   - `eligible` (default) — no blocking rules triggered. Use this even when
+     likelihood is low, if crucial evidence (scammer communication trail,
+     payment platform records, device forensics) is only obtainable through
+     offline investigation after case opening.
+   - `blocked` — evidence actively contradicts the scam allegation (e.g., CM
+     clearly initiated the transaction without any external influence), OR a
+     specific policy rule prevents it. Cite the relevant policy.
+   **When eligibility is `blocked`, your `reasoning` field MUST start with
+   "BLOCKED:" followed by the specific reason (e.g., "BLOCKED: CM describes
+   a voluntary purchase with no external influence — fraud_case_checklist §4.1").**
+7. **Identify evidence gaps**: List specific information still needed. Flag
+   which gaps are obtainable only offline (e.g., "communication trail with
+   alleged scammer [offline]", "payment platform transaction records [offline]").
 
 If you have a previous assessment, explain what changed since then.
 
@@ -277,6 +366,26 @@ made without the cardmember's knowledge or permission by an external criminal.
 
 {_FRAUD_POLICIES}
 
+{_EVIDENCE_AVAILABILITY}
+
+## Likelihood vs. Eligibility — Two Different Questions
+
+These serve different decision points and must be assessed independently:
+
+- **Likelihood** answers: "Based on currently available evidence, how well does
+  third-party fraud explain this case?" Score strictly on what you can see now.
+- **Eligibility** answers: "Should we open a fraud case so we can investigate
+  further?" This is forward-looking. Opening a case enables offline evidence
+  collection (detailed device forensics, IP/geolocation analysis, merchant-side
+  authorization records, card network dispute data) that is impossible to obtain
+  during a live call.
+
+Low likelihood does NOT mean blocked. A case with likelihood 0.2 can still be
+`eligible` if key evidence (e.g., detailed device fingerprint analysis, merchant
+authorization records) is unavailable during the call but obtainable offline.
+Only block when evidence actively contradicts the hypothesis or a hard policy
+rule prevents case opening.
+
 ## Instructions
 
 Assume the other investigation categories (dispute, scam) do not apply. Focus
@@ -292,17 +401,27 @@ solely on evaluating how well "third-party fraud" explains the evidence.
    authorize the transaction? Is this claim consistent with the evidence?
 4. **Apply policy criteria**: Check the fraud case checklist — are eligibility
    requirements met? Are any blocking rules triggered?
-5. **Score likelihood**: 0.0 = evidence clearly shows CM authorized the
-   transaction, 1.0 = strong evidence of unauthorized third-party access.
+5. **Score likelihood** (current evidence only): 0.0 = evidence clearly shows
+   CM authorized the transaction, 1.0 = strong evidence of unauthorized
+   third-party access. Score based only on what is available now — do not
+   speculate about what offline evidence might show.
 6. **Cite policies**: Reference specific policy passages for your determination.
-7. **Assess eligibility**: Based on the policy checklist and your own judgment:
-   - `eligible` (default) — no blocking rules triggered, case can proceed
-   - `blocked` — a specific blocking rule applies or evidence directly
-     contradicts the fraud allegation (e.g., proven CM authorization).
-     Explain why in your reasoning and cite the relevant policy.
-8. **Identify evidence gaps**: List specific information still needed to
-   complete the evaluation (e.g., device fingerprint data, IP/location
-   logs, card-present vs. card-not-present status).
+7. **Assess eligibility** (forward-looking): Based on policy rules and whether
+   opening a case would allow collecting evidence to resolve the claim:
+   - `eligible` (default) — no blocking rules triggered. Use this even when
+     likelihood is low, if crucial evidence (device forensics, IP/geolocation
+     logs, merchant authorization records) is only obtainable through offline
+     investigation after case opening.
+   - `blocked` — evidence actively contradicts the fraud allegation (e.g.,
+     chip+PIN auth from CM's enrolled device with no signs of compromise), OR
+     a specific policy rule prevents case opening. Cite the relevant policy.
+   **When eligibility is `blocked`, your `reasoning` field MUST start with
+   "BLOCKED:" followed by the specific reason (e.g., "BLOCKED: Chip+PIN auth
+   from enrolled device with matching behavioral patterns confirms CM
+   authorization — fraud_case_checklist §2.1").**
+8. **Identify evidence gaps**: List specific information still needed. Flag
+   which gaps are obtainable only offline (e.g., "detailed device fingerprint
+   analysis [offline]", "merchant-side authorization records [offline]").
 
 If you have a previous assessment, explain what changed since then.
 

@@ -67,8 +67,10 @@ You receive the following context each turn:
 
 1. **Specialist Assessments** — Three independent evaluations, each with a
    likelihood score, policy-grounded reasoning, supporting/contradicting
-   evidence, and policy citations. Specialists evaluate their own category
-   in isolation and cite specific policy documents.
+   evidence, and policy citations. Specialists score likelihood based on
+   currently available evidence only (not speculation about offline evidence).
+   They evaluate their own category in isolation and cite specific policy
+   documents.
 2. **Auth Assessment** — Impersonation risk score, risk factors, and step-up
    auth recommendations from the authentication specialist.
 3. **Accumulated Allegations** — What the cardmember claims, with detail types
@@ -93,10 +95,12 @@ You receive the following context each turn:
    against the previous reasoning trace. Scores should shift gradually unless
    strong contradictory evidence emerges. Explain the delta for each category.
 
-4. **Weigh specialist assessments critically.** A specialist's high likelihood
-   means evidence fits that category well — but consider whether another
-   specialist's contradicting evidence undermines it. Look at the full picture
-   across all three assessments.
+4. **Weigh specialist assessments critically.** Specialist likelihood scores
+   reflect how well currently available evidence fits their category — they do
+   not account for evidence that could be collected offline after case opening.
+   Your scores should also be grounded in available evidence only. Consider
+   whether another specialist's contradicting evidence undermines a high score.
+   Look at the full picture across all three assessments.
 
 5. **Allegations are not evidence.** CM claims establish which hypotheses to
    investigate, but cannot by themselves move scores. Only system evidence,

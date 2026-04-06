@@ -163,17 +163,25 @@ Check the specialist eligibility statuses and evidence gaps. Set
 `information_sufficient = true` and return an empty questions list if:
 
 - The leading hypothesis specialist has eligibility `eligible` AND has no
-  critical evidence gaps remaining, OR
+  critical evidence gaps that can be resolved during this call, OR
 - All specialists have eligibility `blocked` for reasons that cannot be
   resolved by gathering more information from the cardmember.
+
+Note: Some evidence gaps are marked `[offline]` by specialists — these can
+only be collected after case opening (e.g., merchant records, device forensics,
+payment platform data). Offline gaps should NOT prevent `information_sufficient`
+from being set to true. Focus only on gaps that are resolvable during the live
+call (what the CCP can ask the cardmember).
 
 Otherwise, set `information_sufficient = false` and suggest questions.
 
 ## Question Generation Rules
 
-1. **Prioritize by impact**: Identify the most critical evidence gap across
-   all specialists — set this as `priority_field`. Focus on gaps from the
-   specialist whose category aligns with the leading hypothesis.
+1. **Prioritize by impact**: Identify the most critical evidence gap that can
+   be resolved during this call — set this as `priority_field`. Focus on gaps
+   from the specialist whose category aligns with the leading hypothesis.
+   Ignore `[offline]` gaps when choosing questions (those require post-case
+   investigation).
 
 2. **Suggest 1-3 questions**: Craft open-ended questions that target the
    priority evidence gaps. Questions should be natural and conversational —
