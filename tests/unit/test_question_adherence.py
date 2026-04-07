@@ -50,7 +50,7 @@ def _make_run(turns: list[TurnMetric]) -> EvaluationRun:
 
 
 # Patch target for Runner.run in the question_adherence module
-_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.question_adherence.Runner.run"
+_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.question_adherence.run_with_retry"
 
 
 def _mock_adherence(score: float, explanation: str = "Test") -> AsyncMock:

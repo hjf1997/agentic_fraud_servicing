@@ -15,8 +15,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from agents import Agent, AgentOutputSchema, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
+
+from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field
 
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
@@ -389,7 +391,7 @@ async def run_case_advisor(
     user_msg = "\n\n".join(parts)
 
     try:
-        result = await Runner.run(
+        result = await run_with_retry(
             case_advisor,
             input=user_msg,
             run_config=RunConfig(model_provider=model_provider),

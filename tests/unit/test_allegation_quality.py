@@ -55,7 +55,7 @@ def _make_run(
     )
 
 
-_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.allegation_quality.Runner.run"
+_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.allegation_quality.run_with_retry"
 
 
 def _mock_match(

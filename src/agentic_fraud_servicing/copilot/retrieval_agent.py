@@ -5,8 +5,10 @@ using the three @function_tool wrappers from copilot/context.py. Returns a
 structured RetrievalResult summarizing what was found and any data gaps.
 """
 
-from agents import Agent, AgentOutputSchema, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
+
+from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field
 
 from agentic_fraud_servicing.copilot.context import (
@@ -109,7 +111,7 @@ async def run_retrieval(
     )
 
     try:
-        result = await Runner.run(
+        result = await run_with_retry(
             retrieval_agent,
             input="Retrieve all available data for the current case.",
             context=copilot_ctx,

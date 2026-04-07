@@ -95,7 +95,7 @@ class TestRunTriage:
         history = [("CARDMEMBER", "I didn't make this purchase")]
 
         with patch(
-            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.triage_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -113,7 +113,7 @@ class TestRunTriage:
         history = [("CARDMEMBER", "test text")]
 
         with patch(
-            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.triage_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -135,7 +135,7 @@ class TestRunTriage:
         ]
 
         with patch(
-            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.triage_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -159,7 +159,7 @@ class TestRunTriage:
         ]
 
         with patch(
-            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.triage_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -183,7 +183,7 @@ class TestRunTriage:
         summary = "1. [UNRECOGNIZED_TRANSACTION] CM says unauthorized purchase"
 
         with patch(
-            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.triage_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -211,7 +211,7 @@ class TestRunTriage:
         ]
 
         with patch(
-            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.triage_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -234,7 +234,7 @@ class TestRunTriage:
         """run_triage wraps SDK exceptions in RuntimeError."""
         history = [("CARDMEMBER", "bad input")]
         with patch(
-            "agentic_fraud_servicing.copilot.triage_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.triage_agent.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):

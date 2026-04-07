@@ -192,7 +192,7 @@ class TestRunScamDetection:
         mock_run_result.final_output = sample_scam_result
 
         with patch(
-            "agentic_fraud_servicing.investigator.scam_detector.Runner.run",
+            "agentic_fraud_servicing.investigator.scam_detector.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -214,7 +214,7 @@ class TestRunScamDetection:
         mock_run_result.final_output = ScamAnalysis()
 
         with patch(
-            "agentic_fraud_servicing.investigator.scam_detector.Runner.run",
+            "agentic_fraud_servicing.investigator.scam_detector.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -229,7 +229,7 @@ class TestRunScamDetection:
         mock_run_result.final_output = ScamAnalysis()
 
         with patch(
-            "agentic_fraud_servicing.investigator.scam_detector.Runner.run",
+            "agentic_fraud_servicing.investigator.scam_detector.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -251,7 +251,7 @@ class TestRunScamDetection:
         mock_run_result.final_output = ScamAnalysis()
 
         with patch(
-            "agentic_fraud_servicing.investigator.scam_detector.Runner.run",
+            "agentic_fraud_servicing.investigator.scam_detector.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -273,7 +273,7 @@ class TestRunScamDetection:
         mock_run_result.final_output = ScamAnalysis()
 
         with patch(
-            "agentic_fraud_servicing.investigator.scam_detector.Runner.run",
+            "agentic_fraud_servicing.investigator.scam_detector.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -286,7 +286,7 @@ class TestRunScamDetection:
     async def test_wraps_exceptions(self, mock_provider):
         """run_scam_detection wraps SDK exceptions in RuntimeError."""
         with patch(
-            "agentic_fraud_servicing.investigator.scam_detector.Runner.run",
+            "agentic_fraud_servicing.investigator.scam_detector.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):

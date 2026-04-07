@@ -64,7 +64,7 @@ def _make_run(
     )
 
 
-_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.decision_explainer.Runner.run"
+_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.decision_explainer.run_with_retry"
 
 
 def _mock_explanation(

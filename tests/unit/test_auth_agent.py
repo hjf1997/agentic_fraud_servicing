@@ -113,7 +113,7 @@ class TestRunAuthAssessment:
         mock_run_result.final_output = sample_assessment
 
         with patch(
-            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.auth_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -134,7 +134,7 @@ class TestRunAuthAssessment:
         mock_run_result.final_output = AuthAssessment()
 
         with patch(
-            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.auth_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -149,7 +149,7 @@ class TestRunAuthAssessment:
         mock_run_result.final_output = AuthAssessment()
 
         with patch(
-            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.auth_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -168,7 +168,7 @@ class TestRunAuthAssessment:
         mock_run_result.final_output = AuthAssessment()
 
         with patch(
-            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.auth_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -186,7 +186,7 @@ class TestRunAuthAssessment:
         mock_run_result.final_output = AuthAssessment()
 
         with patch(
-            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.auth_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -209,7 +209,7 @@ class TestRunAuthAssessment:
         ]
 
         with patch(
-            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.auth_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -234,7 +234,7 @@ class TestRunAuthAssessment:
         mock_run_result.final_output = AuthAssessment()
 
         with patch(
-            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.auth_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -249,7 +249,7 @@ class TestRunAuthAssessment:
     async def test_wraps_exceptions(self, mock_provider):
         """run_auth_assessment wraps SDK exceptions in RuntimeError."""
         with patch(
-            "agentic_fraud_servicing.copilot.auth_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.auth_agent.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):

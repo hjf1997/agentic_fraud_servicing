@@ -249,7 +249,7 @@ class TestRunCaseWriter:
         mock_run_result.final_output = sample_case_pack
 
         with patch(
-            "agentic_fraud_servicing.investigator.case_writer.Runner.run",
+            "agentic_fraud_servicing.investigator.case_writer.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -271,7 +271,7 @@ class TestRunCaseWriter:
         mock_run_result.final_output = CasePack()
 
         with patch(
-            "agentic_fraud_servicing.investigator.case_writer.Runner.run",
+            "agentic_fraud_servicing.investigator.case_writer.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -286,7 +286,7 @@ class TestRunCaseWriter:
         mock_run_result.final_output = CasePack()
 
         with patch(
-            "agentic_fraud_servicing.investigator.case_writer.Runner.run",
+            "agentic_fraud_servicing.investigator.case_writer.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -309,7 +309,7 @@ class TestRunCaseWriter:
         mock_run_result.final_output = CasePack()
 
         with patch(
-            "agentic_fraud_servicing.investigator.case_writer.Runner.run",
+            "agentic_fraud_servicing.investigator.case_writer.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -331,7 +331,7 @@ class TestRunCaseWriter:
     async def test_wraps_exceptions(self, mock_provider):
         """run_case_writer wraps SDK exceptions in RuntimeError."""
         with patch(
-            "agentic_fraud_servicing.investigator.case_writer.Runner.run",
+            "agentic_fraud_servicing.investigator.case_writer.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):

@@ -170,7 +170,7 @@ class TestRunMerchantAnalysis:
         mock_run_result.final_output = sample_result
 
         with patch(
-            "agentic_fraud_servicing.investigator.merchant_evidence.Runner.run",
+            "agentic_fraud_servicing.investigator.merchant_evidence.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -189,7 +189,7 @@ class TestRunMerchantAnalysis:
         mock_run_result.final_output = MerchantAnalysis()
 
         with patch(
-            "agentic_fraud_servicing.investigator.merchant_evidence.Runner.run",
+            "agentic_fraud_servicing.investigator.merchant_evidence.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -204,7 +204,7 @@ class TestRunMerchantAnalysis:
         mock_run_result.final_output = MerchantAnalysis()
 
         with patch(
-            "agentic_fraud_servicing.investigator.merchant_evidence.Runner.run",
+            "agentic_fraud_servicing.investigator.merchant_evidence.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -225,7 +225,7 @@ class TestRunMerchantAnalysis:
         mock_run_result.final_output = MerchantAnalysis()
 
         with patch(
-            "agentic_fraud_servicing.investigator.merchant_evidence.Runner.run",
+            "agentic_fraud_servicing.investigator.merchant_evidence.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -246,7 +246,7 @@ class TestRunMerchantAnalysis:
         mock_run_result.final_output = MerchantAnalysis()
 
         with patch(
-            "agentic_fraud_servicing.investigator.merchant_evidence.Runner.run",
+            "agentic_fraud_servicing.investigator.merchant_evidence.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -261,7 +261,7 @@ class TestRunMerchantAnalysis:
     async def test_wraps_exceptions(self, mock_provider):
         """run_merchant_analysis wraps SDK exceptions in RuntimeError."""
         with patch(
-            "agentic_fraud_servicing.investigator.merchant_evidence.Runner.run",
+            "agentic_fraud_servicing.investigator.merchant_evidence.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):

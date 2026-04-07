@@ -236,7 +236,7 @@ class TestRunSpecialists:
         )
 
         with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_specialists.Runner.run",
+            "agentic_fraud_servicing.copilot.hypothesis_specialists.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -264,7 +264,7 @@ class TestRunSpecialists:
             return mock_result
 
         with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_specialists.Runner.run",
+            "agentic_fraud_servicing.copilot.hypothesis_specialists.run_with_retry",
             new_callable=AsyncMock,
             side_effect=_side_effect,
         ):
@@ -296,7 +296,7 @@ class TestRunSpecialists:
         }
 
         with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_specialists.Runner.run",
+            "agentic_fraud_servicing.copilot.hypothesis_specialists.run_with_retry",
             new_callable=AsyncMock,
             side_effect=_capture,
         ):
@@ -373,7 +373,7 @@ class TestRunArbitrator:
         mock_run_result.final_output = sample_assessment
 
         with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -396,7 +396,7 @@ class TestRunArbitrator:
         mock_run_result.final_output = HypothesisAssessment()
 
         with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -432,7 +432,7 @@ class TestRunArbitrator:
         }
 
         with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):

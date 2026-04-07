@@ -114,7 +114,7 @@ class TestRunRetrieval:
         mock_run_result.final_output = sample_retrieval_result
 
         with patch(
-            "agentic_fraud_servicing.copilot.retrieval_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.retrieval_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -130,7 +130,7 @@ class TestRunRetrieval:
         mock_run_result.final_output = RetrievalResult()
 
         with patch(
-            "agentic_fraud_servicing.copilot.retrieval_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.retrieval_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -145,7 +145,7 @@ class TestRunRetrieval:
         mock_run_result.final_output = RetrievalResult()
 
         with patch(
-            "agentic_fraud_servicing.copilot.retrieval_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.retrieval_agent.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -160,7 +160,7 @@ class TestRunRetrieval:
     async def test_run_retrieval_wraps_exceptions(self, mock_provider, mock_gateway):
         """run_retrieval wraps SDK exceptions in RuntimeError."""
         with patch(
-            "agentic_fraud_servicing.copilot.retrieval_agent.Runner.run",
+            "agentic_fraud_servicing.copilot.retrieval_agent.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):

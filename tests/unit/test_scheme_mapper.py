@@ -169,7 +169,7 @@ class TestRunSchemeMapping:
         mock_run_result.final_output = sample_fraud_result
 
         with patch(
-            "agentic_fraud_servicing.investigator.scheme_mapper.Runner.run",
+            "agentic_fraud_servicing.investigator.scheme_mapper.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -191,7 +191,7 @@ class TestRunSchemeMapping:
         mock_run_result.final_output = SchemeMappingResult()
 
         with patch(
-            "agentic_fraud_servicing.investigator.scheme_mapper.Runner.run",
+            "agentic_fraud_servicing.investigator.scheme_mapper.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -206,7 +206,7 @@ class TestRunSchemeMapping:
         mock_run_result.final_output = SchemeMappingResult()
 
         with patch(
-            "agentic_fraud_servicing.investigator.scheme_mapper.Runner.run",
+            "agentic_fraud_servicing.investigator.scheme_mapper.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -229,7 +229,7 @@ class TestRunSchemeMapping:
         mock_run_result.final_output = SchemeMappingResult()
 
         with patch(
-            "agentic_fraud_servicing.investigator.scheme_mapper.Runner.run",
+            "agentic_fraud_servicing.investigator.scheme_mapper.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -245,7 +245,7 @@ class TestRunSchemeMapping:
         mock_run_result.final_output = SchemeMappingResult()
 
         with patch(
-            "agentic_fraud_servicing.investigator.scheme_mapper.Runner.run",
+            "agentic_fraud_servicing.investigator.scheme_mapper.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -258,7 +258,7 @@ class TestRunSchemeMapping:
     async def test_wraps_exceptions(self, mock_provider):
         """run_scheme_mapping wraps SDK exceptions in RuntimeError."""
         with patch(
-            "agentic_fraud_servicing.investigator.scheme_mapper.Runner.run",
+            "agentic_fraud_servicing.investigator.scheme_mapper.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM call failed"),
         ):

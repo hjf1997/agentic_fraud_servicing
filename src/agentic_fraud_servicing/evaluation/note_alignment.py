@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 
-from agents import Agent, AgentOutputSchema, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
+
+from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel
 
 from agentic_fraud_servicing.evaluation.models import (
@@ -250,7 +252,7 @@ async def _score_alignment(
     )
 
     try:
-        result = await Runner.run(
+        result = await run_with_retry(
             _alignment_agent,
             input=user_msg,
             run_config=RunConfig(model_provider=model_provider),

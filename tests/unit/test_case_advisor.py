@@ -342,7 +342,7 @@ class TestRunCaseAdvisor:
         )
 
         with patch(
-            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            "agentic_fraud_servicing.copilot.case_advisor.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ):
@@ -367,7 +367,7 @@ class TestRunCaseAdvisor:
         mock_run_result.final_output = CaseAdvisory()
 
         with patch(
-            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            "agentic_fraud_servicing.copilot.case_advisor.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -401,7 +401,7 @@ class TestRunCaseAdvisor:
         }
 
         with patch(
-            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            "agentic_fraud_servicing.copilot.case_advisor.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -423,7 +423,7 @@ class TestRunCaseAdvisor:
         mock_run_result.final_output = CaseAdvisory()
 
         with patch(
-            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            "agentic_fraud_servicing.copilot.case_advisor.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -447,7 +447,7 @@ class TestRunCaseAdvisor:
         mock_run_result.final_output = CaseAdvisory()
 
         with patch(
-            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            "agentic_fraud_servicing.copilot.case_advisor.run_with_retry",
             new_callable=AsyncMock,
             return_value=mock_run_result,
         ) as mock_run:
@@ -467,7 +467,7 @@ class TestRunCaseAdvisor:
     ) -> None:
         """run_case_advisor wraps SDK exceptions in RuntimeError."""
         with patch(
-            "agentic_fraud_servicing.copilot.case_advisor.Runner.run",
+            "agentic_fraud_servicing.copilot.case_advisor.run_with_retry",
             new_callable=AsyncMock,
             side_effect=ValueError("LLM connection failed"),
         ):

@@ -13,8 +13,10 @@ import asyncio
 from pathlib import Path
 from typing import Literal
 
-from agents import Agent, AgentOutputSchema, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
+
+from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -510,7 +512,7 @@ async def _run_single_specialist(
 ) -> SpecialistAssessment:
     """Run a single specialist with error handling."""
     try:
-        result = await Runner.run(
+        result = await run_with_retry(
             agent,
             input=user_msg,
             run_config=RunConfig(model_provider=model_provider),

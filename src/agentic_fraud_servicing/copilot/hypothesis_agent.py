@@ -8,8 +8,10 @@ dedicated specialist. Specialists are run externally by the orchestrator.
 
 from __future__ import annotations
 
-from agents import Agent, AgentOutputSchema, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
+
+from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field
 
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
@@ -259,7 +261,7 @@ async def run_arbitrator(
 
     # 2. Run arbitrator
     try:
-        result = await Runner.run(
+        result = await run_with_retry(
             hypothesis_agent,
             input=user_msg,
             run_config=RunConfig(model_provider=model_provider),

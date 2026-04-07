@@ -7,8 +7,10 @@ the LLM call when the outcome tag is already a valid InvestigationCategory value
 
 from __future__ import annotations
 
-from agents import Agent, AgentOutputSchema, ModelProvider, Runner
+from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
+
+from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel
 
 from agentic_fraud_servicing.evaluation.models import EvaluationRun, PredictionResult
@@ -95,7 +97,7 @@ async def map_outcome_to_category(
         return outcome_tag, ""
 
     try:
-        result = await Runner.run(
+        result = await run_with_retry(
             _mapping_agent,
             input=f"Map this outcome to an InvestigationCategory:\n\n{outcome_tag}",
             run_config=RunConfig(model_provider=model_provider),

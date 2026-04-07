@@ -60,7 +60,7 @@ def _make_run(
 
 
 # Patch target for Runner.run in the prediction_evaluator module
-_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.prediction_evaluator.Runner.run"
+_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.prediction_evaluator.run_with_retry"
 
 
 def _mock_runner_result(mapped_category: str, reasoning: str = "Test reasoning"):
