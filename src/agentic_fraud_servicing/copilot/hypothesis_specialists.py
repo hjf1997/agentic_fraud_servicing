@@ -251,7 +251,7 @@ solely on evaluating how well "merchant dispute" explains the evidence.
      specific policy rule prevents case opening. Cite the relevant policy.
    **When eligibility is `blocked`, your `reasoning` field MUST start with
    "BLOCKED:" followed by the specific reason (e.g., "BLOCKED: CM confirmed
-   receiving goods and acknowledges the charge — dispute_case_checklist §3.2").**
+   receiving goods and acknowledges the charge — policy II ").**
 7. **Identify evidence gaps**: List specific information still needed. Flag
    which gaps are obtainable only offline (e.g., "merchant delivery records
    [offline]", "refund policy documentation [offline]").
