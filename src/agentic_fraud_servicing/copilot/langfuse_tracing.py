@@ -101,60 +101,147 @@ def get_langfuse():
 def tag_firewall_block(agent_name: str, error_message: str) -> None:
     """Tag the current LangFuse trace when an agent is blocked by the enterprise firewall.
 
-    Attaches a score (firewall_block=1) and a "firewall_block" tag to the
-    current observation and its parent trace so blocked calls surface as a
-    colored pill in the LangFuse traces list and are filterable by tag.
+    Attaches a score (firewall_block=1) to both the current span and the
+    parent trace, and updates the span with ERROR level so blocked calls
+    surface in the LangFuse traces list and are filterable.
     """
     lf = get_langfuse()
     if lf is None:
         return
     try:
-        obs = lf.get_current_observation()
-        if obs is not None:
-            # Tag the observation — tags auto-aggregate to the parent trace,
-            # making blocked traces visible as colored pills in the list view.
-            obs.update(tags=["firewall_block", f"blocked:{agent_name}"])
-            # Score the specific observation (agent-level)
-            obs.score(
-                name="firewall_block",
-                value=1,
-                comment=f"[{agent_name}] {error_message}",
-            )
-            # Also score the parent trace for top-level filtering
-            obs.score_trace(
-                name="firewall_block",
-                value=1,
-                comment=f"[{agent_name}] {error_message}",
-            )
+        truncated = error_message[:500]
+        # Update the current span with error details
+        lf.update_current_span(
+            metadata={
+                "error_type": "firewall_block",
+                "error_agent": agent_name,
+                "error_message": truncated,
+            },
+            level="ERROR",
+            status_message=f"FIREWALL BLOCKED [{agent_name}]: {truncated[:200]}",
+        )
+        # Score the span and trace for filtering
+        lf.score_current_span(
+            name="firewall_block",
+            value=1,
+            comment=f"[{agent_name}] {truncated[:200]}",
+        )
+        lf.score_current_trace(
+            name="firewall_block",
+            value=1,
+            comment=f"[{agent_name}] {truncated[:200]}",
+        )
     except Exception:
         pass
 
 
 def tag_agent_error(agent_name: str, exc: BaseException) -> None:
-    """Enrich the current LangFuse observation with HTTP error details.
+    """Enrich the current LangFuse span with detailed error information.
 
-    Walks the exception chain to extract HTTP status codes and body text,
-    then updates the current observation's metadata so the error is visible
-    in the LangFuse traces list (instead of a generic "Error getting responses").
+    Classifies the error (HTTP, invalid JSON, timeout, unknown), extracts
+    relevant details, and updates the current span's metadata and status
+    so the error is visible in the LangFuse UI with a clear description.
     """
     lf = get_langfuse()
     if lf is None:
         return
     try:
-        status_code, error_body = extract_http_error(exc)
-        obs = lf.get_current_observation()
-        if obs is not None:
-            obs.update(
-                metadata={
-                    "error_agent": agent_name,
-                    "http_status": status_code,
-                    "error_message": error_body[:500] if error_body else str(exc)[:500],
-                },
-                level="ERROR",
-                status_message=f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)[:200],
-            )
+        error_type, status_msg, metadata = _classify_error(agent_name, exc)
+        lf.update_current_span(
+            metadata=metadata,
+            level="ERROR",
+            status_message=status_msg,
+        )
+        lf.score_current_span(
+            name="agent_error",
+            value=error_type,
+            data_type="CATEGORICAL",
+            comment=status_msg,
+        )
     except Exception:
         pass
+
+
+def _classify_error(
+    agent_name: str, exc: BaseException
+) -> tuple[str, str, dict]:
+    """Classify an agent exception into a type, status message, and metadata.
+
+    Returns:
+        (error_type, status_message, metadata_dict)
+    """
+    from agents.exceptions import ModelBehaviorError
+
+    # Check for ModelBehaviorError (invalid JSON, unexpected output)
+    if isinstance(exc, ModelBehaviorError):
+        msg = str(exc)[:500]
+        return (
+            "invalid_json",
+            f"[{agent_name}] Invalid JSON: {msg[:200]}",
+            {
+                "error_agent": agent_name,
+                "error_type": "invalid_json",
+                "error_class": "ModelBehaviorError",
+                "error_message": msg,
+            },
+        )
+
+    # Check for timeout errors
+    if _is_timeout(exc):
+        msg = str(exc)[:500]
+        return (
+            "timeout",
+            f"[{agent_name}] Timeout: {msg[:200]}",
+            {
+                "error_agent": agent_name,
+                "error_type": "timeout",
+                "error_class": type(exc).__name__,
+                "error_message": msg,
+            },
+        )
+
+    # Check for HTTP errors
+    status_code, error_body = extract_http_error(exc)
+    if status_code is not None:
+        return (
+            f"http_{status_code}",
+            f"[{agent_name}] HTTP {status_code}: {error_body[:200]}",
+            {
+                "error_agent": agent_name,
+                "error_type": f"http_{status_code}",
+                "http_status": status_code,
+                "error_message": error_body[:500],
+            },
+        )
+
+    # Fallback: unknown error
+    msg = str(exc)[:500]
+    return (
+        "unknown",
+        f"[{agent_name}] {type(exc).__name__}: {msg[:200]}",
+        {
+            "error_agent": agent_name,
+            "error_type": "unknown",
+            "error_class": type(exc).__name__,
+            "error_message": msg,
+        },
+    )
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """Check if an exception represents a timeout."""
+    import asyncio
+
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    type_name = type(exc).__name__
+    if type_name in ("APITimeoutError", "ConnectTimeout", "ReadTimeout"):
+        return True
+    # Check cause chain
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None and cause is not exc:
+        return _is_timeout(cause)
+    return False
 
 
 def extract_http_error(exc: BaseException) -> tuple[int | None, str]:
