@@ -40,6 +40,9 @@ class Settings:
         self.azure_openai_api_version: str | None = os.environ.get(
             "AZURE_OPENAI_API_VERSION"
         )
+        self.azure_openai_use_responses_api: bool = (
+            os.environ.get("AZURE_OPENAI_USE_RESPONSES_API", "false").lower() == "true"
+        )
 
         # LangFuse observability (optional — disabled if keys not set)
         # Cloud: https://us.cloud.langfuse.com (US) or https://cloud.langfuse.com (EU)
