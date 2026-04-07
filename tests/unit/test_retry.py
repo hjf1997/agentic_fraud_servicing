@@ -27,7 +27,7 @@ class TestIsRetriable:
         """403 firewall/DLP policy blocks should never be retried."""
         exc = Exception("403 policy violation")
         with patch(
-            "agentic_fraud_servicing.providers.retry.is_firewall_block",
+            "agentic_fraud_servicing.copilot.langfuse_tracing.is_firewall_block",
             return_value=True,
         ):
             assert _is_retriable(exc) is False
@@ -118,7 +118,7 @@ class TestRunWithRetry:
             new_callable=AsyncMock,
             side_effect=exc,
         ) as mock_run, patch(
-            "agentic_fraud_servicing.providers.retry.is_firewall_block",
+            "agentic_fraud_servicing.copilot.langfuse_tracing.is_firewall_block",
             return_value=True,
         ):
             with pytest.raises(Exception, match="403 policy block"):

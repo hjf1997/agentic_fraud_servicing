@@ -14,8 +14,6 @@ from typing import Any
 from agents import Runner
 from agents.exceptions import ModelBehaviorError
 
-from agentic_fraud_servicing.copilot.langfuse_tracing import is_firewall_block
-
 logger = logging.getLogger(__name__)
 
 # Default retry settings
@@ -37,6 +35,9 @@ def _is_retriable(exc: BaseException) -> bool:
         - All other errors (bad prompts, validation, etc.)
     """
     # Firewall blocks are never retriable — same prompt will fail again
+    # Lazy import to avoid circular dependency (langfuse_tracing → ... → retry)
+    from agentic_fraud_servicing.copilot.langfuse_tracing import is_firewall_block
+
     if is_firewall_block(exc):
         return False
 
