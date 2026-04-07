@@ -12,7 +12,7 @@ from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
 
 from agentic_fraud_servicing.providers.retry import run_with_retry
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     SpecialistAssessment,
@@ -54,6 +54,19 @@ class HypothesisAssessment(BaseModel):
     specialist_assessments: dict[str, SpecialistAssessment] = Field(
         default_factory=dict, exclude=True
     )
+
+    @field_validator("reasoning", mode="before")
+    @classmethod
+    def _coerce_reasoning_values(cls, v: dict) -> dict[str, str]:
+        """Coerce non-string values in reasoning dict to strings.
+
+        LLMs sometimes nest contradictions or specialist_assessments inside
+        the reasoning dict as list/dict values instead of keeping them as
+        separate top-level fields. Convert to strings so validation passes.
+        """
+        if not isinstance(v, dict):
+            return v
+        return {k: str(val) if not isinstance(val, str) else val for k, val in v.items()}
 
 
 # --- System prompt ---
