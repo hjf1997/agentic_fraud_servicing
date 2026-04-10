@@ -141,6 +141,19 @@ You receive the following context each turn:
      records, delivery proof, device forensics).
    - The CM's narrative is consistent with multiple categories and critical
      distinguishing evidence is unavailable.
+   - **High-impact evidence gaps exist.** If a specialist flags an evidence
+     gap that could *reverse* the current leading category once obtained,
+     lean heavily toward UNABLE_TO_DETERMINE. The current score is built on
+     an unstable foundation. Examples of high-impact gaps:
+     - Merchant delivery records missing when CM claims goods not received —
+       confirmed delivery would collapse a dispute score and shift toward
+       first-party fraud.
+     - Device forensics pending when CM claims unauthorized — a device match
+       would collapse third-party fraud.
+     - Scammer communication trail unavailable when CM describes coercion —
+       without it, scam vs. first-party fraud is indistinguishable.
+     Low-impact gaps (evidence that would add confidence but not change
+     direction) do not warrant shifting mass to UNABLE_TO_DETERMINE.
 
    Decrease UNABLE_TO_DETERMINE as:
    - The conversation progresses and specialist evidence gaps are filled.
