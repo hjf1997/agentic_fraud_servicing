@@ -274,7 +274,13 @@ class CopilotOrchestrator:
             self.accumulated_allegations.extend(triage_result.allegations)
             self._persist_allegations(triage_result.allegations)
 
-        # 3c'. Advance the assessment index so the next assessment knows
+        # 3c'. Build conversation summary for specialists BEFORE advancing
+        # the index. _format_conversation_for_hypothesis uses _last_assessed_idx
+        # to compute the window — advancing first would shrink it to only the
+        # trailing context turns, losing all new turns since the last assessment.
+        conversation_summary = self._format_conversation_for_hypothesis()
+
+        # Advance the assessment index so the next assessment knows
         # which turns have already been processed by triage.
         self._last_assessed_idx = len(self.transcript_history)
 
@@ -303,7 +309,9 @@ class CopilotOrchestrator:
             except Exception:
                 _lf_p2 = None
 
-        specialist_assessments = await self._run_specialists_safe(risk_flags)
+        specialist_assessments = await self._run_specialists_safe(
+            risk_flags, conversation_summary
+        )
         if specialist_assessments is not None:
             self._last_specialist_assessments = specialist_assessments
         specs = specialist_assessments or {}
@@ -658,9 +666,15 @@ class CopilotOrchestrator:
             return None
 
     async def _run_specialists_safe(
-        self, risk_flags: list[str]
+        self, risk_flags: list[str], conversation_summary: str
     ) -> dict[str, SpecialistAssessment] | None:
         """Run category specialists in parallel with error handling.
+
+        Args:
+            risk_flags: Mutable list where error descriptions are appended.
+            conversation_summary: Pre-built conversation window text. Must be
+                computed before ``_last_assessed_idx`` advances so that new
+                turns since the last assessment are included.
 
         On failure, returns None and the previous specialist outputs are
         reused by the orchestrator.
@@ -670,7 +684,7 @@ class CopilotOrchestrator:
             result = await run_specialists(
                 allegations_summary=self._format_allegations_for_hypothesis(),
                 evidence_summary=self._format_evidence_for_hypothesis(),
-                conversation_summary=self._format_conversation_for_hypothesis(),
+                conversation_summary=conversation_summary,
                 model_provider=self.model_provider,
                 previous_assessments=self._last_specialist_assessments,
             )
