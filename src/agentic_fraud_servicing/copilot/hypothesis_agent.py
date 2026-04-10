@@ -157,9 +157,16 @@ You receive the following context each turn:
 FIRST_PARTY_FRAUD has no specialist — it is always an investigation finding
 detected by you through cross-specialist analysis. Score it based on:
 
-- **All specialists report low likelihood**: If dispute, scam, and fraud
-  specialists all find the evidence doesn't fit their category well, the
-  remaining probability mass should flow to first-party fraud.
+- **All specialists report low likelihood — check WHY before routing.**
+  Low likelihoods across all three specialists can mean two very different
+  things. Look at the specialists' evidence_gaps and contradicting_evidence
+  to distinguish:
+  - If specialists cite **contradicting evidence** (evidence that actively
+    doesn't fit their category), the remaining mass flows to
+    FIRST_PARTY_FRAUD — something happened, and no external party explains it.
+  - If specialists cite **evidence gaps** (insufficient data, key items only
+    available offline), the remaining mass flows to UNABLE_TO_DETERMINE —
+    there is simply not enough information yet to distinguish categories.
 
 - **Contradicting evidence without external manipulator**: If specialists
   flag contradicting evidence (e.g., CM claims unauthorized but chip+PIN
@@ -227,16 +234,17 @@ def _format_specialist_for_arbitrator(
         supporting = ", ".join(a.supporting_evidence) if a.supporting_evidence else "none"
         contradicting = ", ".join(a.contradicting_evidence) if a.contradicting_evidence else "none"
         citations = (
-            "\n".join(f"  - {c}" for c in a.policy_citations)
-            if a.policy_citations
-            else "  none"
+            "\n".join(f"  - {c}" for c in a.policy_citations) if a.policy_citations else "  none"
         )
+        gaps = ", ".join(a.evidence_gaps) if a.evidence_gaps else "none"
         parts.append(
             f"### {_LABELS[category]}\n"
             f"Likelihood: {a.likelihood:.2f}\n"
+            f"Eligibility: {a.eligibility}\n"
             f"Reasoning: {a.reasoning}\n"
             f"Supporting evidence: {supporting}\n"
             f"Contradicting evidence: {contradicting}\n"
+            f"Evidence gaps: {gaps}\n"
             f"Policy citations:\n{citations}"
         )
     return "\n\n".join(parts)
@@ -281,16 +289,12 @@ async def run_arbitrator(
 
     prev_reasoning_text = "First assessment — no prior reasoning."
     if previous_reasoning is not None:
-        reasoning_lines = [
-            f"- {k}: {v}" for k, v in previous_reasoning.reasoning.items() if v
-        ]
+        reasoning_lines = [f"- {k}: {v}" for k, v in previous_reasoning.reasoning.items() if v]
         parts = []
         if reasoning_lines:
             parts.append("Per-category reasoning:\n" + "\n".join(reasoning_lines))
         if previous_reasoning.contradictions:
-            parts.append(
-                "Contradictions: " + "; ".join(previous_reasoning.contradictions)
-            )
+            parts.append("Contradictions: " + "; ".join(previous_reasoning.contradictions))
         if previous_reasoning.assessment_summary:
             parts.append(f"Summary: {previous_reasoning.assessment_summary}")
         if parts:
