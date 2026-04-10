@@ -69,10 +69,11 @@ DASHBOARD_CSS = """
 /* Category badges */
 .cat-badge { display: inline-block; padding: 3px 10px; border-radius: 12px;
              font-size: 0.85em; font-weight: 600; }
-.cat-third-party { background: #CCE5FF; color: #004085; }
-.cat-first-party { background: #F8D7DA; color: #721C24; }
-.cat-scam        { background: #FFF3CD; color: #856404; }
-.cat-dispute     { background: #D4EDDA; color: #155724; }
+.cat-third-party  { background: #CCE5FF; color: #004085; }
+.cat-first-party  { background: #F8D7DA; color: #721C24; }
+.cat-scam         { background: #FFF3CD; color: #856404; }
+.cat-dispute      { background: #D4EDDA; color: #155724; }
+.cat-undetermined { background: #E2E3E5; color: #383D41; }
 
 /* Chat bubbles */
 .chat-container { max-height: 600px; overflow-y: auto; padding: 10px;
@@ -138,6 +139,7 @@ def _category_badge(category: str) -> str:
         "FIRST_PARTY_FRAUD": "cat-first-party",
         "SCAM": "cat-scam",
         "DISPUTE": "cat-dispute",
+        "UNABLE_TO_DETERMINE": "cat-undetermined",
     }
     css_class = css_map.get(category.upper() if category else "", "")
     return f'<span class="cat-badge {css_class}">{category}</span>'
@@ -248,6 +250,7 @@ def _build_hypothesis_chart(suggestions: list[dict]) -> plt.Figure | None:
         "FIRST_PARTY_FRAUD": [],
         "SCAM": [],
         "DISPUTE": [],
+        "UNABLE_TO_DETERMINE": [],
     }
 
     for s in suggestions:
@@ -267,6 +270,7 @@ def _build_hypothesis_chart(suggestions: list[dict]) -> plt.Figure | None:
         "FIRST_PARTY_FRAUD": "#D32F2F",
         "SCAM": "#F57C00",
         "DISPUTE": "#388E3C",
+        "UNABLE_TO_DETERMINE": "#97999B",
     }
     for key, vals in scores.items():
         ax.plot(

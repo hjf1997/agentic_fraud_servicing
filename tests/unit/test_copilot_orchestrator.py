@@ -209,6 +209,7 @@ class TestCopilotOrchestratorInit:
             "FIRST_PARTY_FRAUD": 0.0,
             "SCAM": 0.0,
             "DISPUTE": 0.0,
+            "UNABLE_TO_DETERMINE": 0.0,
         }
         assert orch.impersonation_risk == 0.0
         assert orch.evidence_collected == []

@@ -1,22 +1,22 @@
-"""Hypothesis scoring arbitrator for 4-category investigation assessment.
+"""Hypothesis scoring arbitrator for 5-category investigation assessment.
 
 Synthesizes three category specialist outputs (dispute, scam, fraud) into a
-holistic probability distribution across the 4 investigation categories.
+holistic probability distribution across the 5 investigation categories.
 First-party fraud is detected cross-cuttingly by the arbitrator — it has no
-dedicated specialist. Specialists are run externally by the orchestrator.
+dedicated specialist. UNABLE_TO_DETERMINE absorbs probability mass when
+evidence is insufficient. Specialists are run externally by the orchestrator.
 """
 
 from __future__ import annotations
 
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
-
-from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field, field_validator
 
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     SpecialistAssessment,
 )
+from agentic_fraud_servicing.providers.retry import run_with_retry
 
 # --- Output model ---
 
@@ -25,11 +25,12 @@ class HypothesisAssessment(BaseModel):
     """Structured output from the hypothesis scoring arbitrator.
 
     Attributes:
-        scores: Probability distribution across 4 investigation categories.
-            Keys: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE.
-            Values between 0.0 and 1.0, summing to approximately 1.0.
+        scores: Probability distribution across 5 investigation categories.
+            Keys: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE,
+            UNABLE_TO_DETERMINE. Values between 0.0 and 1.0, summing to
+            approximately 1.0.
         reasoning: Per-category explanation of the score assignment.
-            Same 4 keys as scores.
+            Same 5 keys as scores.
         contradictions: Detected contradictions between CM allegations and evidence.
         assessment_summary: Overall assessment of the current situation.
         specialist_assessments: Specialist outputs from this turn, carried
@@ -38,16 +39,18 @@ class HypothesisAssessment(BaseModel):
     """
 
     scores: dict[str, float] = {
-        "THIRD_PARTY_FRAUD": 0.25,
-        "FIRST_PARTY_FRAUD": 0.25,
-        "SCAM": 0.25,
-        "DISPUTE": 0.25,
+        "THIRD_PARTY_FRAUD": 0.20,
+        "FIRST_PARTY_FRAUD": 0.20,
+        "SCAM": 0.20,
+        "DISPUTE": 0.20,
+        "UNABLE_TO_DETERMINE": 0.20,
     }
     reasoning: dict[str, str] = {
         "THIRD_PARTY_FRAUD": "",
         "FIRST_PARTY_FRAUD": "",
         "SCAM": "",
         "DISPUTE": "",
+        "UNABLE_TO_DETERMINE": "",
     }
     contradictions: list[str] = []
     assessment_summary: str = ""
@@ -74,7 +77,7 @@ class HypothesisAssessment(BaseModel):
 HYPOTHESIS_INSTRUCTIONS = """\
 You are a hypothesis scoring arbitrator for AMEX card dispute investigation.
 You synthesize assessments from three category specialists (Dispute, Scam,
-Third-Party Fraud) into a final 4-category probability distribution.
+Third-Party Fraud) into a final 5-category probability distribution.
 
 ## Your Input
 
@@ -91,16 +94,17 @@ You receive the following context each turn:
 3. **Accumulated Allegations** — What the cardmember claims, with detail types
    and extracted entities. Needed for cross-cutting first-party fraud detection.
 4. **Current Hypothesis Scores** — The previous turn's probability distribution
-   across the 4 categories. Use these as a Bayesian prior to update.
+   across the 5 categories. Use these as a Bayesian prior to update.
 5. **Previous Reasoning Trace** — Your own per-category reasoning from the
    last assessment turn. Use this to ground your update: identify what changed
    and explain how it shifts each score.
 
 ## Scoring Rules
 
-1. **Produce a 4-category distribution.** The three specialists cover Dispute,
-   Scam, and Third-Party Fraud. You must also score FIRST_PARTY_FRAUD —
-   this is your unique responsibility as the arbitrator.
+1. **Produce a 5-category distribution.** The three specialists cover Dispute,
+   Scam, and Third-Party Fraud. You must also score FIRST_PARTY_FRAUD and
+   UNABLE_TO_DETERMINE — these are your unique responsibilities as the
+   arbitrator.
 
 2. **Scores should approximate a probability distribution** — they should sum
    to roughly 1.0. Small deviations are acceptable but avoid scores that sum
@@ -123,6 +127,30 @@ You receive the following context each turn:
 
 6. **Repetition is not new evidence.** If the previous reasoning trace already
    accounted for an allegation, restating it is not grounds for score changes.
+
+7. **Score UNABLE_TO_DETERMINE based on evidence sufficiency.** This category
+   absorbs probability mass when evidence is insufficient to distinguish
+   between the four real investigation categories. Assign high
+   UNABLE_TO_DETERMINE when:
+   - It is an early assessment turn and limited evidence has been gathered.
+   - Multiple categories remain plausible and no distinguishing evidence
+     differentiates them (e.g., specialist likelihoods are all moderate
+     and close to each other).
+   - Specialists report significant evidence gaps, particularly for items
+     that can only be collected offline after case opening (e.g., merchant
+     records, delivery proof, device forensics).
+   - The CM's narrative is consistent with multiple categories and critical
+     distinguishing evidence is unavailable.
+
+   Decrease UNABLE_TO_DETERMINE as:
+   - The conversation progresses and specialist evidence gaps are filled.
+   - One or more categories become clearly dominant with supporting evidence.
+   - Distinguishing evidence emerges that separates categories.
+
+   UNABLE_TO_DETERMINE is NOT an investigation outcome. It signals "more
+   information needed" — as the call progresses, probability mass should
+   flow from UNABLE_TO_DETERMINE into the real categories as evidence
+   accumulates.
 
 ## First-Party Fraud Detection (Your Unique Role)
 
@@ -151,12 +179,17 @@ detected by you through cross-specialist analysis. Score it based on:
   dispute, or scam can all turn out to be first-party fraud. Never rule it
   out based on what the CM alleges.
 
+- **Distinguish from UNABLE_TO_DETERMINE**: First-party fraud requires
+  positive evidence of contradictions. If evidence is simply missing (not
+  contradictory), the mass belongs in UNABLE_TO_DETERMINE, not
+  FIRST_PARTY_FRAUD.
+
 ## Output Format
 
 Provide your assessment as structured output with:
-- scores: dict with exactly 4 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD,
-  SCAM, DISPUTE), each a float between 0.0 and 1.0
-- reasoning: dict with the same 4 keys, each a brief explanation (1-3
+- scores: dict with exactly 5 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD,
+  SCAM, DISPUTE, UNABLE_TO_DETERMINE), each a float between 0.0 and 1.0
+- reasoning: dict with the same 5 keys, each a brief explanation (1-3
   sentences) grounded in specialist findings and evidence
 - contradictions: list of detected contradictions between allegations and
   evidence (consolidate from specialist findings + your own analysis)
@@ -223,7 +256,7 @@ async def run_arbitrator(
     """Run the arbitrator to score investigation categories.
 
     Takes pre-computed specialist assessments (run externally by the
-    orchestrator) and synthesizes them into the final 4-category probability
+    orchestrator) and synthesizes them into the final 5-category probability
     distribution.
 
     Args:
@@ -231,7 +264,7 @@ async def run_arbitrator(
             (DISPUTE, SCAM, THIRD_PARTY_FRAUD).
         allegations_summary: Formatted allegations with types and entities.
         auth_summary: Auth assessment text (impersonation risk, risk factors).
-        current_scores: Previous hypothesis scores (4-key dict).
+        current_scores: Previous hypothesis scores (5-key dict).
         model_provider: LLM model provider for inference.
         previous_reasoning: Full HypothesisAssessment from the last successful
             run. Provides the reasoning trace for Bayesian updating.

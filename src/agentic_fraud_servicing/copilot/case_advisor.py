@@ -17,13 +17,12 @@ from typing import Literal
 
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
-
-from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field
 
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     SpecialistAssessment,
 )
+from agentic_fraud_servicing.providers.retry import run_with_retry
 
 # ---------------------------------------------------------------------------
 # Output models
@@ -154,8 +153,8 @@ You receive:
    (eligible/blocked), evidence gaps, policy-grounded reasoning, and policy
    citations. Specialists have already evaluated the evidence against their
    category's policies.
-2. **Hypothesis Scores** — Current 4-category probability distribution
-   (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE).
+2. **Hypothesis Scores** — Current 5-category probability distribution
+   (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE, UNABLE_TO_DETERMINE).
 3. **Recent Conversation** — Recent transcript turns for context.
 4. **Recently Suggested Questions** — For deduplication.
 
@@ -199,15 +198,23 @@ Otherwise, set `information_sufficient = false` and suggest questions.
    (e.g., THIRD_PARTY_FRAUD 0.4 vs SCAM 0.35), ask questions that help
    distinguish between them.
 
-6. **First-party fraud probing**: If the FIRST_PARTY_FRAUD hypothesis is
+6. **High UNABLE_TO_DETERMINE**: When UNABLE_TO_DETERMINE is the leading
+   score, the system lacks enough evidence to distinguish between categories.
+   Prioritize questions that help discriminate: ask about transaction
+   authorization (distinguishes third-party fraud from others), whether
+   anyone else had access to the card (distinguishes first-party fraud),
+   external contacts or manipulation (distinguishes scam), and merchant
+   interaction details (distinguishes dispute).
+
+7. **First-party fraud probing**: If the FIRST_PARTY_FRAUD hypothesis is
    elevated (≥ 0.3), suggest questions that probe for contradictions between
    the cardmember's claims and verifiable facts (e.g., transaction details,
    delivery, device usage) without being accusatory.
 
-7. **NEVER ask the customer to reveal their full card number (PAN) or
+8. **NEVER ask the customer to reveal their full card number (PAN) or
    CVV/CVC.** These are already on file and asking violates PCI-DSS.
 
-8. **Prefer open-ended questions** — avoid yes/no when possible.
+9. **Prefer open-ended questions** — avoid yes/no when possible.
 
 ## Warnings
 

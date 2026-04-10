@@ -76,13 +76,14 @@ class TestHypothesisAssessment:
     """Tests for the HypothesisAssessment Pydantic model."""
 
     def test_defaults(self):
-        """Default scores are uniform 0.25 across all 4 categories."""
+        """Default scores are uniform 0.20 across all 5 categories."""
         assessment = HypothesisAssessment()
         assert assessment.scores == {
-            "THIRD_PARTY_FRAUD": 0.25,
-            "FIRST_PARTY_FRAUD": 0.25,
-            "SCAM": 0.25,
-            "DISPUTE": 0.25,
+            "THIRD_PARTY_FRAUD": 0.20,
+            "FIRST_PARTY_FRAUD": 0.20,
+            "SCAM": 0.20,
+            "DISPUTE": 0.20,
+            "UNABLE_TO_DETERMINE": 0.20,
         }
         assert assessment.contradictions == []
         assert assessment.assessment_summary == ""
@@ -93,15 +94,17 @@ class TestHypothesisAssessment:
         assessment = HypothesisAssessment(
             scores={
                 "THIRD_PARTY_FRAUD": 0.1,
-                "FIRST_PARTY_FRAUD": 0.6,
-                "SCAM": 0.2,
+                "FIRST_PARTY_FRAUD": 0.5,
+                "SCAM": 0.15,
                 "DISPUTE": 0.1,
+                "UNABLE_TO_DETERMINE": 0.15,
             },
             reasoning={
                 "THIRD_PARTY_FRAUD": "Low — auth from enrolled device",
                 "FIRST_PARTY_FRAUD": "High — chip+PIN contradicts claim",
                 "SCAM": "Moderate — some urgency in language",
                 "DISPUTE": "Low — no merchant issue",
+                "UNABLE_TO_DETERMINE": "Some evidence gaps remain",
             },
             contradictions=[
                 "CM claims unauthorized but chip+PIN auth from enrolled device",
@@ -109,29 +112,31 @@ class TestHypothesisAssessment:
             ],
             assessment_summary="Strong indicators of first-party fraud.",
         )
-        assert assessment.scores["FIRST_PARTY_FRAUD"] == 0.6
+        assert assessment.scores["FIRST_PARTY_FRAUD"] == 0.5
         assert len(assessment.contradictions) == 2
         assert "first-party fraud" in assessment.assessment_summary
 
-    def test_scores_dict_has_four_keys(self):
-        """Default scores dict contains exactly the 4 investigation categories."""
+    def test_scores_dict_has_five_keys(self):
+        """Default scores dict contains exactly the 5 investigation categories."""
         assessment = HypothesisAssessment()
         expected_keys = {
             "THIRD_PARTY_FRAUD",
             "FIRST_PARTY_FRAUD",
             "SCAM",
             "DISPUTE",
+            "UNABLE_TO_DETERMINE",
         }
         assert set(assessment.scores.keys()) == expected_keys
 
-    def test_reasoning_dict_has_four_keys(self):
-        """Default reasoning dict contains exactly the 4 investigation categories."""
+    def test_reasoning_dict_has_five_keys(self):
+        """Default reasoning dict contains exactly the 5 investigation categories."""
         assessment = HypothesisAssessment()
         expected_keys = {
             "THIRD_PARTY_FRAUD",
             "FIRST_PARTY_FRAUD",
             "SCAM",
             "DISPUTE",
+            "UNABLE_TO_DETERMINE",
         }
         assert set(assessment.reasoning.keys()) == expected_keys
 
@@ -146,15 +151,17 @@ class TestHypothesisAssessment:
         original = HypothesisAssessment(
             scores={
                 "THIRD_PARTY_FRAUD": 0.1,
-                "FIRST_PARTY_FRAUD": 0.7,
+                "FIRST_PARTY_FRAUD": 0.6,
                 "SCAM": 0.1,
                 "DISPUTE": 0.1,
+                "UNABLE_TO_DETERMINE": 0.1,
             },
             reasoning={
                 "THIRD_PARTY_FRAUD": "Low",
                 "FIRST_PARTY_FRAUD": "High",
                 "SCAM": "Low",
                 "DISPUTE": "Low",
+                "UNABLE_TO_DETERMINE": "Low",
             },
             contradictions=["chip+PIN from enrolled device"],
             assessment_summary="Likely first-party fraud.",
@@ -328,15 +335,17 @@ class TestRunArbitrator:
         return HypothesisAssessment(
             scores={
                 "THIRD_PARTY_FRAUD": 0.1,
-                "FIRST_PARTY_FRAUD": 0.6,
-                "SCAM": 0.2,
+                "FIRST_PARTY_FRAUD": 0.5,
+                "SCAM": 0.15,
                 "DISPUTE": 0.1,
+                "UNABLE_TO_DETERMINE": 0.15,
             },
             reasoning={
                 "THIRD_PARTY_FRAUD": "Low — enrolled device used",
                 "FIRST_PARTY_FRAUD": "High — chip+PIN contradiction",
                 "SCAM": "Moderate — some urgency",
                 "DISPUTE": "Low — no merchant issue",
+                "UNABLE_TO_DETERMINE": "Some evidence gaps remain",
             },
             contradictions=["CM claims unauthorized but chip+PIN auth"],
             assessment_summary="First-party fraud indicators present.",
@@ -359,10 +368,11 @@ class TestRunArbitrator:
     @pytest.fixture
     def default_scores(self):
         return {
-            "THIRD_PARTY_FRAUD": 0.25,
-            "FIRST_PARTY_FRAUD": 0.25,
-            "SCAM": 0.25,
-            "DISPUTE": 0.25,
+            "THIRD_PARTY_FRAUD": 0.20,
+            "FIRST_PARTY_FRAUD": 0.20,
+            "SCAM": 0.20,
+            "DISPUTE": 0.20,
+            "UNABLE_TO_DETERMINE": 0.20,
         }
 
     async def test_returns_hypothesis_assessment(
@@ -386,7 +396,7 @@ class TestRunArbitrator:
             )
 
         assert isinstance(result, HypothesisAssessment)
-        assert result.scores["FIRST_PARTY_FRAUD"] == 0.6
+        assert result.scores["FIRST_PARTY_FRAUD"] == 0.5
 
     async def test_includes_specialist_outputs_in_arbitrator_message(
         self, mock_provider, mock_specialist_outputs, default_scores

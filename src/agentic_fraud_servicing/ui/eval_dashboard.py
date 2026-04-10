@@ -56,10 +56,11 @@ EVAL_CSS = """
 
 .cat-badge { display: inline-block; padding: 3px 10px; border-radius: 12px;
              font-size: 0.85em; font-weight: 600; }
-.cat-third-party { background: #CCE5FF; color: #004085; }
-.cat-first-party { background: #F8D7DA; color: #721C24; }
-.cat-scam        { background: #FFF3CD; color: #856404; }
-.cat-dispute     { background: #D4EDDA; color: #155724; }
+.cat-third-party  { background: #CCE5FF; color: #004085; }
+.cat-first-party  { background: #F8D7DA; color: #721C24; }
+.cat-scam         { background: #FFF3CD; color: #856404; }
+.cat-dispute      { background: #D4EDDA; color: #155724; }
+.cat-undetermined { background: #E2E3E5; color: #383D41; }
 
 .metric-box {
     display: inline-block; text-align: center; padding: 10px 16px;
@@ -98,6 +99,7 @@ def _category_badge(category: str) -> str:
         "FIRST_PARTY_FRAUD": "cat-first-party",
         "SCAM": "cat-scam",
         "DISPUTE": "cat-dispute",
+        "UNABLE_TO_DETERMINE": "cat-undetermined",
     }
     css_class = css_map.get(category.upper() if category else "", "")
     return f'<span class="cat-badge {css_class}">{category}</span>'
@@ -441,7 +443,7 @@ def _build_hypothesis_chart(
 ) -> plt.Figure | None:
     """Build a line chart showing hypothesis score evolution across turns.
 
-    Four colored lines for each InvestigationCategory. Ground truth category
+    Five colored lines for each InvestigationCategory. Ground truth category
     shown as a light horizontal band. Convergence turn marked with a vertical
     dashed line.
     """
@@ -453,6 +455,7 @@ def _build_hypothesis_chart(
         "FIRST_PARTY_FRAUD": "#D32F2F",
         "SCAM": "#F57C00",
         "DISPUTE": "#2E7D32",
+        "UNABLE_TO_DETERMINE": "#97999B",
     }
     categories = list(category_colors.keys())
 

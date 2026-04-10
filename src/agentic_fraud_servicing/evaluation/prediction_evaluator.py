@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
-
-from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel
 
 from agentic_fraud_servicing.evaluation.models import EvaluationRun, PredictionResult
@@ -18,6 +16,7 @@ from agentic_fraud_servicing.models.enums import (
     INVESTIGATION_CATEGORIES_REFERENCE,
     InvestigationCategory,
 )
+from agentic_fraud_servicing.providers.retry import run_with_retry
 
 # Valid category values for fast-path check
 _VALID_CATEGORIES = {c.value for c in InvestigationCategory}
@@ -42,7 +41,7 @@ class OutcomeMapping(BaseModel):
 
 _MAPPING_INSTRUCTIONS = f"""\
 You are a classification specialist. Your task is to map a freeform outcome
-description to exactly one of the 4 investigation categories defined below.
+description to exactly one of the 5 investigation categories defined below.
 
 {INVESTIGATION_CATEGORIES_REFERENCE}
 
@@ -50,8 +49,11 @@ description to exactly one of the 4 investigation categories defined below.
 
 1. Read the outcome text carefully.
 2. Determine which InvestigationCategory best matches the described outcome.
-3. Output the category value as one of: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE.
-4. Provide a brief reasoning (1-2 sentences) for your choice.
+3. Output the category value as one of: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD,
+   SCAM, DISPUTE, UNABLE_TO_DETERMINE.
+4. Use UNABLE_TO_DETERMINE only when the outcome text explicitly indicates the
+   case could not be classified or investigation was inconclusive.
+5. Provide a brief reasoning (1-2 sentences) for your choice.
 
 ## Examples
 

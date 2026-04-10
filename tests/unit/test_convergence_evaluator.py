@@ -3,7 +3,6 @@
 from agentic_fraud_servicing.evaluation.convergence_evaluator import evaluate_convergence
 from agentic_fraud_servicing.evaluation.models import EvaluationRun, TurnMetric
 
-
 _DUMMY_SUGGESTION = {"call_id": "test", "timestamp_ms": 0}
 
 
@@ -41,13 +40,26 @@ class TestConvergesEarly:
         run = _make_run(
             {"investigation_category": "THIRD_PARTY_FRAUD"},
             [
-                {"THIRD_PARTY_FRAUD": 0.6, "FIRST_PARTY_FRAUD": 0.2, "SCAM": 0.1, "DISPUTE": 0.1},
-                {"THIRD_PARTY_FRAUD": 0.7, "FIRST_PARTY_FRAUD": 0.1, "SCAM": 0.1, "DISPUTE": 0.1},
+                {
+                    "THIRD_PARTY_FRAUD": 0.6,
+                    "FIRST_PARTY_FRAUD": 0.2,
+                    "SCAM": 0.1,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.7,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.1,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
                 {
                     "THIRD_PARTY_FRAUD": 0.8,
                     "FIRST_PARTY_FRAUD": 0.1,
                     "SCAM": 0.05,
                     "DISPUTE": 0.05,
+                    "UNABLE_TO_DETERMINE": 0.0,
                 },
             ],
         )
@@ -59,7 +71,15 @@ class TestConvergesEarly:
     def test_turn_scores_recorded(self):
         run = _make_run(
             {"investigation_category": "SCAM"},
-            [{"THIRD_PARTY_FRAUD": 0.1, "FIRST_PARTY_FRAUD": 0.1, "SCAM": 0.7, "DISPUTE": 0.1}],
+            [
+                {
+                    "THIRD_PARTY_FRAUD": 0.1,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.7,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                }
+            ],
         )
         result = evaluate_convergence(run)
         assert len(result.turn_scores) == 1
@@ -73,10 +93,34 @@ class TestConvergesLate:
         run = _make_run(
             {"investigation_category": "FIRST_PARTY_FRAUD"},
             [
-                {"THIRD_PARTY_FRAUD": 0.5, "FIRST_PARTY_FRAUD": 0.2, "SCAM": 0.2, "DISPUTE": 0.1},
-                {"THIRD_PARTY_FRAUD": 0.4, "FIRST_PARTY_FRAUD": 0.3, "SCAM": 0.2, "DISPUTE": 0.1},
-                {"THIRD_PARTY_FRAUD": 0.2, "FIRST_PARTY_FRAUD": 0.5, "SCAM": 0.2, "DISPUTE": 0.1},
-                {"THIRD_PARTY_FRAUD": 0.1, "FIRST_PARTY_FRAUD": 0.6, "SCAM": 0.2, "DISPUTE": 0.1},
+                {
+                    "THIRD_PARTY_FRAUD": 0.5,
+                    "FIRST_PARTY_FRAUD": 0.2,
+                    "SCAM": 0.2,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.4,
+                    "FIRST_PARTY_FRAUD": 0.3,
+                    "SCAM": 0.2,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.2,
+                    "FIRST_PARTY_FRAUD": 0.5,
+                    "SCAM": 0.2,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.1,
+                    "FIRST_PARTY_FRAUD": 0.6,
+                    "SCAM": 0.2,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
             ],
         )
         result = evaluate_convergence(run)
@@ -91,9 +135,27 @@ class TestNeverConverges:
         run = _make_run(
             {"investigation_category": "DISPUTE"},
             [
-                {"THIRD_PARTY_FRAUD": 0.5, "FIRST_PARTY_FRAUD": 0.2, "SCAM": 0.2, "DISPUTE": 0.1},
-                {"THIRD_PARTY_FRAUD": 0.4, "FIRST_PARTY_FRAUD": 0.3, "SCAM": 0.2, "DISPUTE": 0.1},
-                {"THIRD_PARTY_FRAUD": 0.6, "FIRST_PARTY_FRAUD": 0.2, "SCAM": 0.1, "DISPUTE": 0.1},
+                {
+                    "THIRD_PARTY_FRAUD": 0.5,
+                    "FIRST_PARTY_FRAUD": 0.2,
+                    "SCAM": 0.2,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.4,
+                    "FIRST_PARTY_FRAUD": 0.3,
+                    "SCAM": 0.2,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.6,
+                    "FIRST_PARTY_FRAUD": 0.2,
+                    "SCAM": 0.1,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
             ],
         )
         result = evaluate_convergence(run)
@@ -105,9 +167,27 @@ class TestNeverConverges:
         run = _make_run(
             {"investigation_category": "SCAM"},
             [
-                {"THIRD_PARTY_FRAUD": 0.1, "FIRST_PARTY_FRAUD": 0.1, "SCAM": 0.7, "DISPUTE": 0.1},
-                {"THIRD_PARTY_FRAUD": 0.5, "FIRST_PARTY_FRAUD": 0.1, "SCAM": 0.3, "DISPUTE": 0.1},
-                {"THIRD_PARTY_FRAUD": 0.1, "FIRST_PARTY_FRAUD": 0.1, "SCAM": 0.7, "DISPUTE": 0.1},
+                {
+                    "THIRD_PARTY_FRAUD": 0.1,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.7,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.5,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.3,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.1,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.7,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
             ],
         )
         result = evaluate_convergence(run)
@@ -122,8 +202,20 @@ class TestTies:
         run = _make_run(
             {"investigation_category": "DISPUTE"},
             [
-                {"THIRD_PARTY_FRAUD": 0.5, "FIRST_PARTY_FRAUD": 0.5, "SCAM": 0.0, "DISPUTE": 0.0},
-                {"THIRD_PARTY_FRAUD": 0.0, "FIRST_PARTY_FRAUD": 0.0, "SCAM": 0.0, "DISPUTE": 0.5},
+                {
+                    "THIRD_PARTY_FRAUD": 0.5,
+                    "FIRST_PARTY_FRAUD": 0.5,
+                    "SCAM": 0.0,
+                    "DISPUTE": 0.0,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.0,
+                    "FIRST_PARTY_FRAUD": 0.0,
+                    "SCAM": 0.0,
+                    "DISPUTE": 0.5,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                },
             ],
         )
         result = evaluate_convergence(run)
@@ -149,7 +241,15 @@ class TestNoGroundTruth:
     def test_no_category_returns_none(self):
         run = _make_run(
             {},
-            [{"THIRD_PARTY_FRAUD": 0.5, "FIRST_PARTY_FRAUD": 0.2, "SCAM": 0.2, "DISPUTE": 0.1}],
+            [
+                {
+                    "THIRD_PARTY_FRAUD": 0.5,
+                    "FIRST_PARTY_FRAUD": 0.2,
+                    "SCAM": 0.2,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                }
+            ],
         )
         result = evaluate_convergence(run)
         assert result.convergence_turn is None
@@ -163,7 +263,15 @@ class TestSingleTurn:
     def test_single_turn_converges_if_highest(self):
         run = _make_run(
             {"investigation_category": "THIRD_PARTY_FRAUD"},
-            [{"THIRD_PARTY_FRAUD": 0.8, "FIRST_PARTY_FRAUD": 0.1, "SCAM": 0.05, "DISPUTE": 0.05}],
+            [
+                {
+                    "THIRD_PARTY_FRAUD": 0.8,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.05,
+                    "DISPUTE": 0.05,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                }
+            ],
         )
         result = evaluate_convergence(run)
         assert result.convergence_turn == 1
@@ -173,7 +281,74 @@ class TestSingleTurn:
     def test_single_turn_no_convergence_if_not_highest(self):
         run = _make_run(
             {"investigation_category": "DISPUTE"},
-            [{"THIRD_PARTY_FRAUD": 0.8, "FIRST_PARTY_FRAUD": 0.1, "SCAM": 0.05, "DISPUTE": 0.05}],
+            [
+                {
+                    "THIRD_PARTY_FRAUD": 0.8,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.05,
+                    "DISPUTE": 0.05,
+                    "UNABLE_TO_DETERMINE": 0.0,
+                }
+            ],
+        )
+        result = evaluate_convergence(run)
+        assert result.convergence_turn is None
+
+
+class TestUnableToDetermine:
+    """UNABLE_TO_DETERMINE blocks convergence until real category takes over."""
+
+    def test_unable_to_determine_delays_convergence(self):
+        """When UNABLE_TO_DETERMINE is highest early, convergence waits."""
+        run = _make_run(
+            {"investigation_category": "THIRD_PARTY_FRAUD"},
+            [
+                {
+                    "THIRD_PARTY_FRAUD": 0.15,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.1,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.55,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.25,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.1,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.45,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.6,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.1,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.1,
+                },
+            ],
+        )
+        result = evaluate_convergence(run)
+        assert result.convergence_turn == 3
+
+    def test_unable_to_determine_stays_high_no_convergence(self):
+        """If UNABLE_TO_DETERMINE stays highest, no convergence."""
+        run = _make_run(
+            {"investigation_category": "SCAM"},
+            [
+                {
+                    "THIRD_PARTY_FRAUD": 0.1,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.2,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.5,
+                },
+                {
+                    "THIRD_PARTY_FRAUD": 0.1,
+                    "FIRST_PARTY_FRAUD": 0.1,
+                    "SCAM": 0.25,
+                    "DISPUTE": 0.1,
+                    "UNABLE_TO_DETERMINE": 0.45,
+                },
+            ],
         )
         result = evaluate_convergence(run)
         assert result.convergence_turn is None

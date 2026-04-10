@@ -50,8 +50,9 @@ class TestInvestigationCategory:
             InvestigationCategory.FIRST_PARTY_FRAUD,
             InvestigationCategory.SCAM,
             InvestigationCategory.DISPUTE,
+            InvestigationCategory.UNABLE_TO_DETERMINE,
         }
-        assert len(InvestigationCategory) == 4
+        assert len(InvestigationCategory) == 5
 
     def test_string_serialization(self):
         assert InvestigationCategory.THIRD_PARTY_FRAUD == "THIRD_PARTY_FRAUD"

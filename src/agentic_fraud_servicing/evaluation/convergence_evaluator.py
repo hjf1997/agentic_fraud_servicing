@@ -9,7 +9,13 @@ from __future__ import annotations
 from agentic_fraud_servicing.evaluation.models import ConvergenceResult, EvaluationRun
 
 # The four hypothesis score keys in standard order (used for tie-breaking)
-_CATEGORIES = ["DISPUTE", "FIRST_PARTY_FRAUD", "SCAM", "THIRD_PARTY_FRAUD"]
+_CATEGORIES = [
+    "DISPUTE",
+    "FIRST_PARTY_FRAUD",
+    "SCAM",
+    "THIRD_PARTY_FRAUD",
+    "UNABLE_TO_DETERMINE",
+]
 
 
 def _highest_category(scores: dict[str, float]) -> str | None:

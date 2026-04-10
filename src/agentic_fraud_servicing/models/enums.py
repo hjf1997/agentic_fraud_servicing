@@ -29,25 +29,32 @@ class AllegationType(str, Enum):
 
 
 class InvestigationCategory(str, Enum):
-    """Investigation conclusion category (4 values).
+    """Investigation conclusion category (5 values).
 
     Represents what the system concludes after analyzing evidence. Any
     allegation type can map to any investigation category — for example,
     a CM claiming FRAUD may turn out to be FIRST_PARTY_FRAUD.
+
+    UNABLE_TO_DETERMINE is a live-call scoring state (not a final outcome)
+    that absorbs probability mass when evidence is insufficient to
+    distinguish between categories.
     """
 
     THIRD_PARTY_FRAUD = "THIRD_PARTY_FRAUD"
     FIRST_PARTY_FRAUD = "FIRST_PARTY_FRAUD"
     SCAM = "SCAM"
     DISPUTE = "DISPUTE"
+    UNABLE_TO_DETERMINE = "UNABLE_TO_DETERMINE"
 
 
 INVESTIGATION_CATEGORIES_REFERENCE = """
 ## Investigation Category Definitions
 
-The system uses four investigation categories to classify what actually happened,
+The system uses five investigation categories to classify what actually happened,
 independent of what the cardmember (CM) alleges. Any allegation type (FRAUD,
-DISPUTE, SCAM) can resolve to any of these four categories.
+DISPUTE, SCAM) can resolve to any of the first four categories. The fifth
+category (UNABLE_TO_DETERMINE) is a live-call scoring state used when evidence
+is insufficient.
 
 ### 1. Third-Party Fraud (THIRD_PARTY_FRAUD)
 A transaction made without the cardmember's knowledge or permission by an
@@ -123,6 +130,30 @@ merchant's performance, billing, or service — not about fraud or deception.
   delivery, merchant refused legitimate refund request.
 - Investigation question: "Did the merchant fail to deliver what was promised,
   or is there a legitimate billing error?"
+
+### 5. Unable to Determine (UNABLE_TO_DETERMINE)
+A scoring state used during the live call when currently available evidence is
+insufficient to distinguish between investigation categories. This is NOT an
+investigation outcome — it signals that more information is needed before the
+system can meaningfully assign probability to the four real categories.
+- Authorization: Unknown or ambiguous based on current evidence.
+- Fraud actor: Cannot yet be determined.
+- CM role: Cannot yet be classified.
+- Evidence focus: This category absorbs probability mass when specialists
+  report significant evidence gaps, when likelihood scores are close across
+  categories, or when critical distinguishing evidence (device forensics,
+  merchant records, transaction authentication details) is unavailable.
+- Typical scenarios: Early in a call before sufficient evidence has been
+  gathered, when the CM's narrative is consistent with multiple categories,
+  when specialists report low confidence across the board, when critical
+  offline evidence (merchant records, delivery proof) is needed to distinguish
+  categories.
+- Investigation question: "Do we have enough evidence to meaningfully
+  distinguish between investigation categories?"
+- IMPORTANT: This is a LIVE-CALL scoring state only. The post-call
+  investigator should NEVER use this as a final determination. If
+  UNABLE_TO_DETERMINE remains high at call end, it indicates the case needs
+  additional offline investigation before classification.
 """.strip()
 
 
