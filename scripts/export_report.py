@@ -76,6 +76,7 @@ def _render_hypothesis_chart_base64(suggestions: list[dict]) -> str:
         "FIRST_PARTY_FRAUD": [],
         "SCAM": [],
         "DISPUTE": [],
+        "UNABLE_TO_DETERMINE": [],
     }
 
     for s in suggestions:
@@ -94,6 +95,7 @@ def _render_hypothesis_chart_base64(suggestions: list[dict]) -> str:
         "FIRST_PARTY_FRAUD": "#D32F2F",
         "SCAM": "#F57C00",
         "DISPUTE": "#388E3C",
+        "UNABLE_TO_DETERMINE": "#97999B",
     }
 
     fig, ax = plt.subplots(figsize=(8, 3.5))

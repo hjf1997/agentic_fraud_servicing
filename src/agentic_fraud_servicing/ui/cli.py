@@ -48,6 +48,9 @@ def _format_suggestion_text(suggestion) -> str:
     if suggestion.hypothesis_scores:
         scores = ", ".join(f"{k}: {v:.2f}" for k, v in suggestion.hypothesis_scores.items())
         lines.append(f"Hypothesis Scores: {scores}")
+    if suggestion.specialist_likelihoods:
+        specs = ", ".join(f"{k}: {v:.2f}" for k, v in suggestion.specialist_likelihoods.items())
+        lines.append(f"Specialist Likelihoods: {specs}")
     if suggestion.suggested_questions:
         lines.append("Suggested Questions:")
         for q in suggestion.suggested_questions:
@@ -261,7 +264,8 @@ async def cmd_evaluate(args: argparse.Namespace) -> None:
     # Load allegations from evidence store
     all_nodes = gateway.evidence_store.get_nodes_by_case(scenario.case_id)
     allegation_nodes = [
-        n for n in all_nodes
+        n
+        for n in all_nodes
         if n.get("source_type") == "ALLEGATION" or n.get("node_type") == "ALLEGATION_STATEMENT"
     ]
 
@@ -289,15 +293,17 @@ async def cmd_evaluate(args: argparse.Namespace) -> None:
             ]
             allegations_assigned = True
 
-        turn_metrics.append(TurnMetric(
-            turn_number=i,
-            speaker=event.speaker.value,
-            text=event.text,
-            latency_ms=latency_ms,
-            copilot_suggestion=suggestion,
-            hypothesis_scores=hypothesis_scores,
-            allegations_extracted=allegations_extracted,
-        ))
+        turn_metrics.append(
+            TurnMetric(
+                turn_number=i,
+                speaker=event.speaker.value,
+                text=event.text,
+                latency_ms=latency_ms,
+                copilot_suggestion=suggestion,
+                hypothesis_scores=hypothesis_scores,
+                allegations_extracted=allegations_extracted,
+            )
+        )
 
     # Load ground truth
     ground_truth: dict = {}
@@ -372,7 +378,9 @@ def build_parser() -> argparse.ArgumentParser:
     ev = subparsers.add_parser("evaluate", help="Evaluate simulation results for a scenario")
     ev.add_argument("-s", "--scenario", required=True, help="Scenario name to evaluate")
     ev.add_argument("-t", "--transcript", default=None, help="Override transcript file path")
-    ev.add_argument("-d", "--db-dir", default=None, help="Simulation data directory with SQLite DBs")
+    ev.add_argument(
+        "-d", "--db-dir", default=None, help="Simulation data directory with SQLite DBs"
+    )
     ev.add_argument(
         "-o", "--output", choices=["json", "text"], default="json", help="Output format"
     )

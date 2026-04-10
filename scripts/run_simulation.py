@@ -134,13 +134,13 @@ def _format_copilot_context(suggestion: CopilotSuggestion) -> str:
     """Format a CopilotSuggestion as a readable text block for the CCP agent."""
     lines = []
     scores = suggestion.hypothesis_scores
-    lines.append(
-        f"Hypothesis scores: "
-        f"THIRD_PARTY_FRAUD={scores.get('THIRD_PARTY_FRAUD', 0):.2f}, "
-        f"FIRST_PARTY_FRAUD={scores.get('FIRST_PARTY_FRAUD', 0):.2f}, "
-        f"SCAM={scores.get('SCAM', 0):.2f}, "
-        f"DISPUTE={scores.get('DISPUTE', 0):.2f}"
-    )
+    scores_text = ", ".join(f"{k}={v:.2f}" for k, v in scores.items())
+    lines.append(f"Hypothesis scores: {scores_text}")
+    if suggestion.specialist_likelihoods:
+        specs_text = ", ".join(
+            f"{k}={v:.2f}" for k, v in suggestion.specialist_likelihoods.items()
+        )
+        lines.append(f"Specialist likelihoods: {specs_text}")
     lines.append(f"Impersonation risk: {suggestion.impersonation_risk:.2f}")
     if suggestion.risk_flags:
         lines.append(f"Risk flags: {'; '.join(suggestion.risk_flags[:5])}")
@@ -175,14 +175,16 @@ def _print_turn(turn: int, speaker: str, text: str) -> None:
 def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
     """Print full copilot suggestions after each turn."""
     scores = suggestion.hypothesis_scores
+    scores_parts = " | ".join(f"{k}={v:.2f}" for k, v in scores.items())
     print(
-        f"  {DIM}Copilot Scores: "
-        f"3P_FRAUD={scores.get('THIRD_PARTY_FRAUD', 0):.2f} | "
-        f"1P_FRAUD={scores.get('FIRST_PARTY_FRAUD', 0):.2f} | "
-        f"SCAM={scores.get('SCAM', 0):.2f} | "
-        f"DISPUTE={scores.get('DISPUTE', 0):.2f} | "
+        f"  {DIM}Hypothesis: {scores_parts} | "
         f"Impersonation={suggestion.impersonation_risk:.2f}{RESET}"
     )
+    if suggestion.specialist_likelihoods:
+        specs_parts = " | ".join(
+            f"{k}={v:.2f}" for k, v in suggestion.specialist_likelihoods.items()
+        )
+        print(f"  {DIM}Specialists: {specs_parts}{RESET}")
     if suggestion.suggested_questions:
         print(f"  {CYAN}Suggested Questions:{RESET}")
         for q in suggestion.suggested_questions[:3]:
@@ -544,9 +546,7 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
         # -- Mode 1: Replay existing transcript --
         _print_header("Phase 2: Copilot — Transcript Replay")
         print(f"  {DIM}Replaying: {transcript_path}{RESET}")
-        last_suggestion = await _phase2_replay(
-            transcript_path, copilot, scenario, gateway
-        )
+        last_suggestion = await _phase2_replay(transcript_path, copilot, scenario, gateway)
     else:
         # -- Mode 2: Generate conversation via LLM --
         _print_header("Phase 2: Copilot — Live Call Simulation via Bedrock")
@@ -590,7 +590,9 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
             history_text = "\n".join(f"{spk}: {txt}" for spk, txt in conversation_history)
             try:
                 t0 = time.perf_counter()
-                cm_text = await generate_cm_turn(scenario_cm_agent, history_text, simulator_provider)
+                cm_text = await generate_cm_turn(
+                    scenario_cm_agent, history_text, simulator_provider
+                )
                 cm_dur = (time.perf_counter() - t0) * 1000
             except Exception as exc:
                 print(f"\n{RED}CM generation failed on turn {turn}: {exc}{RESET}")
@@ -655,7 +657,11 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
                     if _sys_suggestion is not None:
                         last_suggestion = _sys_suggestion
 
-            if turn == 10 and not scenario.inject_evidence_early and scenario.system_event_evidence:
+            if (
+                turn == 10
+                and not scenario.inject_evidence_early
+                and scenario.system_event_evidence
+            ):
                 turn, _sys_suggestion = await _inject_system_event(
                     turn,
                     scenario.system_event_evidence,
