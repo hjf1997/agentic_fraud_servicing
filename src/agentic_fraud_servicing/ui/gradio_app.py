@@ -37,9 +37,11 @@ async def process_transcript(transcript_json: str, db_dir: str) -> list[dict]:
         orchestrator = CopilotOrchestrator(gateway, provider)
 
         suggestions = []
-        for event in events:
-            suggestion = await orchestrator.process_event(event)
-            suggestions.append(suggestion.model_dump(mode="json"))
+        total = len(events)
+        for i, event in enumerate(events, 1):
+            suggestion = await orchestrator.process_event(event, is_last=(i == total))
+            if suggestion is not None:
+                suggestions.append(suggestion.model_dump(mode="json"))
         return suggestions
     except Exception as exc:
         return [{"error": str(exc)}]

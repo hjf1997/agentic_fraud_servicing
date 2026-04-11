@@ -115,13 +115,15 @@ async def cmd_simulate(args: argparse.Namespace) -> None:
     provider = create_provider()
     orchestrator = CopilotOrchestrator(gateway, provider)
 
-    for event in events:
-        suggestion = await orchestrator.process_event(event)
-        if args.output == "json":
-            print(format_suggestion_json(suggestion))
-        else:
-            print(_format_suggestion_text(suggestion))
-        print()
+    total = len(events)
+    for i, event in enumerate(events, 1):
+        suggestion = await orchestrator.process_event(event, is_last=(i == total))
+        if suggestion is not None:
+            if args.output == "json":
+                print(format_suggestion_json(suggestion))
+            else:
+                print(_format_suggestion_text(suggestion))
+            print()
 
 
 async def cmd_investigate(args: argparse.Namespace) -> None:

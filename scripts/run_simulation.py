@@ -604,7 +604,8 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
             t0 = time.perf_counter()
             raw_event = _make_event(scenario.call_id, turn, "CARDMEMBER", cm_text)
             event = parse_transcript_event(raw_event)
-            suggestion = await copilot.process_event(event)
+            is_last_turn = turn >= scenario.max_turns
+            suggestion = await copilot.process_event(event, is_last=is_last_turn)
             copilot_dur = (time.perf_counter() - t0) * 1000
 
             # Persist CM turn transcript
