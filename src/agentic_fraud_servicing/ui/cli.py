@@ -115,9 +115,15 @@ async def cmd_simulate(args: argparse.Namespace) -> None:
     provider = create_provider()
     orchestrator = CopilotOrchestrator(gateway, provider)
 
-    total = len(events)
+    # Find the last CARDMEMBER event — is_last must target CM events
+    # because non-CM events return None before is_last is checked.
+    last_cm_idx = 0
+    for idx, ev in enumerate(events, 1):
+        if ev.speaker == "CARDMEMBER":
+            last_cm_idx = idx
+
     for i, event in enumerate(events, 1):
-        suggestion = await orchestrator.process_event(event, is_last=(i == total))
+        suggestion = await orchestrator.process_event(event, is_last=(i == last_cm_idx))
         if suggestion is not None:
             if args.output == "json":
                 print(format_suggestion_json(suggestion))

@@ -59,6 +59,7 @@ from agentic_fraud_servicing.models.enums import (  # noqa: E402
     AllegationDetailType,
     EvidenceEdgeType,
     EvidenceSourceType,
+    SpeakerType,
 )
 from agentic_fraud_servicing.models.evidence import AllegationStatement, EvidenceEdge  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
@@ -422,13 +423,19 @@ async def _phase2_replay(
     events = load_transcript_file(transcript_path)
     print(f"  Loaded {len(events)} events from {transcript_path}")
 
+    # Find the last CARDMEMBER event — is_last must target CM events
+    # because non-CM events return None before is_last is checked.
+    last_cm_idx = 0
+    for idx, ev in enumerate(events, 1):
+        if ev.speaker == SpeakerType.CARDMEMBER:
+            last_cm_idx = idx
+
     last_suggestion = None
-    total = len(events)
     for i, event in enumerate(events, 1):
         _print_turn(i, event.speaker.value, event.text)
 
         t0 = time.perf_counter()
-        suggestion = await copilot.process_event(event, is_last=(i == total))
+        suggestion = await copilot.process_event(event, is_last=(i == last_cm_idx))
         copilot_dur = (time.perf_counter() - t0) * 1000
 
         _persist_trace(
@@ -604,8 +611,11 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
             t0 = time.perf_counter()
             raw_event = _make_event(scenario.call_id, turn, "CARDMEMBER", cm_text)
             event = parse_transcript_event(raw_event)
-            is_last_turn = turn >= scenario.max_turns
-            suggestion = await copilot.process_event(event, is_last=is_last_turn)
+            # is_last must target the last CM event. After this CM turn,
+            # a CCP turn follows (turn+1), then the loop checks turn < max_turns.
+            # So this is the last CM turn when the CCP turn would end the loop.
+            is_last_cm = turn + 1 >= scenario.max_turns
+            suggestion = await copilot.process_event(event, is_last=is_last_cm)
             copilot_dur = (time.perf_counter() - t0) * 1000
 
             # Persist CM turn transcript
@@ -715,9 +725,7 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
             )
 
     # -- Final copilot state --
-    specialist_likelihoods = (
-        last_suggestion.specialist_likelihoods if last_suggestion else {}
-    )
+    specialist_likelihoods = last_suggestion.specialist_likelihoods if last_suggestion else {}
     print(f"\n{BOLD}Final Copilot State:{RESET}")
     print(f"  Hypothesis scores: {json.dumps(copilot.hypothesis_scores, indent=2)}")
     if specialist_likelihoods:

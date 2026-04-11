@@ -36,10 +36,16 @@ async def process_transcript(transcript_json: str, db_dir: str) -> list[dict]:
         provider = create_provider()
         orchestrator = CopilotOrchestrator(gateway, provider)
 
+        # Find the last CARDMEMBER event — is_last must target CM events
+        # because non-CM events return None before is_last is checked.
+        last_cm_idx = 0
+        for idx, ev in enumerate(events, 1):
+            if ev.speaker == "CARDMEMBER":
+                last_cm_idx = idx
+
         suggestions = []
-        total = len(events)
         for i, event in enumerate(events, 1):
-            suggestion = await orchestrator.process_event(event, is_last=(i == total))
+            suggestion = await orchestrator.process_event(event, is_last=(i == last_cm_idx))
             if suggestion is not None:
                 suggestions.append(suggestion.model_dump(mode="json"))
         return suggestions
