@@ -514,9 +514,38 @@ def _build_copilot_final_html(
     spec_section = ""
     if spec_items:
         spec_section = (
-            f'<p><strong>Specialist Likelihoods:</strong></p>'
+            f"<p><strong>Specialist Likelihoods:</strong></p>"
             f'<ul style="margin:4px 0;">{spec_items}</ul>'
         )
+
+    # Build final probing questions list from last suggestion
+    probing_section = ""
+    if suggestions:
+        last_sug = suggestions[-1].get("suggestion", {})
+        probing_qs = last_sug.get("probing_questions", [])
+        if probing_qs:
+            pq_items = ""
+            for pq in probing_qs:
+                status = pq.get("status", "pending")
+                badge_class = {
+                    "pending": "elig-incomplete",
+                    "answered": "elig-eligible",
+                    "invalidated": "elig-blocked",
+                }.get(status, "elig-incomplete")
+                target = pq.get("target_category", "")
+                target_str = (
+                    f' <span style="color:#666; font-size:0.85em;">[{target}]</span>'
+                    if target
+                    else ""
+                )
+                pq_items += (
+                    f'<li><span class="elig-badge {badge_class}">{status}</span>'
+                    f"{target_str} {pq.get('text', '')}</li>"
+                )
+            probing_section = (
+                f"<p><strong>Probing Questions:</strong></p>"
+                f'<ul style="margin:4px 0;">{pq_items}</ul>'
+            )
 
     return f"""<div class="card">
       <h4 style="color:{AMEX_NAVY}; margin-top:0;">Final Copilot State</h4>
@@ -524,6 +553,7 @@ def _build_copilot_final_html(
       <p><strong>Hypothesis Scores:</strong></p>
       <ul style="margin:4px 0;">{score_items}</ul>
       {spec_section}
+      {probing_section}
       {elig_html}
       {advisory_html}
     </div>"""
@@ -538,14 +568,39 @@ def _build_copilot_turns_html(suggestions: list[dict]) -> str:
     for s in suggestions:
         turn = s.get("turn", "?")
         sug = s.get("suggestion", {})
-        questions = sug.get("suggested_questions", [])
         risk_flags = sug.get("risk_flags", [])
         summary = sug.get("running_summary", "")
         safety = sug.get("safety_guidance", "")
         case_elig = sug.get("case_eligibility", [])
         advisory = sug.get("case_advisory_summary", "")
 
-        q_list = "".join(f"<li>{q}</li>" for q in questions) if questions else "<li>None</li>"
+        # Build probing question list with status badges
+        probing_qs = sug.get("probing_questions", [])
+        if probing_qs:
+            pq_items = ""
+            for pq in probing_qs:
+                status = pq.get("status", "pending")
+                badge_class = {
+                    "pending": "elig-incomplete",
+                    "answered": "elig-eligible",
+                    "invalidated": "elig-blocked",
+                }.get(status, "elig-incomplete")
+                target = pq.get("target_category", "")
+                target_str = (
+                    f' <span style="color:#666; font-size:0.85em;">[{target}]</span>'
+                    if target
+                    else ""
+                )
+                pq_items += (
+                    f'<li><span class="elig-badge {badge_class}">{status}</span>'
+                    f"{target_str} {pq.get('text', '')}</li>"
+                )
+            q_html = f"<ul>{pq_items}</ul>"
+        else:
+            questions = sug.get("suggested_questions", [])
+            q_list = "".join(f"<li>{q}</li>" for q in questions) if questions else "<li>None</li>"
+            q_html = f"<ul>{q_list}</ul>"
+
         r_list = "".join(f"<li>{r}</li>" for r in risk_flags) if risk_flags else "<li>None</li>"
 
         # Build eligibility badges for this turn
@@ -570,7 +625,7 @@ def _build_copilot_turns_html(suggestions: list[dict]) -> str:
           <div class="copilot-detail">
             <dl>
               {elig_section}
-              <dt>Suggested Questions</dt><dd><ul>{q_list}</ul></dd>
+              <dt>Probing Questions</dt><dd>{q_html}</dd>
               <dt>Risk Flags</dt><dd><ul>{r_list}</ul></dd>
               <dt>Running Summary</dt><dd>{summary or "N/A"}</dd>
               <dt>Safety Guidance</dt><dd>{safety or "N/A"}</dd>

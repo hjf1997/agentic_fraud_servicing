@@ -145,9 +145,15 @@ def _format_copilot_context(suggestion: CopilotSuggestion) -> str:
     lines.append(f"Impersonation risk: {suggestion.impersonation_risk:.2f}")
     if suggestion.risk_flags:
         lines.append(f"Risk flags: {'; '.join(suggestion.risk_flags[:5])}")
-    if suggestion.suggested_questions:
+    # Show pending probing questions (what CCP should ask)
+    pending_qs = (
+        [pq["text"] for pq in suggestion.probing_questions if pq.get("status") == "pending"]
+        if suggestion.probing_questions
+        else suggestion.suggested_questions
+    )
+    if pending_qs:
         lines.append("Suggested questions:")
-        for q in suggestion.suggested_questions[:3]:
+        for q in pending_qs[:3]:
             lines.append(f"  - {q}")
     if suggestion.running_summary:
         lines.append(f"Summary: {suggestion.running_summary}")
@@ -186,7 +192,20 @@ def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
             f"{k}={v:.2f}" for k, v in suggestion.specialist_likelihoods.items()
         )
         print(f"  {DIM}Specialists: {specs_parts}{RESET}")
-    if suggestion.suggested_questions:
+    if suggestion.probing_questions:
+        print(f"  {CYAN}Probing Questions:{RESET}")
+        for pq in suggestion.probing_questions:
+            status = pq.get("status", "?")
+            if status == "answered":
+                color = GREEN
+            elif status == "invalidated":
+                color = RED
+            else:
+                color = CYAN
+            target = pq.get("target_category", "")
+            target_str = f" [{target}]" if target else ""
+            print(f"    {color}[{status}]{RESET}{target_str} {pq['text']}")
+    elif suggestion.suggested_questions:
         print(f"  {CYAN}Suggested Questions:{RESET}")
         for q in suggestion.suggested_questions[:3]:
             print(f"    - {q}")

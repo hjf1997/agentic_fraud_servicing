@@ -29,8 +29,10 @@ flowchart TD
 
     StateUpdate --> Phase2a
 
-    subgraph Phase2a["Phase 2a: Specialist Panel"]
+    subgraph Phase2a["Phase 2a: Parallel — asyncio.gather()"]
+        direction LR
         Specs["run_specialists()<br/>─────────────<br/>3 parallel specialists:<br/>Dispute · Scam · Fraud<br/>Each: likelihood, eligibility,<br/>evidence_gaps, policy_citations"]
+        QValidator["Question Validator<br/>─────────────<br/>Validate pending<br/>probing questions<br/>against new turns<br/>(skipped if none pending)"]
     end
 
     Phase2a --> Phase2b
@@ -38,10 +40,10 @@ flowchart TD
     subgraph Phase2b["Phase 2b: Parallel — asyncio.gather()"]
         direction LR
         Arb["Arbitrator Agent<br/>─────────────<br/>Bayesian scoring:<br/>THIRD_PARTY_FRAUD<br/>FIRST_PARTY_FRAUD<br/>SCAM | DISPUTE"]
-        CaseAdv["Case Advisor<br/>─────────────<br/>Question planner<br/>consuming specialist<br/>evidence gaps<br/>+ 0-3 questions<br/>+ stopping signal"]
+        CaseAdv["Case Advisor<br/>─────────────<br/>Question planner<br/>consuming specialist<br/>evidence gaps<br/>+ validated question list<br/>+ 0-3 NEW questions<br/>+ stopping signal"]
     end
 
-    Phase2b --> Output["CopilotSuggestion<br/>─────────────<br/>suggested_questions<br/>risk_flags<br/>hypothesis_scores<br/>impersonation_risk<br/>case_eligibility<br/>information_sufficient<br/>running_summary<br/>safety_guidance<br/>retrieved_facts"]
+    Phase2b --> Output["CopilotSuggestion<br/>─────────────<br/>suggested_questions<br/>probing_questions<br/>risk_flags<br/>hypothesis_scores<br/>impersonation_risk<br/>case_eligibility<br/>information_sufficient<br/>running_summary<br/>safety_guidance<br/>retrieved_facts"]
 
     Auth -.- AuthNote["Turns 1-3: always<br/>Turn 4+: only if risk ≥ 0.4"]
     Retrieval -.- RetrNote["Runs once per session<br/>(cached thereafter)"]
@@ -60,7 +62,7 @@ Only **CARDMEMBER** events trigger the agent pipeline, and only on **assessment 
 For assessment turns the pipeline is:
 
 1. **Phase 1 (parallel)**: Triage + Auth (conditional) + Retrieval
-2. **Phase 2a**: Specialist Panel (3 parallel specialists: Dispute, Scam, Fraud)
+2. **Phase 2a (parallel)**: Specialist Panel (3 parallel specialists) + Question Validator (validates pending probing questions; skipped if none pending)
 3. **Phase 2b (parallel)**: Arbitrator + Case Advisor — or Arbitrator only on turns 1-3
 
 ---
@@ -184,6 +186,31 @@ Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party
 
 ---
 
+### 4b. Question Validator (parallel with Specialist Panel)
+
+**Role**: Validate pending probing questions against new conversation turns. Determines whether each pending question has been answered, invalidated, or remains pending.
+
+**Condition**: Skipped entirely when there are no pending probing questions (no LLM call).
+
+| Direction | Field | Type | Description |
+|-----------|-------|------|-------------|
+| **INPUT** | `pending_questions` | `list[ProbingQuestion]` | Questions with status="pending" from the probing list |
+| **INPUT** | `new_turns` | `list[(speaker, text)]` | Transcript turns since questions were last evaluated |
+| **INPUT** | `hypothesis_scores` | `dict[str, float]` | Current 5-category scores (for invalidation checks) |
+| **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
+
+| Direction | Field | Type | Description |
+|-----------|-------|------|-------------|
+| **OUTPUT** | `updates` | `list[QuestionUpdate]` | One per pending question: new_status + reason |
+| | `.question_text` | `str` | Original question text (for matching) |
+| | `.new_status` | `str` | `"pending"` \| `"answered"` \| `"invalidated"` |
+| | `.reason` | `str` | Why status changed (empty when still pending) |
+
+**Side effects**:
+- Updates `orchestrator._probing_questions` statuses in place (sets `turn_resolved` to current turn)
+
+---
+
 ## Phase 2b — Arbitrator + Case Advisor (parallel on turn 4+)
 
 ### 5. Arbitrator Agent
@@ -223,7 +250,7 @@ Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party
 | **INPUT** | `specialist_assessments` | `dict[str, SpecialistAssessment]` | Outputs from the specialist panel (eligibility, evidence gaps, policy citations) |
 | **INPUT** | `hypothesis_scores` | `dict[str, float]` | Previous turn's scores (Bayesian prior) |
 | **INPUT** | `conversation_window` | `list[(speaker, text)]` | Assessment-based conversation window (context + new turns) |
-| **INPUT** | `recent_questions` | `list[str] \| None` | Previously suggested questions (last 3 turns, flattened) for dedup |
+| **INPUT** | `probing_questions` | `list[ProbingQuestion] \| None` | Full probing question list with lifecycle statuses (pending/answered/invalidated) |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
 
 | Direction | Field | Type | Description |
@@ -235,16 +262,17 @@ Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party
 | | `.blockers` | `list[str]` | Blocking reasons from specialist reasoning (when blocked) |
 | | `.policy_citations` | `list[str]` | Specific policy text cited by specialists |
 | **OUTPUT** | `general_warnings` | `list[str]` | Cross-cutting warnings (escalation triggers, etc.) |
-| **OUTPUT** | `questions` | `list[str]` | 0-3 suggested next-best questions (empty when sufficient) |
+| **OUTPUT** | `questions` | `list[str]` | 0-3 NEW suggested questions (empty when sufficient) |
+| **OUTPUT** | `question_targets` | `list[str]` | Parallel list — target investigation category per question |
 | **OUTPUT** | `rationale` | `list[str]` | Parallel list — why each question matters |
 | **OUTPUT** | `priority_field` | `str` | Most important evidence gap targeted, or "" when sufficient |
 | **OUTPUT** | `information_sufficient` | `bool` | `True` when leading hypothesis case type is eligible or all blocked |
 | **OUTPUT** | `summary` | `str` | 2-4 sentence eligibility landscape + next steps |
 
-**Stopping condition**: When the leading hypothesis case type is `eligible` or all types are `blocked` for non-resolvable reasons, `information_sufficient` is set to `True` and `questions` is empty. This signals to the CCP that enough information has been gathered to proceed.
+**Stopping condition**: When all probing questions are answered or invalidated AND no new questions are needed, OR the leading hypothesis case type is `eligible` or all types are `blocked` for non-resolvable reasons, `information_sufficient` is set to `True` and `questions` is empty. This signals to the CCP that enough information has been gathered to proceed.
 
 **Side effects**:
-- Questions tracked in `orchestrator._recent_suggestions` (rolling window of last 3 turns for dedup)
+- New questions appended to `orchestrator._probing_questions` as `ProbingQuestion` entries with status="pending", turn_suggested, and target_category
 
 ---
 
@@ -256,7 +284,8 @@ All agent results are assembled into a single `CopilotSuggestion`:
 |-------|------|--------|
 | `call_id` | `str` | TranscriptEvent |
 | `timestamp_ms` | `int` | TranscriptEvent |
-| `suggested_questions` | `list[str]` | Case Advisor |
+| `suggested_questions` | `list[str]` | All currently pending probing questions |
+| `probing_questions` | `list[dict]` | Full question list snapshot with lifecycle statuses |
 | `risk_flags` | `list[str]` | Auth Agent + all agent error flags |
 | `retrieved_facts` | `list[str]` | Retrieval Agent summary |
 | `running_summary` | `str` | Accumulated allegations summary |
@@ -276,13 +305,13 @@ Triage --> accumulated_allegations --+
                                      |
 Retrieval --> transactions ----------+-> Specialists --+--> Arbitrator --> hypothesis_scores
            |  auth_events -----------+   (Dispute,     |
-           +- customer_profile ------+    Scam,        +--> Case Advisor
-                  |                       Fraud)            (questions + stopping signal)
-                  |                          |
-                  +-> Auth Agent             +-- eligibility, evidence_gaps,
-                       |                        policy_citations per category
-                       +--> impersonation_risk
-                       +--> risk_flags
+           +- customer_profile ------+    Scam,    +---+--> Case Advisor
+                  |                       Fraud)   |        (validated question list
+                  |                          |     |         + NEW questions + stopping)
+                  +-> Auth Agent             |     |
+                       |                     |     +-- Question Validator
+                       +--> impersonation_risk     (pending questions + new turns
+                       +--> risk_flags              --> answered/invalidated/pending)
                        +--> Arbitrator (auth_summary)
 ```
 
@@ -291,14 +320,14 @@ Retrieval --> transactions ----------+-> Specialists --+--> Arbitrator --> hypot
 ## Key Design Points
 
 - **Hub-and-spoke**: The orchestrator explicitly controls which agents run and when. No free handoffs.
-- **6 agents in 3 phases**: Triage, Auth, Retrieval (Phase 1) → 3 category Specialists (Phase 2a) → Arbitrator + Case Advisor (Phase 2b).
+- **7 agents in 3 phases**: Triage, Auth, Retrieval (Phase 1) → 3 category Specialists + Question Validator (Phase 2a) → Arbitrator + Case Advisor (Phase 2b).
 - **Specialist panel as shared resource**: Three category specialists (Dispute, Scam, Third-Party Fraud) run once in Phase 2a. Their outputs feed both the Arbitrator (for Bayesian scoring) and the Case Advisor (for question generation), eliminating redundant policy evaluation.
 - **Specialist eligibility**: Each specialist outputs `eligible` or `blocked` plus `evidence_gaps` and `policy_citations`. The Case Advisor maps these directly to `CaseTypeAssessment` objects — no separate eligibility evaluation needed.
 - **Conditional auth**: Auth agent is skipped after turn 3 if impersonation risk drops below 0.4, saving an LLM call.
 - **Retrieval with cache invalidation**: Retrieval caches its result but invalidates when triage persists new allegations (evidence store changed). Re-fetches in parallel on the next assessment turn.
 - **Case advisor gating + parallelism**: Skipped on turns 1-3. On turn 4+, runs in parallel with the Arbitrator using the previous turn's scores.
 - **Lightweight case advisor**: Case Advisor is a question planner only — it consumes specialist-provided eligibility and evidence gaps rather than evaluating policies itself.
-- **Question dedup**: Case Advisor receives the last 3 turns of suggested questions to avoid repetition.
+- **Question lifecycle**: A persistent `ProbingQuestion` list tracks each suggested question from creation to resolution (pending → answered / invalidated). The Question Validator runs in parallel with specialists (zero added latency) to check pending questions against new turns. The Case Advisor receives the full validated list and generates only new, unique questions. When all questions are resolved and no new ones are needed, probing is complete (`information_sufficient = True`).
 - **All agents traced**: Every invocation is logged to the trace store with agent name, duration, and status.
 - **Error isolation**: Each agent is wrapped in a `_run_*_safe` method. Failures append to `risk_flags` but never crash the pipeline.
 
@@ -346,13 +375,13 @@ Trace: "copilot_turn" (session_id=case_id)
 │  ├─ auto: triage → LLM generation + tool calls
 │  ├─ auto: auth → LLM generation
 │  └─ auto: retrieval → LLM generation + tool calls
-├─ Span: "phase2a_specialists"
+├─ Span: "phase2_specialists_arbitrator_advisor"
 │  ├─ auto: dispute_specialist → LLM generation
 │  ├─ auto: scam_specialist → LLM generation
-│  └─ auto: fraud_specialist → LLM generation
-└─ Span: "phase2b_arbitrator_advisor"
-   ├─ auto: arbitrator → LLM generation
-   └─ auto: case_advisor → LLM generation
+│  ├─ auto: fraud_specialist → LLM generation
+│  ├─ auto: question_validator → LLM generation (skipped if no pending questions)
+│  ├─ auto: arbitrator → LLM generation
+│  └─ auto: case_advisor → LLM generation
 ```
 
 ### Self-hosted Deployment

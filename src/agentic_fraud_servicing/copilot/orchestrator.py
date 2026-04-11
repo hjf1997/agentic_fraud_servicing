@@ -18,7 +18,11 @@ from datetime import datetime, timezone
 from agents import ModelProvider
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment, run_auth_assessment
-from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, run_case_advisor
+from agentic_fraud_servicing.copilot.case_advisor import (
+    CaseAdvisory,
+    run_case_advisor,
+    validate_pending_questions,
+)
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_arbitrator
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     SpecialistAssessment,
@@ -40,7 +44,7 @@ from agentic_fraud_servicing.models.allegations import (
     AllegationExtraction,
     AllegationExtractionResult,
 )
-from agentic_fraud_servicing.models.case import CopilotSuggestion
+from agentic_fraud_servicing.models.case import CopilotSuggestion, ProbingQuestion
 from agentic_fraud_servicing.models.enums import EvidenceSourceType, SpeakerType
 from agentic_fraud_servicing.models.evidence import AllegationStatement
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
@@ -92,7 +96,7 @@ class CopilotOrchestrator:
         self._retrieval_result: RetrievalResult | None = None
         self._last_hypothesis: HypothesisAssessment | None = None
         self._last_specialist_assessments: dict[str, SpecialistAssessment] | None = None
-        self._recent_suggestions: list[list[str]] = []
+        self._probing_questions: list[ProbingQuestion] = []
         self._turn_count: int = 0
         self._cm_turn_count: int = 0
         self._last_assessed_idx: int = 0
@@ -129,7 +133,9 @@ class CopilotOrchestrator:
             self.case_id = f"case-{event.call_id}"
             self.call_id = event.call_id
         if not self._session_id:
-            self._session_id = f"{self.case_id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+            self._session_id = (
+                f"{self.case_id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+            )
 
         # 2. Non-CARDMEMBER events: record in history, no assessment needed
         if event.speaker != SpeakerType.CARDMEMBER:
@@ -158,7 +164,8 @@ class CopilotOrchestrator:
                 from langfuse import propagate_attributes
 
                 _lf_obs_ctx = lf.start_as_current_observation(
-                    as_type="agent", name="copilot_turn",
+                    as_type="agent",
+                    name="copilot_turn",
                 )
                 _lf_obs_ctx.__enter__()
                 _lf_prop_ctx = propagate_attributes(
@@ -214,13 +221,10 @@ class CopilotOrchestrator:
         window = history[context_start:]
         new_turn_offset = new_start - context_start
         conversation_window = [
-            (e.speaker.value, self._firewall_redactor.redact_text(e.text))
-            for e in window
+            (e.speaker.value, self._firewall_redactor.redact_text(e.text)) for e in window
         ]
         allegation_summary = (
-            self._format_allegations_for_hypothesis()
-            if self.accumulated_allegations
-            else None
+            self._format_allegations_for_hypothesis() if self.accumulated_allegations else None
         )
 
         prior_retrieval = self._retrieval_result
@@ -232,7 +236,8 @@ class CopilotOrchestrator:
         if lf is not None:
             try:
                 _lf_p1 = lf.start_as_current_observation(
-                    as_type="chain", name="phase1_parallel",
+                    as_type="chain",
+                    name="phase1_parallel",
                 )
                 _lf_p1.__enter__()
             except Exception:
@@ -246,7 +251,9 @@ class CopilotOrchestrator:
                 ),
                 self._run_auth_safe(
                     self._firewall_redactor.redact_text(event.text),
-                    auth_events, customer_profile, risk_flags,
+                    auth_events,
+                    customer_profile,
+                    risk_flags,
                     conversation_window,
                 ),
                 self._run_retrieval_safe(risk_flags),
@@ -298,19 +305,24 @@ class CopilotOrchestrator:
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
-        # 5. Run specialists (shared by arbitrator and case advisor).
+        # 5. Run specialists + question validator in parallel.
+        # The validator only needs transcript turns and hypothesis scores (no
+        # specialist data), so it can run alongside specialists without adding
+        # latency to the critical path.
         _lf_p2 = None
         if lf is not None:
             try:
                 _lf_p2 = lf.start_as_current_observation(
-                    as_type="chain", name="phase2_specialists_arbitrator_advisor",
+                    as_type="chain",
+                    name="phase2_specialists_arbitrator_advisor",
                 )
                 _lf_p2.__enter__()
             except Exception:
                 _lf_p2 = None
 
-        specialist_assessments = await self._run_specialists_safe(
-            risk_flags, conversation_summary
+        specialist_assessments, _ = await asyncio.gather(
+            self._run_specialists_safe(risk_flags, conversation_summary),
+            self._run_question_validator_safe(conversation_window, risk_flags),
         )
         if specialist_assessments is not None:
             self._last_specialist_assessments = specialist_assessments
@@ -322,9 +334,7 @@ class CopilotOrchestrator:
         case_advisory = None
         if self._turn_count > 3:
             hypothesis_result, case_advisory = await asyncio.gather(
-                self._run_arbitrator_safe(
-                    specs, auth_result=auth_result, risk_flags=risk_flags
-                ),
+                self._run_arbitrator_safe(specs, auth_result=auth_result, risk_flags=risk_flags),
                 self._run_case_advisor_safe(specs, risk_flags, conversation_window),
             )
         else:
@@ -341,11 +351,20 @@ class CopilotOrchestrator:
             self.hypothesis_scores = dict(hypothesis_result.scores)
             self._last_hypothesis = hypothesis_result
 
-        # 8. Track recent suggestions for dedup in subsequent turns
-        suggested_questions = case_advisory.questions if case_advisory else []
-        self._recent_suggestions.append(suggested_questions)
-        if len(self._recent_suggestions) > 3:
-            self._recent_suggestions = self._recent_suggestions[-3:]
+        # 8. Append new questions from case advisor to probing question list
+        if case_advisory is not None and case_advisory.questions:
+            for i, q_text in enumerate(case_advisory.questions):
+                target = ""
+                if i < len(case_advisory.question_targets):
+                    target = case_advisory.question_targets[i]
+                self._probing_questions.append(
+                    ProbingQuestion(
+                        text=q_text,
+                        status="pending",
+                        turn_suggested=self._turn_count,
+                        target_category=target,
+                    )
+                )
 
         # 9. (Retrieval cache is never invalidated — the retrieval agent fetches
         # all case data regardless of allegations, so re-running adds no value.)
@@ -373,13 +392,16 @@ class CopilotOrchestrator:
         """
         case_eligibility: list[dict] = []
         case_advisory_summary = ""
-        suggested_questions: list[str] = []
         information_sufficient = False
         if case_advisory is not None:
             case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]
             case_advisory_summary = case_advisory.summary
-            suggested_questions = case_advisory.questions
             information_sufficient = case_advisory.information_sufficient
+
+        # suggested_questions = all currently pending probing questions
+        suggested_questions = [pq.text for pq in self._probing_questions if pq.status == "pending"]
+        # Full question list snapshot with lifecycle statuses
+        probing_questions = [pq.model_dump(mode="json") for pq in self._probing_questions]
 
         retrieved_facts: list[str] = []
         if self._retrieval_result is not None:
@@ -389,14 +411,14 @@ class CopilotOrchestrator:
             call_id=event.call_id,
             timestamp_ms=event.timestamp_ms,
             suggested_questions=suggested_questions,
+            probing_questions=probing_questions,
             risk_flags=risk_flags or [],
             retrieved_facts=retrieved_facts,
             running_summary=self._build_allegations_summary(),
             safety_guidance=self._build_safety_guidance(),
             hypothesis_scores=dict(self.hypothesis_scores),
             specialist_likelihoods={
-                cat: a.likelihood
-                for cat, a in (self._last_specialist_assessments or {}).items()
+                cat: a.likelihood for cat, a in (self._last_specialist_assessments or {}).items()
             },
             impersonation_risk=self.impersonation_risk,
             case_eligibility=case_eligibility,
@@ -519,8 +541,7 @@ class CopilotOrchestrator:
         context_start = max(0, self._last_assessed_idx - context_trailing)
         window = self.transcript_history[context_start:]
         lines = [
-            f"{e.speaker.value}: {self._firewall_redactor.redact_text(e.text)}"
-            for e in window
+            f"{e.speaker.value}: {self._firewall_redactor.redact_text(e.text)}" for e in window
         ]
         return f"{len(self.transcript_history)} turns total. Recent:\n" + "\n".join(lines)
 
@@ -688,9 +709,7 @@ class CopilotOrchestrator:
                 model_provider=self.model_provider,
                 previous_assessments=self._last_specialist_assessments,
             )
-            self._log_agent_trace(
-                "specialists", "run", (time.perf_counter() - t0) * 1000
-            )
+            self._log_agent_trace("specialists", "run", (time.perf_counter() - t0) * 1000)
             return result
         except Exception as exc:
             self._log_agent_trace(
@@ -699,9 +718,7 @@ class CopilotOrchestrator:
             tag_agent_error("specialists", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("specialists", str(exc))
-                risk_flags.append(
-                    "FIREWALL BLOCKED: specialists prompt rejected by policy"
-                )
+                risk_flags.append("FIREWALL BLOCKED: specialists prompt rejected by policy")
             else:
                 risk_flags.append(self._format_error("Specialists", exc))
             return None
@@ -728,9 +745,7 @@ class CopilotOrchestrator:
             )
             # Attach specialist outputs for next-turn incremental reasoning
             result.specialist_assessments = specialist_assessments
-            self._log_agent_trace(
-                "arbitrator", "run", (time.perf_counter() - t0) * 1000
-            )
+            self._log_agent_trace("arbitrator", "run", (time.perf_counter() - t0) * 1000)
             return result
         except Exception as exc:
             self._log_agent_trace(
@@ -739,9 +754,7 @@ class CopilotOrchestrator:
             tag_agent_error("hypothesis", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("hypothesis", str(exc))
-                risk_flags.append(
-                    "FIREWALL BLOCKED: hypothesis agent prompt rejected by policy"
-                )
+                risk_flags.append("FIREWALL BLOCKED: hypothesis agent prompt rejected by policy")
             else:
                 risk_flags.append(self._format_error("Hypothesis", exc))
             return None
@@ -755,9 +768,9 @@ class CopilotOrchestrator:
         """Run case advisor agent with error handling.
 
         The case advisor plans questions based on specialist-identified
-        evidence gaps and determines information sufficiency.
+        evidence gaps and determines information sufficiency. Receives the
+        full probing question list for context-aware question generation.
         """
-        recent_questions = [q for qs in self._recent_suggestions for q in qs]
         t0 = time.perf_counter()
         try:
             result = await run_case_advisor(
@@ -765,23 +778,70 @@ class CopilotOrchestrator:
                 hypothesis_scores=dict(self.hypothesis_scores),
                 conversation_window=conversation_window,
                 model_provider=self.model_provider,
-                recent_questions=recent_questions if recent_questions else None,
+                probing_questions=self._probing_questions if self._probing_questions else None,
             )
-            self._log_agent_trace(
-                "case_advisor", "run", (time.perf_counter() - t0) * 1000
-            )
+            self._log_agent_trace("case_advisor", "run", (time.perf_counter() - t0) * 1000)
             return result
         except Exception as exc:
             self._log_agent_trace(
-                "case_advisor", "run", (time.perf_counter() - t0) * 1000,
+                "case_advisor",
+                "run",
+                (time.perf_counter() - t0) * 1000,
                 status="error",
             )
             tag_agent_error("case_advisor", exc)
             if is_firewall_block(exc):
                 tag_firewall_block("case_advisor", str(exc))
-                risk_flags.append(
-                    "FIREWALL BLOCKED: case_advisor agent prompt rejected by policy"
-                )
+                risk_flags.append("FIREWALL BLOCKED: case_advisor agent prompt rejected by policy")
             else:
                 risk_flags.append(self._format_error("Case advisor", exc))
             return None
+
+    async def _run_question_validator_safe(
+        self,
+        conversation_window: list[tuple[str, str]],
+        risk_flags: list[str],
+    ) -> None:
+        """Validate pending probing questions against new conversation turns.
+
+        Checks whether pending questions have been answered or invalidated.
+        Updates ``_probing_questions`` statuses in place. Skips the LLM call
+        entirely when there are no pending questions.
+        """
+        pending = [pq for pq in self._probing_questions if pq.status == "pending"]
+        if not pending:
+            return
+
+        t0 = time.perf_counter()
+        try:
+            result = await validate_pending_questions(
+                pending_questions=pending,
+                new_turns=conversation_window,
+                hypothesis_scores=dict(self.hypothesis_scores),
+                model_provider=self.model_provider,
+            )
+            self._log_agent_trace("question_validator", "run", (time.perf_counter() - t0) * 1000)
+
+            # Apply updates to the probing question list
+            updates_by_text = {u.question_text: u for u in result.updates}
+            for pq in self._probing_questions:
+                if pq.status != "pending":
+                    continue
+                update = updates_by_text.get(pq.text)
+                if update is not None and update.new_status != "pending":
+                    pq.status = update.new_status
+                    pq.reason = update.reason
+                    pq.turn_resolved = self._turn_count
+        except Exception as exc:
+            self._log_agent_trace(
+                "question_validator",
+                "run",
+                (time.perf_counter() - t0) * 1000,
+                status="error",
+            )
+            tag_agent_error("question_validator", exc)
+            if is_firewall_block(exc):
+                tag_firewall_block("question_validator", str(exc))
+                risk_flags.append("FIREWALL BLOCKED: question_validator prompt rejected by policy")
+            else:
+                risk_flags.append(self._format_error("Question validator", exc))

@@ -224,9 +224,7 @@ class TestMapSpecialistsToCaseTypes:
     def test_scam_not_mapped(self):
         """Scam specialist does not produce a CaseTypeAssessment."""
         specs = {
-            "SCAM": SpecialistAssessment(
-                category="SCAM", likelihood=0.5, eligibility="eligible"
-            ),
+            "SCAM": SpecialistAssessment(category="SCAM", likelihood=0.5, eligibility="eligible"),
         }
         result = _map_specialists_to_case_types(specs)
         assert len(result) == 0
@@ -272,13 +270,15 @@ class TestCaseAdvisorAgent:
 
     def test_instructions_contain_pan_cvv_guardrail(self) -> None:
         """Instructions include PAN/CVV guardrail."""
-        assert "NEVER ask the customer to reveal their full card number" in CASE_ADVISOR_INSTRUCTIONS
+        assert (
+            "NEVER ask the customer to reveal their full card number" in CASE_ADVISOR_INSTRUCTIONS
+        )
         assert "CVV" in CASE_ADVISOR_INSTRUCTIONS
 
-    def test_instructions_contain_dedup_rule(self) -> None:
-        """Instructions include deduplication guidance."""
-        assert "Deduplication" in CASE_ADVISOR_INSTRUCTIONS
-        assert "do NOT" in CASE_ADVISOR_INSTRUCTIONS
+    def test_instructions_contain_uniqueness_rule(self) -> None:
+        """Instructions include question uniqueness guidance."""
+        assert "Do NOT repeat" in CASE_ADVISOR_INSTRUCTIONS
+        assert "distinct evidence gap" in CASE_ADVISOR_INSTRUCTIONS
 
     def test_instructions_emphasize_advisory(self) -> None:
         """Instructions emphasize this is advisory, not a final decision."""
@@ -415,12 +415,30 @@ class TestRunCaseAdvisor:
         user_input = mock_run.call_args.kwargs.get("input") or mock_run.call_args.args[1]
         assert "FIRST_PARTY_FRAUD: 0.60" in user_input
 
-    async def test_includes_recent_questions(
+    async def test_includes_probing_questions(
         self, mock_provider, mock_specialist_outputs, default_scores
     ) -> None:
-        """User message includes recent questions for dedup."""
+        """User message includes probing question list with statuses."""
+        from agentic_fraud_servicing.models.case import ProbingQuestion
+
         mock_run_result = MagicMock()
         mock_run_result.final_output = CaseAdvisory()
+
+        probing_qs = [
+            ProbingQuestion(
+                text="When did this happen?",
+                status="pending",
+                turn_suggested=1,
+                target_category="THIRD_PARTY_FRAUD",
+            ),
+            ProbingQuestion(
+                text="Did you authorize the transaction?",
+                status="answered",
+                turn_suggested=1,
+                target_category="THIRD_PARTY_FRAUD",
+                reason="CM confirmed they did not authorize",
+            ),
+        ]
 
         with patch(
             "agentic_fraud_servicing.copilot.case_advisor.run_with_retry",
@@ -432,12 +450,14 @@ class TestRunCaseAdvisor:
                 hypothesis_scores=default_scores,
                 conversation_window=[("CARDMEMBER", "test")],
                 model_provider=mock_provider,
-                recent_questions=["When did this happen?"],
+                probing_questions=probing_qs,
             )
 
         user_input = mock_run.call_args.kwargs.get("input") or mock_run.call_args.args[1]
-        assert "Recently Suggested Questions" in user_input
+        assert "Current Question List" in user_input
         assert "When did this happen?" in user_input
+        assert "[pending]" in user_input
+        assert "[answered]" in user_input
 
     async def test_omits_optional_sections_when_none(
         self, mock_provider, mock_specialist_outputs, default_scores

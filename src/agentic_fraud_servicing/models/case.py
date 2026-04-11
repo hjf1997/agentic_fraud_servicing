@@ -7,6 +7,7 @@ enums from models.enums.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -88,6 +89,25 @@ class Case(BaseModel):
     updated_at: datetime | None = None
 
 
+class ProbingQuestion(BaseModel):
+    """A probing question with lifecycle tracking.
+
+    Tracks each suggested question from creation through resolution.
+    Status transitions: pending → answered (CM addressed the topic)
+    or pending → invalidated (target hypothesis collapsed, evidence
+    resolved the gap, or conversation moved past relevance).
+    """
+
+    text: str
+    status: Literal["pending", "answered", "invalidated"] = "pending"
+    turn_suggested: int = 0
+    target_category: str = ""
+    """Which investigation category this question helps discriminate."""
+    reason: str = ""
+    """Why answered/invalidated (empty when pending)."""
+    turn_resolved: int | None = None
+
+
 class CopilotSuggestion(BaseModel):
     """Output from the realtime copilot for a single transcript turn.
 
@@ -98,6 +118,9 @@ class CopilotSuggestion(BaseModel):
     call_id: str
     timestamp_ms: int
     suggested_questions: list[str] = []
+    """All currently pending probing questions (what CCP should ask now)."""
+    probing_questions: list[dict] = []
+    """Full question list snapshot with lifecycle statuses at this turn."""
     risk_flags: list[str] = []
     retrieved_facts: list[str] = []
     running_summary: str = ""

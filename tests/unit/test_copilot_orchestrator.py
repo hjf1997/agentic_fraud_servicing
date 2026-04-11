@@ -191,6 +191,9 @@ _RETRIEVAL_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_retrieval"
 _SPECIALISTS_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_specialists"
 _ARBITRATOR_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_arbitrator"
 _CASE_ADVISOR_PATCH = "agentic_fraud_servicing.copilot.orchestrator.run_case_advisor"
+_QUESTION_VALIDATOR_PATCH = (
+    "agentic_fraud_servicing.copilot.orchestrator.validate_pending_questions"
+)
 
 
 # -- Test Classes --
@@ -1695,7 +1698,7 @@ class TestCaseAdvisorContext:
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_recent_suggestions_tracked_and_passed(
+    async def test_probing_questions_tracked_and_passed(
         self,
         mock_triage,
         mock_auth,
@@ -1704,7 +1707,7 @@ class TestCaseAdvisorContext:
         mock_arbitrator,
         mock_advisor,
     ):
-        """Previously suggested questions are passed to case advisor for dedup."""
+        """Probing questions accumulate and are passed to case advisor."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
@@ -1717,16 +1720,17 @@ class TestCaseAdvisorContext:
         orch = _make_orchestrator()
         orch._turn_count = 3  # Enable case advisor
 
-        # First event — no recent suggestions yet
+        # First event — no probing questions yet
         await orch.process_event(_make_event(event_id="evt-1"))
         first_call_kwargs = mock_advisor.call_args.kwargs
-        assert first_call_kwargs["recent_questions"] is None
+        assert first_call_kwargs["probing_questions"] is None
 
-        # Second event — should have the first event's suggestions
+        # Second event — should have the first event's questions in probing list
         await orch.process_event(_make_event(event_id="evt-2"))
         second_call_kwargs = mock_advisor.call_args.kwargs
-        assert second_call_kwargs["recent_questions"] is not None
-        assert "When did the transaction occur?" in second_call_kwargs["recent_questions"]
+        assert second_call_kwargs["probing_questions"] is not None
+        texts = [pq.text for pq in second_call_kwargs["probing_questions"]]
+        assert "When did the transaction occur?" in texts
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
@@ -1734,7 +1738,7 @@ class TestCaseAdvisorContext:
     @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
     @patch(_AUTH_PATCH, new_callable=AsyncMock)
     @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
-    async def test_recent_suggestions_limited_to_three(
+    async def test_probing_questions_accumulate_across_turns(
         self,
         mock_triage,
         mock_auth,
@@ -1743,19 +1747,23 @@ class TestCaseAdvisorContext:
         mock_arbitrator,
         mock_advisor,
     ):
-        """_recent_suggestions stores at most 3 entries."""
+        """Probing questions accumulate across turns (no arbitrary limit)."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
         mock_specialists.return_value = _mock_specialist_outputs()
         mock_arbitrator.return_value = _mock_hypothesis_result()
-        mock_advisor.return_value = None
+        # Each advisory returns one question with a target category
+        mock_advisor.return_value = _mock_case_advisory(questions=["Test question?"])
 
         orch = _make_orchestrator()
+        orch._turn_count = 3  # Enable case advisor
         for i in range(5):
             await orch.process_event(_make_event(event_id=f"evt-{i}"))
 
-        assert len(orch._recent_suggestions) == 3
+        # All 5 questions accumulated (one per turn)
+        assert len(orch._probing_questions) == 5
+        assert all(pq.status == "pending" for pq in orch._probing_questions)
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)

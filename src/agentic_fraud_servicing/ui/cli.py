@@ -51,7 +51,14 @@ def _format_suggestion_text(suggestion) -> str:
     if suggestion.specialist_likelihoods:
         specs = ", ".join(f"{k}: {v:.2f}" for k, v in suggestion.specialist_likelihoods.items())
         lines.append(f"Specialist Likelihoods: {specs}")
-    if suggestion.suggested_questions:
+    if suggestion.probing_questions:
+        lines.append("Probing Questions:")
+        for pq in suggestion.probing_questions:
+            status = pq.get("status", "pending")
+            target = pq.get("target_category", "")
+            target_str = f" [{target}]" if target else ""
+            lines.append(f"  [{status}]{target_str} {pq.get('text', '')}")
+    elif suggestion.suggested_questions:
         lines.append("Suggested Questions:")
         for q in suggestion.suggested_questions:
             lines.append(f"  - {q}")

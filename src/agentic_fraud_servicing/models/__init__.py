@@ -10,6 +10,7 @@ from agentic_fraud_servicing.models.case import (
     CopilotSuggestion,
     DecisionFactor,
     DecisionRecommendation,
+    ProbingQuestion,
     TimelineEvent,
     TransactionRef,
 )
@@ -89,6 +90,7 @@ __all__ = [
     "CopilotSuggestion",
     "DecisionFactor",
     "DecisionRecommendation",
+    "ProbingQuestion",
     "TimelineEvent",
     "TransactionRef",
 ]
