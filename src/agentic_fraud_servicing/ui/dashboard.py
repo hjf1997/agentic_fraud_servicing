@@ -465,6 +465,11 @@ def _build_copilot_final_html(
         f"<li><strong>{k.replace('_', ' ').title()}</strong>: {v:.2f}</li>"
         for k, v in h_scores.items()
     )
+    spec_likes = state.get("specialist_likelihoods", {})
+    spec_items = "".join(
+        f"<li><strong>{k.replace('_', ' ').title()}</strong>: {v:.2f}</li>"
+        for k, v in spec_likes.items()
+    )
     imp_risk = state.get("impersonation_risk", 0.0)
 
     # Extract final case eligibility from the last copilot suggestion
@@ -506,11 +511,19 @@ def _build_copilot_final_html(
                 f"Ready to Proceed</span></p>"
             )
 
+    spec_section = ""
+    if spec_items:
+        spec_section = (
+            f'<p><strong>Specialist Likelihoods:</strong></p>'
+            f'<ul style="margin:4px 0;">{spec_items}</ul>'
+        )
+
     return f"""<div class="card">
       <h4 style="color:{AMEX_NAVY}; margin-top:0;">Final Copilot State</h4>
       <p><strong>Impersonation Risk:</strong> {imp_risk:.2f}</p>
       <p><strong>Hypothesis Scores:</strong></p>
       <ul style="margin:4px 0;">{score_items}</ul>
+      {spec_section}
       {elig_html}
       {advisory_html}
     </div>"""

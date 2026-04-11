@@ -715,8 +715,13 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
             )
 
     # -- Final copilot state --
+    specialist_likelihoods = (
+        last_suggestion.specialist_likelihoods if last_suggestion else {}
+    )
     print(f"\n{BOLD}Final Copilot State:{RESET}")
     print(f"  Hypothesis scores: {json.dumps(copilot.hypothesis_scores, indent=2)}")
+    if specialist_likelihoods:
+        print(f"  Specialist likelihoods: {json.dumps(specialist_likelihoods, indent=2)}")
     print(f"  Impersonation risk: {copilot.impersonation_risk:.2f}")
     print(f"  Evidence collected: {copilot.evidence_collected}")
     print(f"  Transcript events processed: {len(copilot.transcript_history)}")
@@ -732,6 +737,7 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
         json.dumps(
             {
                 "hypothesis_scores": copilot.hypothesis_scores,
+                "specialist_likelihoods": specialist_likelihoods,
                 "impersonation_risk": copilot.impersonation_risk,
                 "evidence_collected": copilot.evidence_collected,
                 "allegations_extracted": len(copilot.accumulated_allegations),
