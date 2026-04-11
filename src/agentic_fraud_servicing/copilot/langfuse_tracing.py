@@ -109,27 +109,26 @@ def tag_firewall_block(agent_name: str, error_message: str) -> None:
     if lf is None:
         return
     try:
-        truncated = error_message[:500]
         # Update the current span with error details
         lf.update_current_span(
             metadata={
                 "error_type": "firewall_block",
                 "error_agent": agent_name,
-                "error_message": truncated,
+                "error_message": error_message,
             },
             level="ERROR",
-            status_message=f"FIREWALL BLOCKED [{agent_name}]: {truncated[:200]}",
+            status_message=f"FIREWALL BLOCKED [{agent_name}]: {error_message[:500]}",
         )
         # Score the span and trace for filtering
         lf.score_current_span(
             name="firewall_block",
             value=1,
-            comment=f"[{agent_name}] {truncated[:200]}",
+            comment=f"[{agent_name}] {error_message[:500]}",
         )
         lf.score_current_trace(
             name="firewall_block",
             value=1,
-            comment=f"[{agent_name}] {truncated[:200]}",
+            comment=f"[{agent_name}] {error_message[:500]}",
         )
     except Exception:
         pass
@@ -174,10 +173,10 @@ def _classify_error(
 
     # Check for ModelBehaviorError (invalid JSON, unexpected output)
     if isinstance(exc, ModelBehaviorError):
-        msg = str(exc)[:500]
+        msg = str(exc)
         return (
             "invalid_json",
-            f"[{agent_name}] Invalid JSON: {msg[:200]}",
+            f"[{agent_name}] Invalid JSON: {msg[:500]}",
             {
                 "error_agent": agent_name,
                 "error_type": "invalid_json",
@@ -188,10 +187,10 @@ def _classify_error(
 
     # Check for timeout errors
     if _is_timeout(exc):
-        msg = str(exc)[:500]
+        msg = str(exc)
         return (
             "timeout",
-            f"[{agent_name}] Timeout: {msg[:200]}",
+            f"[{agent_name}] Timeout: {msg[:500]}",
             {
                 "error_agent": agent_name,
                 "error_type": "timeout",
@@ -205,20 +204,20 @@ def _classify_error(
     if status_code is not None:
         return (
             f"http_{status_code}",
-            f"[{agent_name}] HTTP {status_code}: {error_body[:200]}",
+            f"[{agent_name}] HTTP {status_code}: {error_body[:500]}",
             {
                 "error_agent": agent_name,
                 "error_type": f"http_{status_code}",
                 "http_status": status_code,
-                "error_message": error_body[:500],
+                "error_message": error_body,
             },
         )
 
     # Fallback: unknown error
-    msg = str(exc)[:500]
+    msg = str(exc)
     return (
         "unknown",
-        f"[{agent_name}] {type(exc).__name__}: {msg[:200]}",
+        f"[{agent_name}] {type(exc).__name__}: {msg[:500]}",
         {
             "error_agent": agent_name,
             "error_type": "unknown",
