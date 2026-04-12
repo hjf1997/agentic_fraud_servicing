@@ -10,10 +10,9 @@ AllegationExtractionResult.
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
 
-from agentic_fraud_servicing.providers.retry import run_with_retry
-
 from agentic_fraud_servicing.models.allegations import AllegationExtractionResult
 from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
+from agentic_fraud_servicing.providers.retry import run_with_retry
 
 # System prompt for the triage agent — focused exclusively on allegation extraction
 TRIAGE_INSTRUCTIONS = f"""\

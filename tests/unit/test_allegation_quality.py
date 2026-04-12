@@ -16,7 +16,6 @@ from agentic_fraud_servicing.evaluation.models import (
     TurnMetric,
 )
 
-
 _DUMMY_SUGGESTION = {"call_id": "test", "timestamp_ms": 0}
 
 

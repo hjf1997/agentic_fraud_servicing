@@ -7,8 +7,6 @@ structured RetrievalResult summarizing what was found and any data gaps.
 
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
-
-from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field
 
 from agentic_fraud_servicing.copilot.context import (
@@ -18,6 +16,7 @@ from agentic_fraud_servicing.copilot.context import (
     tool_query_auth_logs,
 )
 from agentic_fraud_servicing.gateway.tool_gateway import ToolGateway
+from agentic_fraud_servicing.providers.retry import run_with_retry
 
 # System prompt for the retrieval agent
 RETRIEVAL_INSTRUCTIONS = """\

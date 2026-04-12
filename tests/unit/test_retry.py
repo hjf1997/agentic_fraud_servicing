@@ -9,7 +9,6 @@ import pytest
 
 from agentic_fraud_servicing.providers.retry import _is_retriable, run_with_retry
 
-
 # ---------------------------------------------------------------------------
 # _is_retriable tests
 # ---------------------------------------------------------------------------

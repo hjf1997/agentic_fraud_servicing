@@ -8,11 +8,10 @@ SchemeMappingResult.
 
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
-
-from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field
 
 from agentic_fraud_servicing.models.enums import INVESTIGATION_CATEGORIES_REFERENCE
+from agentic_fraud_servicing.providers.retry import run_with_retry
 
 # System prompt for the scheme mapper agent
 SCHEME_MAPPER_INSTRUCTIONS = f"""\

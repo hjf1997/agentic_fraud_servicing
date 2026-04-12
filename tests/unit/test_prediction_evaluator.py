@@ -14,7 +14,6 @@ from agentic_fraud_servicing.evaluation.prediction_evaluator import (
     map_outcome_to_category,
 )
 
-
 _DUMMY_SUGGESTION = {"call_id": "test", "timestamp_ms": 0}
 
 
