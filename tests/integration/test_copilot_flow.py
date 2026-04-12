@@ -133,7 +133,6 @@ _CASE_ADVISORY = CaseAdvisory(
         "Check for authorized user activity",
     ],
     priority_field="auth_method",
-    information_sufficient=False,
     summary="Fraud case eligible pending identity verification. Dispute case eligible.",
 )
 

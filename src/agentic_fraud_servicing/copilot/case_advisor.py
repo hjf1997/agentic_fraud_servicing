@@ -70,8 +70,8 @@ class CaseAdvisory(BaseModel):
     questions: list[str] = Field(default_factory=list)
     """0-3 NEW suggested next-best questions for the CCP to ask.
 
-    Empty when information_sufficient is True. These are new questions
-    only — not previously suggested ones.
+    Empty when the advisor determines no further probing is needed.
+    These are new questions only — not previously suggested ones.
     """
 
     question_targets: list[str] = Field(default_factory=list)
@@ -83,10 +83,6 @@ class CaseAdvisory(BaseModel):
 
     priority_field: str = ""
     """The most impactful missing information item, or empty when sufficient."""
-
-    information_sufficient: bool = False
-    """True when all required information has been gathered. The CCP can
-    proceed to case opening."""
 
     summary: str = ""
     """2-4 sentence summary of the eligibility landscape and next steps."""
@@ -198,14 +194,12 @@ You receive:
    addressed the topic), or `invalidated` (no longer relevant). Use this to
    avoid generating duplicate questions and to assess probing progress.
 
-## Stopping Condition — information_sufficient
+## When to Return Empty Questions
 
-Check the specialist eligibility statuses, evidence gaps, AND the question
-list. Set `information_sufficient = true` and return an empty questions list
-if:
+Return an empty `questions` list when no further probing is needed:
 
-- All questions in the list are answered or invalidated AND you determine no
-  new questions are needed (probing is complete), OR
+- All questions in the list are answered or invalidated AND no new evidence
+  gaps remain that can be resolved during this call, OR
 - The leading hypothesis specialist has eligibility `eligible` AND has no
   critical online evidence gaps remaining, OR
 - All specialists have eligibility `blocked` for reasons that cannot be
@@ -217,9 +211,9 @@ probing") rather than generating more questions.
 
 Note: Some evidence gaps are marked `[offline]` by specialists — these can
 only be collected after case opening (e.g., merchant records, device forensics,
-payment platform data). Offline gaps should NOT prevent `information_sufficient`
-from being set to true. Focus only on gaps that are resolvable during the live
-call (what the CCP can ask the cardmember).
+payment platform data). Offline gaps do NOT require probing questions. Focus
+only on gaps that are resolvable during the live call (what the CCP can ask
+the cardmember).
 
 ## Question Generation Rules
 
@@ -281,11 +275,10 @@ Provide a 2-4 sentence summary covering:
 
 Return structured output with:
 - general_warnings: list of cross-cutting warnings
-- questions: 0-3 NEW suggested questions (empty list when information_sufficient)
+- questions: 0-3 NEW suggested questions (empty list when no further probing needed)
 - question_targets: parallel list — target investigation category per question
 - rationale: parallel list with questions
-- priority_field: most impactful evidence gap, or "" when sufficient
-- information_sufficient: true when ready, false when more info needed
+- priority_field: most impactful evidence gap, or "" when no gaps remain
 - summary: 2-4 sentence eligibility and next-steps summary
 
 NOTE: Do NOT include assessments in your output — those are populated

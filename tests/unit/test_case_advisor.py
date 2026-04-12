@@ -85,7 +85,6 @@ class TestCaseAdvisory:
         assert c.questions == []
         assert c.rationale == []
         assert c.priority_field == ""
-        assert c.information_sufficient is False
         assert c.summary == ""
 
     def test_with_assessments_and_questions(self) -> None:
@@ -97,7 +96,6 @@ class TestCaseAdvisory:
             questions=["When did the transaction occur?", "Do you still have the card?"],
             rationale=["Need transaction date", "Need card possession info"],
             priority_field="transaction_date",
-            information_sufficient=False,
             summary="Fraud case is incomplete. Dispute case is eligible.",
         )
         assert len(c.assessments) == 2
@@ -106,19 +104,16 @@ class TestCaseAdvisory:
         assert len(c.questions) == 2
         assert len(c.rationale) == 2
         assert c.priority_field == "transaction_date"
-        assert c.information_sufficient is False
         assert c.summary.startswith("Fraud")
 
-    def test_information_sufficient_with_empty_questions(self) -> None:
+    def test_empty_questions_when_no_gaps(self) -> None:
         c = CaseAdvisory(
             assessments=[
                 CaseTypeAssessment(case_type="fraud", eligibility="eligible"),
             ],
             questions=[],
-            information_sufficient=True,
             summary="All required information gathered. Fraud case is eligible.",
         )
-        assert c.information_sufficient is True
         assert c.questions == []
         assert c.priority_field == ""
 
@@ -130,7 +125,6 @@ class TestCaseAdvisory:
             questions=["When did this happen?"],
             rationale=["Need transaction date"],
             priority_field="transaction_date",
-            information_sufficient=False,
             summary="Fraud is blocked due to prior dispute.",
         )
         data = json.loads(c.model_dump_json())
@@ -260,13 +254,12 @@ class TestCaseAdvisorAgent:
 
     def test_instructions_contain_question_planning(self) -> None:
         """Instructions include question generation rules."""
-        assert "information_sufficient" in CASE_ADVISOR_INSTRUCTIONS
         assert "evidence gap" in CASE_ADVISOR_INSTRUCTIONS.lower()
 
-    def test_instructions_contain_stopping_condition(self) -> None:
-        """Instructions include stopping condition rules."""
-        assert "Stopping Condition" in CASE_ADVISOR_INSTRUCTIONS
-        assert "information_sufficient = true" in CASE_ADVISOR_INSTRUCTIONS
+    def test_instructions_contain_empty_questions_guidance(self) -> None:
+        """Instructions include guidance on when to return empty questions."""
+        assert "Return Empty Questions" in CASE_ADVISOR_INSTRUCTIONS
+        assert "no further probing is needed" in CASE_ADVISOR_INSTRUCTIONS
 
     def test_instructions_contain_pan_cvv_guardrail(self) -> None:
         """Instructions include PAN/CVV guardrail."""

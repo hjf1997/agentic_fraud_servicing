@@ -200,6 +200,8 @@ def _print_copilot_brief(suggestion: CopilotSuggestion) -> None:
                 color = GREEN
             elif status == "invalidated":
                 color = RED
+            elif status == "skipped":
+                color = YELLOW
             else:
                 color = CYAN
             target = pq.get("target_category", "")

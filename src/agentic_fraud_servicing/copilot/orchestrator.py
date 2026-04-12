@@ -99,6 +99,7 @@ class CopilotOrchestrator:
         self._probing_questions: list[ProbingQuestion] = []
         self._turn_count: int = 0
         self._cm_turn_count: int = 0
+        self._assessment_count: int = 0
         self._last_assessed_idx: int = 0
         self._firewall_redactor = FirewallRedactor()
 
@@ -153,6 +154,7 @@ class CopilotOrchestrator:
             return None
 
         # 4. CARDMEMBER event: run full agent pipeline
+        self._assessment_count += 1
         risk_flags: list[str] = []
 
         # -- LangFuse observability: open a trace for this assessment turn --
@@ -362,6 +364,7 @@ class CopilotOrchestrator:
                         text=q_text,
                         status="pending",
                         turn_suggested=self._turn_count,
+                        assessment_suggested=self._assessment_count,
                         target_category=target,
                     )
                 )
@@ -392,11 +395,17 @@ class CopilotOrchestrator:
         """
         case_eligibility: list[dict] = []
         case_advisory_summary = ""
-        information_sufficient = False
         if case_advisory is not None:
             case_eligibility = [a.model_dump(mode="json") for a in case_advisory.assessments]
             case_advisory_summary = case_advisory.summary
-            information_sufficient = case_advisory.information_sufficient
+
+        # Hardcoded: information is sufficient when the case advisor ran,
+        # generated no new questions, and no pending questions remain.
+        has_pending = any(pq.status == "pending" for pq in self._probing_questions)
+        new_questions = case_advisory.questions if case_advisory is not None else []
+        information_sufficient = (
+            case_advisory is not None and not new_questions and not has_pending
+        )
 
         # suggested_questions = all currently pending probing questions
         suggested_questions = [pq.text for pq in self._probing_questions if pq.status == "pending"]
@@ -797,6 +806,10 @@ class CopilotOrchestrator:
                 risk_flags.append(self._format_error("Case advisor", exc))
             return None
 
+    # Pending questions not asked by the CCP within this many assessment
+    # cycles are marked "skipped" — the copilot is advisory, not enforceable.
+    _STALENESS_WINDOW: int = 3
+
     async def _run_question_validator_safe(
         self,
         conversation_window: list[tuple[str, str]],
@@ -806,7 +819,8 @@ class CopilotOrchestrator:
 
         Checks whether pending questions have been answered or invalidated.
         Updates ``_probing_questions`` statuses in place. Skips the LLM call
-        entirely when there are no pending questions.
+        entirely when there are no pending questions. After LLM validation,
+        marks stale pending questions as ``skipped``.
         """
         pending = [pq for pq in self._probing_questions if pq.status == "pending"]
         if not pending:
@@ -845,3 +859,14 @@ class CopilotOrchestrator:
                 risk_flags.append("FIREWALL BLOCKED: question_validator prompt rejected by policy")
             else:
                 risk_flags.append(self._format_error("Question validator", exc))
+
+        # Mark stale pending questions as skipped (runs regardless of
+        # validator success — CCP inaction is independent of LLM errors).
+        for pq in self._probing_questions:
+            if pq.status != "pending":
+                continue
+            age = self._assessment_count - pq.assessment_suggested
+            if age >= self._STALENESS_WINDOW:
+                pq.status = "skipped"
+                pq.reason = "CCP did not ask within staleness window"
+                pq.turn_resolved = self._turn_count

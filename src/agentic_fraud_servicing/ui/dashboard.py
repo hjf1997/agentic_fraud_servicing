@@ -99,6 +99,7 @@ DASHBOARD_CSS = """
 .elig-eligible   { background: #D4EDDA; color: #155724; }
 .elig-blocked    { background: #F8D7DA; color: #721C24; }
 .elig-incomplete { background: #FFF3CD; color: #856404; }
+.elig-skipped    { background: #E2E3E5; color: #495057; }
 .elig-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
             margin: 4px 0; }
 
@@ -531,6 +532,7 @@ def _build_copilot_final_html(
                     "pending": "elig-incomplete",
                     "answered": "elig-eligible",
                     "invalidated": "elig-blocked",
+                    "skipped": "elig-skipped",
                 }.get(status, "elig-incomplete")
                 target = pq.get("target_category", "")
                 target_str = (
@@ -584,6 +586,7 @@ def _build_copilot_turns_html(suggestions: list[dict]) -> str:
                     "pending": "elig-incomplete",
                     "answered": "elig-eligible",
                     "invalidated": "elig-blocked",
+                    "skipped": "elig-skipped",
                 }.get(status, "elig-incomplete")
                 target = pq.get("target_category", "")
                 target_str = (

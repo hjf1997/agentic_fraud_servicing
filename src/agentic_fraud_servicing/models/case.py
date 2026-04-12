@@ -93,18 +93,21 @@ class ProbingQuestion(BaseModel):
     """A probing question with lifecycle tracking.
 
     Tracks each suggested question from creation through resolution.
-    Status transitions: pending → answered (CM addressed the topic)
-    or pending → invalidated (target hypothesis collapsed, evidence
-    resolved the gap, or conversation moved past relevance).
+    Status transitions: pending → answered (CM addressed the topic),
+    pending → invalidated (target hypothesis collapsed, evidence
+    resolved the gap, or conversation moved past relevance), or
+    pending → skipped (CCP chose not to ask within the staleness window).
     """
 
     text: str
-    status: Literal["pending", "answered", "invalidated"] = "pending"
+    status: Literal["pending", "answered", "invalidated", "skipped"] = "pending"
     turn_suggested: int = 0
+    assessment_suggested: int = 0
+    """Which assessment cycle this question was created in."""
     target_category: str = ""
     """Which investigation category this question helps discriminate."""
     reason: str = ""
-    """Why answered/invalidated (empty when pending)."""
+    """Why answered/invalidated/skipped (empty when pending)."""
     turn_resolved: int | None = None
 
 

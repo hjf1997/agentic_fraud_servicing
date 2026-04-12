@@ -15,7 +15,7 @@ from agentic_fraud_servicing.models.allegations import (
     AllegationExtraction,
     AllegationExtractionResult,
 )
-from agentic_fraud_servicing.models.case import CopilotSuggestion
+from agentic_fraud_servicing.models.case import CopilotSuggestion, ProbingQuestion
 from agentic_fraud_servicing.models.enums import AllegationDetailType, SpeakerType
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 
@@ -140,10 +140,7 @@ def _mock_specialist_outputs():
     }
 
 
-def _mock_case_advisory(
-    questions=None,
-    information_sufficient=False,
-):
+def _mock_case_advisory(questions=None):
     """Create a mock CaseAdvisory with realistic assessments and questions."""
     if questions is None:
         questions = ["When did this transaction occur?"]
@@ -172,7 +169,6 @@ def _mock_case_advisory(
         questions=questions,
         rationale=["Need transaction date"],
         priority_field="transaction_date",
-        information_sufficient=information_sufficient,
         summary="Fraud case eligible. Dispute is blocked.",
     )
 
@@ -1433,16 +1429,13 @@ class TestCaseAdvisorIntegration:
         mock_arbitrator,
         mock_advisor,
     ):
-        """information_sufficient from case advisory propagates to CopilotSuggestion."""
+        """information_sufficient is True when advisor generates no new questions and none pending."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
         mock_specialists.return_value = _mock_specialist_outputs()
         mock_arbitrator.return_value = _mock_hypothesis_result()
-        mock_advisor.return_value = _mock_case_advisory(
-            questions=[],
-            information_sufficient=True,
-        )
+        mock_advisor.return_value = _mock_case_advisory(questions=[])
 
         orch = _make_orchestrator()
         orch._turn_count = 3
@@ -1450,6 +1443,48 @@ class TestCaseAdvisorIntegration:
 
         assert result.information_sufficient is True
         assert result.suggested_questions == []
+
+    @patch(_QUESTION_VALIDATOR_PATCH, new_callable=AsyncMock)
+    @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
+    @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
+    @patch(_SPECIALISTS_PATCH, new_callable=AsyncMock)
+    @patch(_RETRIEVAL_PATCH, new_callable=AsyncMock)
+    @patch(_AUTH_PATCH, new_callable=AsyncMock)
+    @patch(_TRIAGE_PATCH, new_callable=AsyncMock)
+    async def test_information_sufficient_false_when_pending_questions(
+        self,
+        mock_triage,
+        mock_auth,
+        mock_retrieval,
+        mock_specialists,
+        mock_arbitrator,
+        mock_advisor,
+        mock_validator,
+    ):
+        """information_sufficient stays False when pending probing questions exist."""
+        mock_triage.return_value = _mock_triage_result()
+        mock_auth.return_value = _mock_auth_result()
+        mock_retrieval.return_value = _mock_retrieval_result()
+        mock_specialists.return_value = _mock_specialist_outputs()
+        mock_arbitrator.return_value = _mock_hypothesis_result()
+        mock_advisor.return_value = _mock_case_advisory(questions=[])
+        mock_validator.return_value = MagicMock(updates=[])
+
+        orch = _make_orchestrator()
+        orch._turn_count = 3
+        # Inject a pending probing question
+        orch._probing_questions = [
+            ProbingQuestion(
+                text="When did the transaction occur?",
+                status="pending",
+                turn_suggested=2,
+                target_category="THIRD_PARTY_FRAUD",
+            ),
+        ]
+        result = await orch.process_event(_make_event())
+
+        assert result.information_sufficient is False
+        assert "When did the transaction occur?" in result.suggested_questions
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
@@ -1747,7 +1782,7 @@ class TestCaseAdvisorContext:
         mock_arbitrator,
         mock_advisor,
     ):
-        """Probing questions accumulate across turns (no arbitrary limit)."""
+        """Probing questions accumulate; stale ones are marked skipped."""
         mock_triage.return_value = _mock_triage_result()
         mock_auth.return_value = _mock_auth_result()
         mock_retrieval.return_value = _mock_retrieval_result()
@@ -1763,7 +1798,11 @@ class TestCaseAdvisorContext:
 
         # All 5 questions accumulated (one per turn)
         assert len(orch._probing_questions) == 5
-        assert all(pq.status == "pending" for pq in orch._probing_questions)
+        # Questions from early assessments are skipped after staleness window
+        statuses = [pq.status for pq in orch._probing_questions]
+        assert "skipped" in statuses
+        # Recent questions remain pending
+        assert orch._probing_questions[-1].status == "pending"
 
     @patch(_CASE_ADVISOR_PATCH, new_callable=AsyncMock)
     @patch(_ARBITRATOR_PATCH, new_callable=AsyncMock)
