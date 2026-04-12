@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
-
-from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel, Field
 
 from agentic_fraud_servicing.evaluation.models import (
@@ -19,6 +17,7 @@ from agentic_fraud_servicing.evaluation.models import (
     EvaluationRun,
     NoteAlignmentResult,
 )
+from agentic_fraud_servicing.providers.retry import run_with_retry
 
 # --- Structured output model for the LLM agent ---
 
@@ -168,9 +167,7 @@ async def evaluate_decision_explanation(
         )
 
 
-def _build_context(
-    run: EvaluationRun, note_alignment: NoteAlignmentResult | None = None
-) -> str:
+def _build_context(run: EvaluationRun, note_alignment: NoteAlignmentResult | None = None) -> str:
     """Build comprehensive context string from the EvaluationRun for the LLM."""
     sections: list[str] = []
 
@@ -238,10 +235,10 @@ def _build_context(
     # CCP Note Alignment (when available)
     if note_alignment and note_alignment.explanation:
         na_lines = [
-            f"- Facts Coverage: {note_alignment.facts_coverage_score:.2f}",
-            f"- Allegation Alignment: {note_alignment.allegation_alignment_score:.2f}",
-            f"- Category & Action: {note_alignment.category_action_score:.2f}",
-            f"- Overall: {note_alignment.overall_score:.2f}",
+            f"- Facts Coverage: {note_alignment.facts_coverage}",
+            f"- Allegation Alignment: {note_alignment.allegation_alignment}",
+            f"- Category & Action: {note_alignment.category_action}",
+            f"- Overall: {note_alignment.overall}",
             f"- Explanation: {note_alignment.explanation}",
         ]
         sections.append("## CCP Note Alignment\n" + "\n".join(na_lines))

@@ -80,7 +80,7 @@ EVAL_CSS = """
 DIMENSION_LABELS = [
     ("latency", "Latency"),
     ("prediction", "Prediction"),
-    ("question_adherence", "Q. Adherence"),
+    ("question_adherence", "Q. Lifecycle"),
     ("allegation_quality", "Allegation"),
     ("evidence_utilization", "Evidence"),
     ("convergence", "Convergence"),
@@ -567,114 +567,159 @@ def _build_prediction_html(report: EvaluationReport | None) -> str:
 
 
 def _build_adherence_chart(report: EvaluationReport | None) -> plt.Figure | None:
-    """Build a bar chart of per-turn question adherence scores."""
+    """Build a donut chart showing probing question lifecycle distribution."""
     if not report or not report.question_adherence:
         return None
 
     qa = report.question_adherence
-    if not qa.per_turn_scores:
+    if qa.total_questions == 0:
         return None
 
-    turns = [s.get("turn_number", i + 1) for i, s in enumerate(qa.per_turn_scores)]
-    scores = [s.get("adherence_score", 0.0) for s in qa.per_turn_scores]
-    colors = ["#2E7D32" if v >= 0.7 else "#F57C00" if v >= 0.4 else "#D32F2F" for v in scores]
+    # Build slices for non-zero statuses
+    labels = []
+    sizes = []
+    colors = []
+    status_map = [
+        ("Answered", qa.answered, "#2E7D32"),
+        ("Invalidated", qa.invalidated, "#D32F2F"),
+        ("Skipped", qa.skipped, "#53565A"),
+        ("Pending", qa.pending, "#F5A623"),
+    ]
+    for label, count, color in status_map:
+        if count > 0:
+            labels.append(f"{label} ({count})")
+            sizes.append(count)
+            colors.append(color)
 
-    fig, ax = plt.subplots(figsize=(8, 3.5))
+    fig, ax = plt.subplots(figsize=(5, 3.5))
     fig.patch.set_facecolor(AMEX_WHITE)
-    ax.set_facecolor(AMEX_BG)
 
-    ax.bar(turns, scores, color=colors, width=0.7, edgecolor="none")
-    ax.axhline(y=0.7, color=AMEX_BLUE, linestyle="--", linewidth=1, alpha=0.5)
+    wedges, texts, autotexts = ax.pie(
+        sizes,
+        labels=labels,
+        colors=colors,
+        autopct="%1.0f%%",
+        startangle=90,
+        pctdistance=0.75,
+        textprops={"fontsize": 10},
+    )
+    for t in autotexts:
+        t.set_fontweight("bold")
+        t.set_color("#ffffff")
 
-    ax.set_xlabel("Turn", fontsize=10, color=AMEX_NAVY)
-    ax.set_ylabel("Adherence Score", fontsize=10, color=AMEX_NAVY)
-    ax.set_title("Per-Turn Question Adherence", fontsize=12, color=AMEX_NAVY)
-    ax.set_ylim(0, 1.05)
-    ax.set_xticks(turns)
-
-    # Overall rate annotation
-    rate_text = f"Overall: {qa.overall_adherence_rate:.0%}"
-    ax.annotate(
-        rate_text,
-        xy=(0.98, 0.95),
-        xycoords="axes fraction",
-        fontsize=10,
+    # Donut hole
+    centre = plt.Circle((0, 0), 0.50, fc=AMEX_WHITE)
+    ax.add_artist(centre)
+    ax.text(
+        0,
+        0,
+        f"{qa.total_questions}",
+        ha="center",
+        va="center",
+        fontsize=22,
         fontweight="bold",
         color=AMEX_NAVY,
-        ha="right",
-        va="top",
-        bbox={"facecolor": AMEX_WHITE, "edgecolor": AMEX_BLUE, "boxstyle": "round,pad=0.3"},
     )
 
+    ax.set_title("Probing Question Lifecycle", fontsize=12, color=AMEX_NAVY, pad=12)
     plt.tight_layout()
     return fig
 
 
 def _build_adherence_detail_html(report: EvaluationReport | None) -> str:
-    """Build HTML with expandable per-turn adherence details."""
+    """Build HTML showing probing question lifecycle list with status badges."""
     if not report or not report.question_adherence:
-        return '<div class="card"><p>No question adherence data available.</p></div>'
+        return '<div class="card"><p>No probing question data available.</p></div>'
 
     qa = report.question_adherence
 
     # Summary stats
+    suf_badge = (
+        '<span style="background:#D4EDDA; color:#2E7D32; padding:2px 8px; '
+        'border-radius:10px; font-size:0.85em; font-weight:600;">Yes</span>'
+        if qa.information_sufficient
+        else '<span style="background:#FFF3CD; color:#856404; padding:2px 8px; '
+        'border-radius:10px; font-size:0.85em; font-weight:600;">No</span>'
+    )
+
     stats_html = f"""
     <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
       <div class="metric-box">
-        <div class="metric-value" style="color:{_score_color(qa.overall_adherence_rate)};">
-          {qa.overall_adherence_rate:.0%}</div>
-        <div class="metric-label">Overall Adherence</div>
+        <div class="metric-value" style="color:{AMEX_BLUE};">{qa.total_questions}</div>
+        <div class="metric-label">Total Questions</div>
       </div>
       <div class="metric-box">
-        <div class="metric-value" style="color:{AMEX_BLUE};">{qa.turns_with_suggestions}</div>
-        <div class="metric-label">Turns w/ Suggestions</div>
+        <div class="metric-value" style="color:#2E7D32;">{qa.answered}</div>
+        <div class="metric-label">Answered</div>
       </div>
       <div class="metric-box">
-        <div class="metric-value" style="color:{AMEX_BLUE};">{qa.turns_with_adherence}</div>
-        <div class="metric-label">Turns w/ Adherence</div>
+        <div class="metric-value" style="color:#D32F2F;">{qa.invalidated}</div>
+        <div class="metric-label">Invalidated</div>
       </div>
+      <div class="metric-box">
+        <div class="metric-value" style="color:#53565A;">{qa.skipped}</div>
+        <div class="metric-label">Skipped</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" style="color:#F5A623;">{qa.pending}</div>
+        <div class="metric-label">Pending</div>
+      </div>
+    </div>
+    <div style="margin-bottom:14px; font-size:0.9em;">
+      <strong>Information Sufficient:</strong> {suf_badge}
+      &nbsp;&nbsp;
+      <strong>Answer Rate:</strong> {qa.overall_adherence_rate:.0%}
     </div>"""
 
-    # Per-turn collapsible details
-    turns_html = ""
-    for entry in qa.per_turn_scores:
-        turn = entry.get("turn_number", "?")
-        score = entry.get("adherence_score", 0.0)
-        explanation = entry.get("explanation", "")
-        questions = entry.get("suggested_questions", [])
-        sc = _score_color(score)
-        sbg = _score_bg(score)
+    # Status badge colors
+    _STATUS_COLORS = {
+        "answered": ("#2E7D32", "#D4EDDA"),
+        "invalidated": ("#D32F2F", "#F8D7DA"),
+        "skipped": ("#53565A", "#E2E3E5"),
+        "pending": ("#856404", "#FFF3CD"),
+    }
 
-        q_list = ""
-        if questions:
-            q_items = "".join(f"<li>{q}</li>" for q in questions)
-            q_list = f'<ul style="margin:4px 0; padding-left:20px;">{q_items}</ul>'
+    # Per-question list
+    questions_html = ""
+    for pq in qa.probing_questions:
+        status = pq.get("status", "pending")
+        text = pq.get("text", "")
+        target = pq.get("target_category", "")
+        reason = pq.get("reason", "")
+        sc, sbg = _STATUS_COLORS.get(status, ("#53565A", "#E2E3E5"))
 
-        explanation_text = ""
-        if explanation:
-            explanation_text = (
-                f'<div style="margin-top:4px; font-size:0.85em; color:#555;">{explanation}</div>'
-            )
+        target_html = (
+            f'<span style="color:#666; font-size:0.85em; margin-left:4px;">[{target}]</span>'
+            if target
+            else ""
+        )
+        reason_html = (
+            f'<div style="margin-top:2px; font-size:0.8em; color:#666;">{reason}</div>'
+            if reason
+            else ""
+        )
 
-        turns_html += f"""
-        <details style="margin-bottom:6px; border:1px solid #E0E4EA; border-radius:6px;">
-          <summary style="padding:8px 12px; cursor:pointer; background:{AMEX_BG};
-                         border-radius:6px; font-size:0.9em;">
-            <strong>Turn {turn}</strong>
-            <span style="float:right; background:{sbg}; color:{sc}; padding:2px 8px;
-                         border-radius:10px; font-size:0.85em; font-weight:600;">
-              {score:.2f}</span>
-          </summary>
-          <div style="padding:8px 12px; font-size:0.85em;">
-            {q_list}
-            {explanation_text}
+        questions_html += f"""
+        <div style="display:flex; align-items:flex-start; gap:8px; margin-bottom:6px;
+                    padding:6px 10px; border:1px solid #E0E4EA; border-radius:6px;">
+          <span style="background:{sbg}; color:{sc}; padding:1px 8px; border-radius:10px;
+                       font-size:0.8em; font-weight:700; white-space:nowrap; flex-shrink:0;
+                       margin-top:2px;">{status}</span>
+          <div style="font-size:0.9em;">
+            {text}{target_html}
+            {reason_html}
           </div>
-        </details>"""
+        </div>"""
+
+    if not questions_html:
+        questions_html = (
+            '<div style="font-size:0.9em; color:#666;">No probing questions generated.</div>'
+        )
 
     return f"""<div class="card">
-      <h4 style="color:{AMEX_NAVY}; margin:0 0 12px 0;">Question Adherence Detail</h4>
+      <h4 style="color:{AMEX_NAVY}; margin:0 0 12px 0;">Probing Question Lifecycle</h4>
       {stats_html}
-      <div style="max-height:300px; overflow-y:auto;">{turns_html}</div>
+      <div style="max-height:400px; overflow-y:auto;">{questions_html}</div>
     </div>"""
 
 
@@ -754,32 +799,39 @@ def _build_evidence_table_html(report: EvaluationReport | None) -> str:
         return '<div class="card"><p>No evidence utilization data available.</p></div>'
 
     eu = report.evidence_utilization
-    ret_color = _score_color(eu.retrieval_coverage)
-    reas_color = _score_color(eu.reasoning_coverage)
+
+    def _coverage_category(ratio: float) -> str:
+        """Map a 0-1 coverage ratio to a categorical label."""
+        if ratio >= 0.7:
+            return "high"
+        if ratio >= 0.4:
+            return "medium"
+        return "low"
+
+    ret_cat = _coverage_category(eu.retrieval_coverage)
+    reas_cat = _coverage_category(eu.reasoning_coverage)
+    ret_badge = _rating_badge(ret_cat)
+    reas_badge = _rating_badge(reas_cat)
+    ret_detail = f"{eu.retrieved_nodes}/{eu.total_evidence_nodes} nodes"
+    reas_detail = f"{eu.referenced_in_reasoning}/{eu.total_evidence_nodes} nodes"
 
     # Coverage summary
     summary = f"""
     <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px;
                 justify-content:space-around;">
       <div class="metric-box">
-        <div class="metric-value" style="color:{ret_color};">{eu.retrieval_coverage:.0%}</div>
+        <div class="metric-value">{ret_badge}</div>
         <div class="metric-label">Retrieval Coverage</div>
+        <div style="font-size:0.8em; color:#666;">{ret_detail}</div>
       </div>
       <div class="metric-box">
-        <div class="metric-value" style="color:{reas_color};">{eu.reasoning_coverage:.0%}</div>
+        <div class="metric-value">{reas_badge}</div>
         <div class="metric-label">Reasoning Coverage</div>
+        <div style="font-size:0.8em; color:#666;">{reas_detail}</div>
       </div>
       <div class="metric-box">
         <div class="metric-value" style="color:{AMEX_BLUE};">{eu.total_evidence_nodes}</div>
         <div class="metric-label">Total Nodes</div>
-      </div>
-      <div class="metric-box">
-        <div class="metric-value" style="color:{AMEX_BLUE};">{eu.retrieved_nodes}</div>
-        <div class="metric-label">Retrieved</div>
-      </div>
-      <div class="metric-box">
-        <div class="metric-value" style="color:{AMEX_BLUE};">{eu.referenced_in_reasoning}</div>
-        <div class="metric-label">Referenced</div>
       </div>
     </div>"""
 
@@ -864,7 +916,7 @@ def _build_decision_html(report: EvaluationReport | None) -> str:
                 )
                 items += (
                     f'<li style="margin:4px 0;"><strong>{evidence}</strong>'
-                    f'{influence_str}{desc_str}</li>'
+                    f"{influence_str}{desc_str}</li>"
                 )
             parts.append(
                 f'<div style="margin-bottom:14px;">'
@@ -964,26 +1016,40 @@ def _build_decision_html(report: EvaluationReport | None) -> str:
 # -- Section 8: CCP Note Alignment ------------------------------------------------
 
 
+def _rating_badge(label: str) -> str:
+    """Return an HTML badge for a categorical rating (low/medium/high)."""
+    colors = {
+        "high": ("#155724", "#D4EDDA"),
+        "medium": ("#856404", "#FFF3CD"),
+        "low": ("#721C24", "#F8D7DA"),
+    }
+    fg, bg = colors.get(label.lower(), ("#333", "#E0E0E0"))
+    return (
+        f'<span style="display:inline-block; padding:4px 14px; border-radius:12px; '
+        f'font-weight:600; font-size:0.95em; background:{bg}; color:{fg};">'
+        f"{label.capitalize()}</span>"
+    )
+
+
 def _build_note_alignment_html(report: EvaluationReport | None) -> str:
-    """Build HTML showing CCP note alignment scores and explanation."""
+    """Build HTML showing CCP note alignment ratings and explanation."""
     if not report or not report.note_alignment:
         return '<div class="card"><p>No CCP note alignment data available.</p></div>'
 
     na = report.note_alignment
 
     dims = [
-        ("Facts Coverage", na.facts_coverage_score),
-        ("Allegation Alignment", na.allegation_alignment_score),
-        ("Category & Action", na.category_action_score),
-        ("Overall", na.overall_score),
+        ("Facts Coverage", na.facts_coverage),
+        ("Allegation Alignment", na.allegation_alignment),
+        ("Category & Action", na.category_action),
+        ("Overall", na.overall),
     ]
 
     metrics_html = ""
-    for label, score in dims:
-        color = _score_color(score)
+    for label, rating in dims:
         metrics_html += (
             f'<div class="metric-box">'
-            f'<div class="metric-value" style="color:{color};">{score:.2f}</div>'
+            f'<div class="metric-value">{_rating_badge(rating)}</div>'
             f'<div class="metric-label">{label}</div>'
             f"</div>"
         )
@@ -994,7 +1060,7 @@ def _build_note_alignment_html(report: EvaluationReport | None) -> str:
             f'<div style="margin-top:14px; padding:10px; background:{AMEX_BG}; '
             f'border-radius:6px; font-size:0.85em; line-height:1.6; color:#333;">'
             f'<strong style="color:{AMEX_NAVY};">Explanation:</strong><br/>'
-            f'{na.explanation.replace(chr(10), "<br/>")}'
+            f"{na.explanation.replace(chr(10), '<br/>')}"
             f"</div>"
         )
 
@@ -1095,7 +1161,22 @@ def _load_scenario(scenario_name: str) -> tuple:
     """
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
-        return empty, None, None, empty, None, empty, None, empty, empty, empty, empty, empty, empty, None
+        return (
+            empty,
+            None,
+            None,
+            empty,
+            None,
+            empty,
+            None,
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+            None,
+        )
 
     scenario_dir = os.path.join(BASE_DIR, scenario_name)
     report = load_evaluation_report(scenario_dir)
@@ -1188,12 +1269,14 @@ def create_eval_dashboard_app() -> gr.Blocks:
             with gr.Column(scale=2):
                 prediction_html = gr.HTML()
 
-        # Section 4: Question Adherence
-        gr.HTML('<div class="section-header" style="color:white;">Question Adherence</div>')
+        # Section 4: Probing Question Lifecycle
+        gr.HTML(
+            '<div class="section-header" style="color:white;">Probing Question Lifecycle</div>'
+        )
         with gr.Row():
-            with gr.Column(scale=3):
-                adherence_plot = gr.Plot(label="Per-Turn Adherence")
             with gr.Column(scale=2):
+                adherence_plot = gr.Plot(label="Lifecycle Distribution")
+            with gr.Column(scale=3):
                 adherence_detail_html = gr.HTML()
 
         # Section 5: Allegation Extraction Quality
@@ -1214,9 +1297,7 @@ def create_eval_dashboard_app() -> gr.Blocks:
         decision_html = gr.HTML()
 
         # Section 8: CCP Note Alignment
-        gr.HTML(
-            '<div class="section-header" style="color:white;">CCP Note Alignment</div>'
-        )
+        gr.HTML('<div class="section-header" style="color:white;">CCP Note Alignment</div>')
         note_alignment_html = gr.HTML()
 
         # Section 9: Transcript Replay

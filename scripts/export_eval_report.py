@@ -216,8 +216,8 @@ def _build_full_report(scenario_name: str) -> str:
       <div>{prediction_html}</div>
     </div>
 
-    <!-- Section 4: Question Adherence -->
-    <div class="section-title">4. Question Adherence</div>
+    <!-- Section 4: Probing Question Lifecycle -->
+    <div class="section-title">4. Probing Question Lifecycle</div>
     <div class="two-col" style="margin-bottom:12px;">
       <div class="card">{adherence_img}</div>
       <div>{adherence_detail_html}</div>

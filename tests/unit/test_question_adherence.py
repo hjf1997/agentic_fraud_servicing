@@ -1,10 +1,6 @@
-"""Tests for the question adherence evaluator — LLM-powered CCP incorporation check."""
+"""Tests for the probing question lifecycle evaluator."""
 
 from __future__ import annotations
-
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from agentic_fraud_servicing.evaluation.models import (
     EvaluationRun,
@@ -12,7 +8,6 @@ from agentic_fraud_servicing.evaluation.models import (
     TurnMetric,
 )
 from agentic_fraud_servicing.evaluation.question_adherence import (
-    AdherenceScore,
     evaluate_question_adherence,
 )
 
@@ -21,18 +16,15 @@ def _make_turn(
     turn_number: int,
     speaker: str,
     text: str = "",
-    suggested_questions: list[str] | None = None,
+    copilot_suggestion: dict | None = None,
 ) -> TurnMetric:
     """Build a TurnMetric with optional copilot suggestion."""
-    suggestion = None
-    if suggested_questions is not None:
-        suggestion = {"suggested_questions": suggested_questions}
     return TurnMetric(
         turn_number=turn_number,
         speaker=speaker,
         text=text or f"Turn {turn_number}",
         latency_ms=500.0,
-        copilot_suggestion=suggestion,
+        copilot_suggestion=copilot_suggestion,
     )
 
 
@@ -49,170 +41,124 @@ def _make_run(turns: list[TurnMetric]) -> EvaluationRun:
     )
 
 
-# Patch target for Runner.run in the question_adherence module
-_RUNNER_PATCH = "agentic_fraud_servicing.evaluation.question_adherence.run_with_retry"
+def _pq(text: str, status: str, target: str = "", reason: str = "") -> dict:
+    """Shorthand to build a probing question dict."""
+    return {
+        "text": text,
+        "status": status,
+        "target_category": target,
+        "reason": reason,
+        "turn_suggested": 1,
+        "assessment_suggested": 1,
+    }
 
 
-def _mock_adherence(score: float, explanation: str = "Test") -> AsyncMock:
-    """Create a mock Runner.run result with an AdherenceScore output."""
-    result = MagicMock()
-    result.final_output = AdherenceScore(score=score, explanation=explanation)
-    return AsyncMock(return_value=result)
+class TestLifecycleExtraction:
+    """Extracts probing question stats from the last copilot suggestion."""
 
-
-class TestAdherenceScore:
-    """AdherenceScore Pydantic model."""
-
-    def test_defaults(self):
-        s = AdherenceScore()
-        assert s.score == 0.0
-        assert s.explanation == ""
-
-    def test_all_fields(self):
-        s = AdherenceScore(score=0.75, explanation="Partially rephrased")
-        assert s.score == 0.75
-        assert s.explanation == "Partially rephrased"
-
-
-class TestFullAdherence:
-    """All CCP turns fully incorporate suggestions."""
-
-    @pytest.mark.asyncio
-    async def test_all_turns_score_one(self):
-        turns = [
-            _make_turn(1, "CARDMEMBER", suggested_questions=["Ask about date"]),
-            _make_turn(2, "CCP", text="When did the transaction happen?"),
-            _make_turn(3, "CARDMEMBER", suggested_questions=["Ask about merchant"]),
-            _make_turn(4, "CCP", text="Which merchant was this at?"),
-        ]
-        run = _make_run(turns)
-
-        with patch(_RUNNER_PATCH, _mock_adherence(1.0, "Fully incorporated")):
-            result = await evaluate_question_adherence(run, MagicMock())
-
-        assert isinstance(result, QuestionAdherenceResult)
-        assert result.turns_with_suggestions == 2
-        assert result.turns_with_adherence == 2
-        assert result.overall_adherence_rate == 1.0
-        assert len(result.per_turn_scores) == 2
-
-
-class TestPartialAdherence:
-    """Mix of adherence scores across turns."""
-
-    @pytest.mark.asyncio
-    async def test_mixed_scores(self):
-        turns = [
-            _make_turn(1, "CARDMEMBER", suggested_questions=["Q1"]),
-            _make_turn(2, "CCP", text="Response 1"),
-            _make_turn(3, "CARDMEMBER", suggested_questions=["Q2"]),
-            _make_turn(4, "CCP", text="Response 2"),
-            _make_turn(5, "CARDMEMBER", suggested_questions=["Q3"]),
-            _make_turn(6, "CCP", text="Response 3"),
-        ]
-        run = _make_run(turns)
-
-        # Return different scores for each call: 1.0, 0.0, 0.5
-        call_count = 0
-        scores = [1.0, 0.0, 0.5]
-
-        async def mock_run(*args, **kwargs):
-            nonlocal call_count
-            score = scores[call_count]
-            call_count += 1
-            result = MagicMock()
-            result.final_output = AdherenceScore(score=score, explanation="Test")
-            return result
-
-        with patch(_RUNNER_PATCH, side_effect=mock_run):
-            result = await evaluate_question_adherence(run, MagicMock())
-
-        assert result.turns_with_suggestions == 3
-        # 1.0 >= 0.5 (yes), 0.0 < 0.5 (no), 0.5 >= 0.5 (yes)
-        assert result.turns_with_adherence == 2
-        assert abs(result.overall_adherence_rate - 2 / 3) < 0.01
-
-
-class TestNoSuggestions:
-    """No turns have suggested questions."""
-
-    @pytest.mark.asyncio
-    async def test_returns_zero_rate(self):
+    def test_all_answered(self):
+        suggestion = {
+            "probing_questions": [
+                _pq("Q1", "answered", "SCAM"),
+                _pq("Q2", "answered", "THIRD_PARTY_FRAUD"),
+            ],
+            "information_sufficient": True,
+        }
         turns = [
             _make_turn(1, "CARDMEMBER"),
-            _make_turn(2, "CCP", text="Hello"),
-            _make_turn(3, "CARDMEMBER"),
+            _make_turn(10, "CARDMEMBER", copilot_suggestion=suggestion),
         ]
-        run = _make_run(turns)
+        result = evaluate_question_adherence(_make_run(turns))
 
-        result = await evaluate_question_adherence(run, MagicMock())
+        assert isinstance(result, QuestionAdherenceResult)
+        assert result.total_questions == 2
+        assert result.answered == 2
+        assert result.invalidated == 0
+        assert result.skipped == 0
+        assert result.pending == 0
+        assert result.information_sufficient is True
+        assert result.overall_adherence_rate == 1.0
 
-        assert result.turns_with_suggestions == 0
-        assert result.turns_with_adherence == 0
+    def test_mixed_statuses(self):
+        suggestion = {
+            "probing_questions": [
+                _pq("Q1", "answered", "SCAM"),
+                _pq("Q2", "invalidated", "DISPUTE", "hypothesis collapsed"),
+                _pq("Q3", "skipped", "THIRD_PARTY_FRAUD", "CCP did not ask"),
+                _pq("Q4", "pending", "SCAM"),
+            ],
+            "information_sufficient": False,
+        }
+        turns = [_make_turn(5, "CCP", copilot_suggestion=suggestion)]
+        result = evaluate_question_adherence(_make_run(turns))
+
+        assert result.total_questions == 4
+        assert result.answered == 1
+        assert result.invalidated == 1
+        assert result.skipped == 1
+        assert result.pending == 1
+        assert result.information_sufficient is False
+        assert result.overall_adherence_rate == 0.25
+
+    def test_uses_last_suggestion(self):
+        """When multiple suggestions exist, uses the last one with probing_questions."""
+        early = {
+            "probing_questions": [_pq("Old Q", "pending", "SCAM")],
+            "information_sufficient": False,
+        }
+        late = {
+            "probing_questions": [
+                _pq("Old Q", "answered", "SCAM"),
+                _pq("New Q", "pending", "DISPUTE"),
+            ],
+            "information_sufficient": False,
+        }
+        turns = [
+            _make_turn(1, "CARDMEMBER", copilot_suggestion=early),
+            _make_turn(5, "CARDMEMBER"),
+            _make_turn(10, "CCP", copilot_suggestion=late),
+        ]
+        result = evaluate_question_adherence(_make_run(turns))
+
+        assert result.total_questions == 2
+        assert result.answered == 1
+        assert result.pending == 1
+
+
+class TestNoQuestions:
+    """No probing questions in the run."""
+
+    def test_no_suggestions_at_all(self):
+        turns = [_make_turn(1, "CARDMEMBER"), _make_turn(2, "CCP")]
+        result = evaluate_question_adherence(_make_run(turns))
+
+        assert result.total_questions == 0
         assert result.overall_adherence_rate == 0.0
-        assert result.per_turn_scores == []
+        assert result.probing_questions == []
+
+    def test_suggestions_without_probing_questions(self):
+        suggestion = {"suggested_questions": ["Q1"], "probing_questions": []}
+        turns = [_make_turn(1, "CCP", copilot_suggestion=suggestion)]
+        result = evaluate_question_adherence(_make_run(turns))
+
+        assert result.total_questions == 0
+        assert result.probing_questions == []
 
 
-class TestNoCcpFollowUp:
-    """Suggestion exists but no CCP turn follows — should be skipped."""
+class TestQuestionDetails:
+    """Verify the probing_questions list is preserved in the result."""
 
-    @pytest.mark.asyncio
-    async def test_skipped_without_penalty(self):
-        turns = [
-            _make_turn(1, "CARDMEMBER", suggested_questions=["Ask about amount"]),
-            # No CCP turn after this
+    def test_contains_full_question_data(self):
+        pqs = [
+            _pq("Ask about phishing texts", "answered", "SCAM", "CM described the text"),
+            _pq("Confirm card chip type", "skipped", "THIRD_PARTY_FRAUD", "staleness window"),
         ]
-        run = _make_run(turns)
+        suggestion = {"probing_questions": pqs, "information_sufficient": True}
+        turns = [_make_turn(1, "CCP", copilot_suggestion=suggestion)]
+        result = evaluate_question_adherence(_make_run(turns))
 
-        result = await evaluate_question_adherence(run, MagicMock())
-
-        # Counted as having suggestions, but no per-turn score recorded
-        assert result.turns_with_suggestions == 1
-        assert result.turns_with_adherence == 0
-        assert result.per_turn_scores == []
-        assert result.overall_adherence_rate == 0.0
-
-
-class TestPerTurnScoreContent:
-    """Verify per_turn_scores dict structure."""
-
-    @pytest.mark.asyncio
-    async def test_contains_expected_keys(self):
-        turns = [
-            _make_turn(1, "CARDMEMBER", suggested_questions=["What merchant?"]),
-            _make_turn(2, "CCP", text="Can you tell me the merchant name?"),
-        ]
-        run = _make_run(turns)
-
-        with patch(_RUNNER_PATCH, _mock_adherence(0.8, "Rephrased well")):
-            result = await evaluate_question_adherence(run, MagicMock())
-
-        assert len(result.per_turn_scores) == 1
-        entry = result.per_turn_scores[0]
-        assert entry["turn_number"] == 1
-        assert entry["suggested_questions"] == ["What merchant?"]
-        assert entry["ccp_response_turn"] == 2
-        assert entry["ccp_text"] == "Can you tell me the merchant name?"
-        assert entry["adherence_score"] == 0.8
-        assert entry["explanation"] == "Rephrased well"
-
-
-class TestLlmFailureGraceful:
-    """LLM failure on a turn should return 0.0 for that turn, not crash."""
-
-    @pytest.mark.asyncio
-    async def test_returns_zero_on_failure(self):
-        turns = [
-            _make_turn(1, "CARDMEMBER", suggested_questions=["Q1"]),
-            _make_turn(2, "CCP", text="Response"),
-        ]
-        run = _make_run(turns)
-
-        with patch(_RUNNER_PATCH, side_effect=Exception("LLM timeout")):
-            result = await evaluate_question_adherence(run, MagicMock())
-
-        assert result.turns_with_suggestions == 1
-        assert result.turns_with_adherence == 0
-        assert len(result.per_turn_scores) == 1
-        assert result.per_turn_scores[0]["adherence_score"] == 0.0
-        assert "LLM scoring failed" in result.per_turn_scores[0]["explanation"]
+        assert len(result.probing_questions) == 2
+        assert result.probing_questions[0]["text"] == "Ask about phishing texts"
+        assert result.probing_questions[0]["status"] == "answered"
+        assert result.probing_questions[0]["reason"] == "CM described the text"
+        assert result.probing_questions[1]["status"] == "skipped"

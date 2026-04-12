@@ -508,8 +508,8 @@ def _build_copilot_final_html(
             )
         if last_sug.get("information_sufficient"):
             advisory_html += (
-                f'<p style="margin-top:8px;"><span class="elig-badge elig-eligible">'
-                f"Ready to Proceed</span></p>"
+                '<p style="margin-top:8px;"><span class="elig-badge elig-eligible">'
+                "Ready to Proceed</span></p>"
             )
 
     spec_section = ""

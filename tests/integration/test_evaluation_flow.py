@@ -13,12 +13,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from agentic_fraud_servicing.copilot.question_planner import QuestionPlan
 
 from agentic_fraud_servicing.copilot.auth_agent import AuthAssessment
 from agentic_fraud_servicing.copilot.case_advisor import CaseAdvisory, CaseTypeAssessment
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
-from agentic_fraud_servicing.copilot.question_planner import QuestionPlan
 from agentic_fraud_servicing.copilot.retrieval_agent import RetrievalResult
 from agentic_fraud_servicing.evaluation.models import (
     EvaluationReport,
@@ -274,7 +274,7 @@ class TestPurePythonReport:
         report = await generate_report(run, model_provider=None)
 
         assert report.prediction is None
-        assert report.question_adherence is None
+        assert report.question_adherence is not None  # pure-Python evaluator
         assert report.allegation_quality is None
         assert report.risk_flag_timeliness is None
         assert report.decision_explanation is None
@@ -310,7 +310,6 @@ class TestFullReportWithMockedLLM:
             AllegationQualityResult,
             DecisionExplanation,
             PredictionResult,
-            QuestionAdherenceResult,
             RiskFlagTimelinessResult,
         )
 
@@ -318,18 +317,12 @@ class TestFullReportWithMockedLLM:
             sample_transcript_events, gateway_factory, tmp_path, mock_model_provider
         )
 
-        # Mock all 5 LLM-powered evaluator functions
+        # Mock LLM-powered evaluator functions (question_adherence is now pure-Python)
         mock_prediction = PredictionResult(
             predicted_category="THIRD_PARTY_FRAUD",
             ground_truth_category="THIRD_PARTY_FRAUD",
             match=True,
             confidence_delta=0.3,
-        )
-        mock_adherence = QuestionAdherenceResult(
-            per_turn_scores=[],
-            overall_adherence_rate=0.8,
-            turns_with_suggestions=4,
-            turns_with_adherence=3,
         )
         mock_allegation = AllegationQualityResult(
             precision=0.9,
@@ -353,11 +346,6 @@ class TestFullReportWithMockedLLM:
                 "agentic_fraud_servicing.evaluation.report.evaluate_prediction",
                 new_callable=AsyncMock,
                 return_value=mock_prediction,
-            ),
-            patch(
-                "agentic_fraud_servicing.evaluation.report.evaluate_question_adherence",
-                new_callable=AsyncMock,
-                return_value=mock_adherence,
             ),
             patch(
                 "agentic_fraud_servicing.evaluation.report.evaluate_allegation_quality",

@@ -12,8 +12,6 @@ import json
 
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
-
-from agentic_fraud_servicing.providers.retry import run_with_retry
 from pydantic import BaseModel
 
 from agentic_fraud_servicing.evaluation.models import (
@@ -21,6 +19,7 @@ from agentic_fraud_servicing.evaluation.models import (
     NoteAlignmentResult,
 )
 from agentic_fraud_servicing.ingestion.redaction import redact_all_gsgt
+from agentic_fraud_servicing.providers.retry import run_with_retry
 
 # --- Output model for LLM scoring ---
 
@@ -31,19 +30,19 @@ class NoteAlignmentScore(BaseModel):
     Attributes:
         copilot_category: The investigation category the copilot concluded.
         ccp_category: The investigation category the CCP concluded.
-        facts_coverage: 0.0-1.0 — did copilot capture the same key facts?
-        allegation_alignment: 0.0-1.0 — does copilot's understanding match CCP's?
-        category_action: 0.0-1.0 — do category and recommended actions agree?
-        overall: 0.0-1.0 — average of the three sub-scores.
+        facts_coverage: low/medium/high — did copilot capture the same key facts?
+        allegation_alignment: low/medium/high — does copilot's understanding match CCP's?
+        category_action: low/medium/high — do category and recommended actions agree?
+        overall: low/medium/high — worst-of-three (conservative aggregate).
         explanation: Brief rationale for each sub-score.
     """
 
     copilot_category: str = ""
     ccp_category: str = ""
-    facts_coverage: float = 0.0
-    allegation_alignment: float = 0.0
-    category_action: float = 0.0
-    overall: float = 0.0
+    facts_coverage: str = "low"
+    allegation_alignment: str = "low"
+    category_action: str = "low"
+    overall: str = "low"
     explanation: str = ""
 
 
@@ -59,23 +58,23 @@ You will receive:
    case eligibility assessments.
 2. **CCP Notes**: The verbatim notes written by the human CCP during/after the call.
 
-## Score three sub-dimensions (each 0.0 to 1.0):
+## Rate three sub-dimensions as "low", "medium", or "high":
 
 ### 1. Facts Coverage
 Did the copilot capture the same key facts the CCP noted?
-- **1.0**: All key facts (amounts, dates, merchants, card details, transaction
+- **high**: All key facts (amounts, dates, merchants, card details, transaction
   specifics) mentioned in CCP notes are present in copilot output.
-- **0.5**: Most key facts are captured but some significant details are missing.
-- **0.0**: Major facts from CCP notes are absent from copilot output.
+- **medium**: Most key facts are captured but some significant details are missing.
+- **low**: Major facts from CCP notes are absent from copilot output.
 
 ### 2. Allegation Alignment
 Does the copilot's understanding of the customer's claims match the CCP's
 characterization?
-- **1.0**: Copilot's extracted allegations fully align with what the CCP
+- **high**: Copilot's extracted allegations fully align with what the CCP
   documented about the customer's complaint.
-- **0.5**: Partial alignment — copilot captured the main complaint but missed
+- **medium**: Partial alignment — copilot captured the main complaint but missed
   nuances or secondary claims noted by the CCP.
-- **0.0**: Copilot's allegation understanding contradicts or misses the CCP's
+- **low**: Copilot's allegation understanding contradicts or misses the CCP's
   characterization entirely.
 
 ### 3. Category & Action Agreement
@@ -86,21 +85,16 @@ This dimension requires **reasoning trace comparison**, not just outcome matchin
 
 **When copilot and CCP agree on the outcome:**
 - Verify the copilot's reasoning is coherent with the CCP's reasoning. A correct
-  outcome reached through wrong reasoning is unreliable and should score lower.
-- **1.0**: Category and actions agree AND the copilot's reasoning trace (hypothesis
+  outcome reached through wrong reasoning is unreliable and should rate lower.
+- **high**: Category and actions agree AND the copilot's reasoning trace (hypothesis
   scores, evidence cited, risk flags) is coherent with the CCP's rationale.
-- **0.7**: Category and actions agree but the copilot's reasoning diverges from
+- **medium**: Category and actions agree but the copilot's reasoning diverges from
   the CCP's — the right answer was reached for partially wrong reasons (e.g.,
   copilot flagged correct category but based on different evidence than CCP cited).
-- **0.5**: Category matches but actions differ, or the copilot's reasoning is
-  incoherent even though the outcome happens to be correct.
 
 **When copilot and CCP disagree on the outcome:**
-- Compare both reasoning traces to identify WHERE they diverge and WHY.
-- **0.3**: Category or actions partially overlap — copilot's reasoning shows
-  some valid signals but missed key evidence that led CCP to a different conclusion.
-- **0.0**: Complete disagreement — copilot's reasoning contradicts the CCP's
-  assessment with no valid supporting evidence.
+- **low**: Category or actions disagree — copilot's reasoning missed key evidence
+  that led CCP to a different conclusion, or contradicts the CCP's assessment.
 
 ## Category Extraction (MANDATORY first step)
 
@@ -110,15 +104,19 @@ Before scoring, you MUST:
 2. Identify the CCP's concluded category from their notes and reasoning.
    Set `ccp_category` to one of: third_party_fraud, first_party_fraud, scam, dispute.
 3. If `copilot_category` and `ccp_category` differ, the outcomes DISAGREE — you
-   MUST use the disagreement rubric (0.0–0.3) for Category & Action Agreement.
-   Do not conflate discussing the same topic (e.g., both mention fraud) with
-   reaching the same conclusion (e.g., both conclude third-party fraud).
+   MUST rate Category & Action as "low".
+
+## Overall Rating
+Set `overall` to the **worst** of the three sub-ratings (conservative aggregate).
+For example, if facts_coverage=high, allegation_alignment=high, category_action=low,
+then overall=low.
 
 ## Rules
-1. Be lenient on wording — focus on semantic equivalence, not exact phrasing.
-2. The CCP notes may use informal language or abbreviations.
-3. The copilot output uses structured fields — compare substance, not format.
-4. Set `overall` to the average of the three sub-scores.
+1. Each of `facts_coverage`, `allegation_alignment`, `category_action`, and
+   `overall` must be exactly one of: "low", "medium", "high".
+2. Be lenient on wording — focus on semantic equivalence, not exact phrasing.
+3. The CCP notes may use informal language or abbreviations.
+4. The copilot output uses structured fields — compare substance, not format.
 5. Provide a comprehensive explanation (4-8 sentences) that covers:
    - Facts coverage: which key facts were captured or missed.
    - Allegation alignment: how well the copilot understood the customer's claims.
@@ -156,10 +154,6 @@ async def evaluate_note_alignment(
     ccp_notes, _ = redact_all_gsgt(run.ground_truth.get("ccp_notes", ""))
     if not ccp_notes:
         return NoteAlignmentResult(
-            facts_coverage_score=0.0,
-            allegation_alignment_score=0.0,
-            category_action_score=0.0,
-            overall_score=0.0,
             explanation="No CCP notes in ground truth — skipped.",
         )
 
@@ -167,10 +161,10 @@ async def evaluate_note_alignment(
     score = await _score_alignment(copilot_summary, ccp_notes, model_provider)
 
     return NoteAlignmentResult(
-        facts_coverage_score=score.facts_coverage,
-        allegation_alignment_score=score.allegation_alignment,
-        category_action_score=score.category_action,
-        overall_score=score.overall,
+        facts_coverage=score.facts_coverage,
+        allegation_alignment=score.allegation_alignment,
+        category_action=score.category_action,
+        overall=score.overall,
         explanation=score.explanation,
     )
 
@@ -211,13 +205,11 @@ def _build_copilot_summary(run: EvaluationRun) -> str:
     if last_suggestion:
         if last_suggestion.get("case_eligibility"):
             parts.append(
-                "## Case Eligibility\n"
-                + json.dumps(last_suggestion["case_eligibility"], indent=2)
+                "## Case Eligibility\n" + json.dumps(last_suggestion["case_eligibility"], indent=2)
             )
         if last_suggestion.get("risk_flags"):
             parts.append(
-                "## Risk Flags\n"
-                + "\n".join(f"- {f}" for f in last_suggestion["risk_flags"])
+                "## Risk Flags\n" + "\n".join(f"- {f}" for f in last_suggestion["risk_flags"])
             )
         if last_suggestion.get("running_summary"):
             parts.append(f"## Running Summary\n{last_suggestion['running_summary']}")
@@ -246,10 +238,7 @@ async def _score_alignment(
     Returns:
         NoteAlignmentScore. Falls back to zero scores on failure.
     """
-    user_msg = (
-        f"## Copilot Output\n{copilot_summary}\n\n"
-        f"## CCP Notes\n{ccp_notes}"
-    )
+    user_msg = f"## Copilot Output\n{copilot_summary}\n\n## CCP Notes\n{ccp_notes}"
 
     try:
         result = await run_with_retry(
@@ -258,26 +247,32 @@ async def _score_alignment(
             run_config=RunConfig(model_provider=model_provider),
         )
         score: NoteAlignmentScore = result.final_output
+        # Normalize to lowercase for consistent comparison.
+        score.facts_coverage = score.facts_coverage.strip().lower()
+        score.allegation_alignment = score.allegation_alignment.strip().lower()
+        score.category_action = score.category_action.strip().lower()
+        score.overall = score.overall.strip().lower()
         # Consistency guard: if extracted categories disagree but the LLM
-        # scored category_action above the disagreement ceiling, cap it.
-        _DISAGREEMENT_CEILING = 0.3
+        # rated category_action above "low", force it down.
         if (
             score.copilot_category
             and score.ccp_category
-            and score.copilot_category.strip().lower()
-            != score.ccp_category.strip().lower()
-            and score.category_action > _DISAGREEMENT_CEILING
+            and score.copilot_category.strip().lower() != score.ccp_category.strip().lower()
+            and score.category_action != "low"
         ):
-            score.category_action = _DISAGREEMENT_CEILING
-            score.overall = round(
-                (score.facts_coverage + score.allegation_alignment + score.category_action)
-                / 3,
-                2,
+            score.category_action = "low"
+            # Recompute overall as worst-of-three.
+            _RANK = {"low": 0, "medium": 1, "high": 2}
+            worst = min(
+                _RANK.get(score.facts_coverage, 0),
+                _RANK.get(score.allegation_alignment, 0),
+                _RANK.get(score.category_action, 0),
             )
+            score.overall = {0: "low", 1: "medium", 2: "high"}[worst]
             score.explanation += (
                 f" [Auto-corrected: copilot concluded '{score.copilot_category}'"
                 f" but CCP concluded '{score.ccp_category}' —"
-                f" category_action capped at {_DISAGREEMENT_CEILING}.]"
+                f" category_action forced to 'low'.]"
             )
         return score
     except Exception as exc:

@@ -181,7 +181,7 @@ def _format_report_text(report) -> str:
     _dims = {
         "latency": ("Latency Compliance", report.latency),
         "prediction": ("Prediction Accuracy", report.prediction),
-        "question_adherence": ("Question Adherence", report.question_adherence),
+        "question_adherence": ("Q. Lifecycle", report.question_adherence),
         "allegation_quality": ("Allegation Quality", report.allegation_quality),
         "evidence_utilization": ("Evidence Utilization", report.evidence_utilization),
         "convergence": ("Convergence Speed", report.convergence),

@@ -57,10 +57,15 @@ def _make_report(**overrides) -> EvaluationReport:
             correct_category="FIRST_PARTY_FRAUD",
         ),
         "question_adherence": QuestionAdherenceResult(
-            per_turn_scores=[],
-            overall_adherence_rate=0.8,
-            turns_with_suggestions=3,
-            turns_with_adherence=2,
+            probing_questions=[
+                {"text": "Q1", "status": "answered"},
+                {"text": "Q2", "status": "skipped"},
+            ],
+            total_questions=2,
+            answered=1,
+            skipped=1,
+            overall_adherence_rate=0.5,
+            information_sufficient=True,
         ),
         "allegation_quality": AllegationQualityResult(
             precision=0.9,

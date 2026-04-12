@@ -1,15 +1,14 @@
 """Report aggregator that orchestrates all 9 evaluators and produces an EvaluationReport.
 
-Runs pure-Python evaluators (latency, convergence, evidence utilization) unconditionally.
-LLM-powered evaluators (prediction, question adherence, allegation quality, risk flag
-timeliness, decision explanation, note alignment) run only when a model_provider is
-supplied. Each evaluator call is wrapped in try/except for graceful degradation — failures
-produce None for that dimension.
+Runs pure-Python evaluators (latency, convergence, evidence utilization, question
+adherence) unconditionally. LLM-powered evaluators (prediction, allegation quality,
+risk flag timeliness, decision explanation, note alignment) run only when a
+model_provider is supplied. Each evaluator call is wrapped in try/except for graceful
+degradation — failures produce None for that dimension.
 """
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -46,6 +45,7 @@ def _format_eval_error(evaluator: str, exc: BaseException) -> str:
     if status_code is not None:
         return f"[report] {evaluator} evaluator failed (HTTP {status_code}): {error_body[:300]}"
     return f"[report] {evaluator} evaluator failed: {exc}"
+
 
 # Dimension weights for overall score calculation.
 _WEIGHTS: dict[str, float] = {
@@ -85,7 +85,8 @@ def extract_dimension_score(dimension: str, result: object) -> float | None:
     if dimension == "decision_explanation":
         return 1.0 if result.reasoning_chain else 0.0  # type: ignore[union-attr]
     if dimension == "note_alignment":
-        return result.overall_score  # type: ignore[union-attr]
+        _CATEGORY_MAP = {"low": 0.25, "medium": 0.6, "high": 0.9}
+        return _CATEGORY_MAP.get(result.overall, 0.25)  # type: ignore[union-attr]
 
     return None
 
@@ -147,17 +148,17 @@ async def generate_report(
     except Exception as exc:
         print(_format_eval_error("evidence_utilization", exc))
 
+    try:
+        results["question_adherence"] = evaluate_question_adherence(run)
+    except Exception as exc:
+        print(_format_eval_error("question_adherence", exc))
+
     # --- LLM-powered evaluators (only when model_provider is available) ---
     if model_provider is not None:
         try:
             results["prediction"] = await evaluate_prediction(run, model_provider)
         except Exception as exc:
             print(_format_eval_error("prediction", exc))
-
-        try:
-            results["question_adherence"] = await evaluate_question_adherence(run, model_provider)
-        except Exception as exc:
-            print(_format_eval_error("question_adherence", exc))
 
         try:
             results["allegation_quality"] = await evaluate_allegation_quality(run, model_provider)
@@ -172,9 +173,7 @@ async def generate_report(
             print(_format_eval_error("risk_flag_timeliness", exc))
 
         try:
-            results["note_alignment"] = await evaluate_note_alignment(
-                run, model_provider
-            )
+            results["note_alignment"] = await evaluate_note_alignment(run, model_provider)
         except Exception as exc:
             print(_format_eval_error("note_alignment", exc))
 

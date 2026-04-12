@@ -89,12 +89,21 @@ class PredictionResult(BaseModel):
 
 
 class QuestionAdherenceResult(BaseModel):
-    """CCP question incorporation measurement."""
+    """Probing question lifecycle summary extracted from copilot runs.
 
-    per_turn_scores: list[dict] = Field(default_factory=list)
-    overall_adherence_rate: float
-    turns_with_suggestions: int
-    turns_with_adherence: int
+    Instead of LLM-scored CCP adherence, this now reports the lifecycle
+    status of all probing questions tracked by the copilot itself.
+    """
+
+    probing_questions: list[dict] = Field(default_factory=list)
+    total_questions: int = 0
+    answered: int = 0
+    invalidated: int = 0
+    skipped: int = 0
+    pending: int = 0
+    information_sufficient: bool = False
+    overall_adherence_rate: float = 0.0
+    """Fraction of questions that were answered (answered / total)."""
 
 
 class AllegationQualityResult(BaseModel):
@@ -150,12 +159,13 @@ class DecisionExplanation(BaseModel):
 
 
 class NoteAlignmentResult(BaseModel):
-    """Copilot output vs CCP notes alignment scores."""
+    """Copilot output vs CCP notes alignment — categorical ratings."""
 
-    facts_coverage_score: float
-    allegation_alignment_score: float
-    category_action_score: float
-    overall_score: float
+    facts_coverage: str = "low"
+    """One of 'low', 'medium', 'high'."""
+    allegation_alignment: str = "low"
+    category_action: str = "low"
+    overall: str = "low"
     explanation: str = ""
 
 

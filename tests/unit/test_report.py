@@ -64,10 +64,20 @@ _PREDICTION = PredictionResult(
 )
 
 _QUESTION_ADHERENCE = QuestionAdherenceResult(
-    per_turn_scores=[],
-    overall_adherence_rate=0.8,
-    turns_with_suggestions=5,
-    turns_with_adherence=4,
+    probing_questions=[
+        {"text": "Q1", "status": "answered"},
+        {"text": "Q2", "status": "answered"},
+        {"text": "Q3", "status": "invalidated"},
+        {"text": "Q4", "status": "skipped"},
+        {"text": "Q5", "status": "answered"},
+    ],
+    total_questions=5,
+    answered=3,
+    invalidated=1,
+    skipped=1,
+    pending=0,
+    information_sufficient=True,
+    overall_adherence_rate=0.6,
 )
 
 _ALLEGATION_QUALITY = AllegationQualityResult(
@@ -90,10 +100,10 @@ _DECISION_EXPLANATION = DecisionExplanation(
 )
 
 _NOTE_ALIGNMENT = NoteAlignmentResult(
-    facts_coverage_score=0.8,
-    allegation_alignment_score=0.7,
-    category_action_score=0.9,
-    overall_score=0.8,
+    facts_coverage="high",
+    allegation_alignment="medium",
+    category_action="high",
+    overall="medium",
     explanation="Good alignment overall.",
 )
 
@@ -136,6 +146,10 @@ class TestGenerateReport:
             patch(
                 f"{_PATCH_BASE}.evaluate_evidence_utilization", return_value=_EVIDENCE
             ) as self.mock_ev,
+            patch(
+                f"{_PATCH_BASE}.evaluate_question_adherence",
+                return_value=_QUESTION_ADHERENCE,
+            ) as self.mock_qa,
         ):
             yield
 
@@ -143,16 +157,16 @@ class TestGenerateReport:
         report = await generate_report(_make_run())
         assert isinstance(report, EvaluationReport)
 
-    async def test_three_dimensions_populated(self):
+    async def test_four_dimensions_populated(self):
         report = await generate_report(_make_run())
         assert report.latency is not None
         assert report.convergence is not None
         assert report.evidence_utilization is not None
+        assert report.question_adherence is not None
 
     async def test_llm_dimensions_are_none(self):
         report = await generate_report(_make_run())
         assert report.prediction is None
-        assert report.question_adherence is None
         assert report.allegation_quality is None
         assert report.risk_flag_timeliness is None
         assert report.decision_explanation is None
@@ -167,15 +181,17 @@ class TestGenerateReport:
         assert "T" in report.generated_at  # ISO format
 
     async def test_overall_score_uses_available_dimensions(self):
-        """Overall score should be weighted average of 3 available dimensions only."""
+        """Overall score should be weighted average of 4 available dimensions only."""
         report = await generate_report(_make_run())
         # latency: compliance_rate=1.0, weight=0.10
         # convergence: 1.0 - 0.4 = 0.6, weight=0.13
         # evidence: (0.75+0.50)/2 = 0.625, weight=0.10
-        # total_weight = 0.10 + 0.13 + 0.10 = 0.33
-        # weighted_sum = 0.10*1.0 + 0.13*0.6 + 0.10*0.625 = 0.10 + 0.078 + 0.0625 = 0.2405
-        # overall = 0.2405 / 0.33 ≈ 0.7288
-        assert 0.72 < report.overall_score < 0.74
+        # question_adherence: 0.6, weight=0.10
+        # total_weight = 0.10 + 0.13 + 0.10 + 0.10 = 0.43
+        # weighted_sum = 0.10*1.0 + 0.13*0.6 + 0.10*0.625 + 0.10*0.6
+        #              = 0.10 + 0.078 + 0.0625 + 0.06 = 0.3005
+        # overall = 0.3005 / 0.43 ≈ 0.6988
+        assert 0.69 < report.overall_score < 0.71
 
 
 # ---------------------------------------------------------------------------
@@ -193,14 +209,13 @@ class TestGenerateReportWithLlm:
             patch(f"{_PATCH_BASE}.evaluate_convergence", return_value=_CONVERGENCE),
             patch(f"{_PATCH_BASE}.evaluate_evidence_utilization", return_value=_EVIDENCE),
             patch(
+                f"{_PATCH_BASE}.evaluate_question_adherence",
+                return_value=_QUESTION_ADHERENCE,
+            ),
+            patch(
                 f"{_PATCH_BASE}.evaluate_prediction",
                 new_callable=AsyncMock,
                 return_value=_PREDICTION,
-            ),
-            patch(
-                f"{_PATCH_BASE}.evaluate_question_adherence",
-                new_callable=AsyncMock,
-                return_value=_QUESTION_ADHERENCE,
             ),
             patch(
                 f"{_PATCH_BASE}.evaluate_allegation_quality",
@@ -245,15 +260,15 @@ class TestGenerateReportWithLlm:
         # Manually compute expected score:
         # latency: 1.0 * 0.10 = 0.100
         # prediction: 1.0 * 0.18 = 0.180
-        # question_adherence: 0.8 * 0.10 = 0.080
+        # question_adherence: 0.6 * 0.10 = 0.060
         # allegation_quality: 0.85 * 0.15 = 0.1275
         # evidence: 0.625 * 0.10 = 0.0625
         # convergence: 0.6 * 0.13 = 0.078
         # risk_flag: 0.75 * 0.10 = 0.075
         # decision: 1.0 * 0.04 = 0.040
-        # note_alignment: 0.8 * 0.10 = 0.080
-        # total = 0.8230
-        assert 0.82 < report.overall_score < 0.83
+        # note_alignment: "medium" → 0.6 * 0.10 = 0.060
+        # total = 0.7830
+        assert 0.78 < report.overall_score < 0.79
 
 
 # ---------------------------------------------------------------------------
@@ -281,14 +296,13 @@ class TestGracefulDegradation:
             patch(f"{_PATCH_BASE}.evaluate_convergence", return_value=_CONVERGENCE),
             patch(f"{_PATCH_BASE}.evaluate_evidence_utilization", return_value=_EVIDENCE),
             patch(
+                f"{_PATCH_BASE}.evaluate_question_adherence",
+                return_value=_QUESTION_ADHERENCE,
+            ),
+            patch(
                 f"{_PATCH_BASE}.evaluate_prediction",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("LLM timeout"),
-            ),
-            patch(
-                f"{_PATCH_BASE}.evaluate_question_adherence",
-                new_callable=AsyncMock,
-                return_value=_QUESTION_ADHERENCE,
             ),
             patch(
                 f"{_PATCH_BASE}.evaluate_allegation_quality",

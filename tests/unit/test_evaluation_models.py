@@ -294,37 +294,38 @@ class TestPredictionResult:
 
 class TestQuestionAdherenceResult:
     def test_defaults(self):
-        qa = QuestionAdherenceResult(
-            overall_adherence_rate=0.8,
-            turns_with_suggestions=5,
-            turns_with_adherence=4,
-        )
-        assert qa.per_turn_scores == []
-        assert qa.overall_adherence_rate == 0.8
+        qa = QuestionAdherenceResult()
+        assert qa.probing_questions == []
+        assert qa.total_questions == 0
+        assert qa.answered == 0
+        assert qa.overall_adherence_rate == 0.0
+        assert qa.information_sufficient is False
 
     def test_all_fields(self):
         qa = QuestionAdherenceResult(
-            per_turn_scores=[
-                {
-                    "turn_number": 3,
-                    "suggested_questions": ["When did you notice?"],
-                    "ccp_response": "When did you first notice this charge?",
-                    "adherence_score": 0.9,
-                }
+            probing_questions=[
+                {"text": "Q1", "status": "answered", "target_category": "SCAM"},
+                {"text": "Q2", "status": "skipped", "target_category": "DISPUTE"},
             ],
-            overall_adherence_rate=0.9,
-            turns_with_suggestions=1,
-            turns_with_adherence=1,
+            total_questions=2,
+            answered=1,
+            invalidated=0,
+            skipped=1,
+            pending=0,
+            information_sufficient=True,
+            overall_adherence_rate=0.5,
         )
-        assert len(qa.per_turn_scores) == 1
-        assert qa.per_turn_scores[0]["adherence_score"] == 0.9
+        assert len(qa.probing_questions) == 2
+        assert qa.answered == 1
+        assert qa.skipped == 1
 
     def test_json_round_trip(self):
         qa = QuestionAdherenceResult(
-            per_turn_scores=[{"turn_number": 1, "adherence_score": 0.7}],
-            overall_adherence_rate=0.7,
-            turns_with_suggestions=3,
-            turns_with_adherence=2,
+            probing_questions=[{"text": "Q1", "status": "answered"}],
+            total_questions=1,
+            answered=1,
+            overall_adherence_rate=1.0,
+            information_sufficient=True,
         )
         restored = QuestionAdherenceResult.model_validate_json(qa.model_dump_json())
         assert restored == qa
