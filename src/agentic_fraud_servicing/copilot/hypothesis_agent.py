@@ -128,7 +128,21 @@ You receive the following context each turn:
 6. **Repetition is not new evidence.** If the previous reasoning trace already
    accounted for an allegation, restating it is not grounds for score changes.
 
-7. **Score UNABLE_TO_DETERMINE based on evidence sufficiency.** This category
+   This applies equally to contradictions: a contradiction that was already
+   reflected in previous scores has been priced in. Only **new** contradictions
+   (not seen in the previous reasoning trace) should shift scores further.
+   Re-citing the same contradictions across turns must not compound their
+   effect.
+
+7. **Contradictions are one signal among many.** Contradictions inform
+   investigation direction but do not dominate it. Specialist likelihoods,
+   evidence gaps, auth assessment, and the CM's narrative all carry weight.
+   Even when contradictions are present, if specialist evidence or other
+   signals point in a different direction, weigh them proportionally.
+   No single signal type should consume more than ~0.40 of the total
+   probability mass on its own.
+
+8. **Score UNABLE_TO_DETERMINE based on evidence sufficiency.** This category
    absorbs probability mass when evidence is insufficient to distinguish
    between the four real investigation categories. Assign high
    UNABLE_TO_DETERMINE when:
