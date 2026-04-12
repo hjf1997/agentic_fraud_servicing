@@ -143,14 +143,10 @@ class CopilotOrchestrator:
             return None
 
         # 3. CARDMEMBER event: check assess_interval.
-        # Always run on the first CM turn and the last turn. After that, run
-        # every assess_interval CM turns (e.g. interval=5 → CM turns 1, 6, 11, ...).
+        # Run every assess_interval CM turns (e.g. interval=5 → CM turns 5, 10, 15, ...)
+        # and always on the last turn.
         self._cm_turn_count += 1
-        if (
-            not is_last
-            and self._cm_turn_count > 1
-            and (self._cm_turn_count - 1) % self.assess_interval != 0
-        ):
+        if not is_last and self._cm_turn_count % self.assess_interval != 0:
             return None
 
         # 4. CARDMEMBER event: run full agent pipeline
