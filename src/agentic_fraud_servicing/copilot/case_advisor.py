@@ -325,11 +325,10 @@ For EACH pending question, determine its new status:
   that substantially covers what the question was seeking, mark it answered.
   Provide a brief reason (e.g., "CM confirmed they did not authorize the txn").
 
-- **invalidated** — The question is no longer relevant because:
-  - The hypothesis category it targets has collapsed to near-zero (< 0.05)
-  - Evidence from other sources already resolved the underlying gap
+- **invalidated** — The question is no longer relevant based on conversation context:
+  - Evidence from the conversation already resolved the underlying gap
   - The conversation has moved past the point where asking makes sense
-  Provide a brief reason (e.g., "SCAM hypothesis collapsed to 0.02").
+  Provide a brief reason (e.g., "CM already provided merchant details").
 
 - **pending** — The question has NOT been answered and is still relevant.
   Leave reason empty.
