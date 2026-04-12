@@ -191,15 +191,16 @@ You receive:
 3. **Recent Conversation** — Recent transcript turns for context.
 4. **Current Question List** — All previously suggested probing questions with
    their lifecycle status: `pending` (not yet answered), `answered` (CM
-   addressed the topic), or `invalidated` (no longer relevant). Use this to
-   avoid generating duplicate questions and to assess probing progress.
+   addressed the topic), `invalidated` (no longer relevant), or `skipped`
+   (CCP chose not to ask within the staleness window). Use this to avoid
+   generating duplicate questions and to assess probing progress.
 
 ## When to Return Empty Questions
 
 Return an empty `questions` list when no further probing is needed:
 
-- All questions in the list are answered or invalidated AND no new evidence
-  gaps remain that can be resolved during this call, OR
+- All questions in the list are resolved (answered, invalidated, or skipped)
+  AND no new evidence gaps remain that can be resolved during this call, OR
 - The leading hypothesis specialist has eligibility `eligible` AND has no
   critical online evidence gaps remaining, OR
 - All specialists have eligibility `blocked` for reasons that cannot be
@@ -224,7 +225,7 @@ the cardmember).
    investigation).
 
 2. **Generate 0-3 NEW questions only**: Do NOT repeat any question already in
-   the question list (whether pending, answered, or invalidated). Each question
+   the question list (whether pending, answered, invalidated, or skipped). Each question
    must target a distinct evidence gap not already covered. Questions must be
    concise (one sentence), natural, and suitable for a live phone call.
 

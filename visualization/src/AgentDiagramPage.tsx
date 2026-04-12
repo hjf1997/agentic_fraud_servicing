@@ -22,7 +22,7 @@ type AgentDiagram = {
 const agents: AgentDiagram[] = [
   {
     id: "triage",
-    name: "Allegation Extractor",
+    name: "Intent Extractor",
     icon: "\uD83D\uDCCB",
     color: "#006FCF",
     subtitle: "",
@@ -120,12 +120,29 @@ const agents: AgentDiagram[] = [
     inputs: [
       { label: "Specialist Evidence Gaps", icon: "\u2753" },
       { label: "Case Typing Scores", icon: "\uD83D\uDCCA" },
-      { label: "Previous Questions (dedup)", icon: "\uD83D\uDCC4" },
+      { label: "Validated Question List (with statuses)", icon: "\uD83D\uDCCB" },
     ],
     outputs: [
-      { label: "Probing Questions (0-3)", icon: "\uD83D\uDDE3\uFE0F" },
+      { label: "New Probing Questions (0-3)", icon: "\uD83D\uDDE3\uFE0F" },
+      { label: "Question Targets (per question)", icon: "\uD83C\uDFAF" },
       { label: "Case Eligibility Status", icon: "\u2705" },
-      { label: "Information Sufficient Signal", icon: "\uD83D\uDED1" },
+    ],
+  },
+  {
+    id: "question_validator",
+    name: "Question Validator",
+    icon: "\u2753",
+    color: "#006FCF",
+    subtitle: "",
+    description: "",
+    inputs: [
+      { label: "Pending Probing Questions", icon: "\uD83D\uDCCB" },
+      { label: "New Conversation Turns", icon: "\uD83D\uDCAC" },
+      { label: "Current Hypothesis Scores", icon: "\uD83D\uDCCA" },
+    ],
+    outputs: [
+      { label: "Status Updates (answered/invalidated)", icon: "\u2705" },
+      { label: "Resolution Reasons", icon: "\uD83D\uDCDD" },
     ],
   },
 ];

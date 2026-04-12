@@ -7,13 +7,17 @@ type Message = {
   text: string;
 };
 
+type ProbingQuestion = {
+  text: string;
+  status: "pending" | "answered" | "invalidated" | "skipped";
+  target: string;
+};
+
 type CopilotResult = {
   runLabel: string;
   turnRange: string;
-  scores: { category: string; score: number; trend: "up" | "down" | "stable" }[];
-  questions: string[];
-  riskFlags: string[];
-  eligibility: { label: string; status: "eligible" | "blocked" }[];
+  probingQuestions: ProbingQuestion[];
+  informationSufficient: boolean;
   caseEligibility: { fraudCase: "eligible" | "blocked"; disputeCase: "eligible" | "blocked" };
 };
 
@@ -71,165 +75,158 @@ const conversation: (Message & { run?: number })[] = [
 const copilotResults: CopilotResult[] = [
   {
     runLabel: "Copilot Run 1", turnRange: "Turn 1-8",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.72, trend: "up" },
-      { category: "First-Party Fraud", score: 0.15, trend: "stable" },
-      { category: "Scam", score: 0.08, trend: "stable" },
-      { category: "Billing Dispute", score: 0.05, trend: "down" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "pending", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "pending", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "pending", target: "THIRD_PARTY_FRAUD" },
     ],
-    questions: [
-      "Ask if CM received suspicious emails or texts recently",
-      "Check if there are additional unauthorized charges",
-      "Confirm whether card has chip or contactless enabled",
-    ],
-    riskFlags: ["Unauthorized transaction reported", "Card-present vs card-not-present mismatch"],
-    eligibility: [],
+    informationSufficient: false,
     caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 2", turnRange: "Turn 9-11",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.68, trend: "down" },
-      { category: "First-Party Fraud", score: 0.12, trend: "down" },
-      { category: "Scam", score: 0.15, trend: "up" },
-      { category: "Billing Dispute", score: 0.05, trend: "stable" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "pending", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "pending", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "pending", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "pending", target: "THIRD_PARTY_FRAUD" },
     ],
-    questions: [
-      "Probe for social engineering indicators",
-      "Ask about recent communication from unknown sources",
-      "Verify the $52.99 streaming charge details",
-    ],
-    riskFlags: ["Multiple unauthorized transactions", "Pattern suggests compromised credentials"],
-    eligibility: [],
+    informationSufficient: false,
     caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 3", turnRange: "Turn 12-13",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.45, trend: "down" },
-      { category: "First-Party Fraud", score: 0.05, trend: "down" },
-      { category: "Scam", score: 0.48, trend: "up" },
-      { category: "Billing Dispute", score: 0.02, trend: "down" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "pending", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "pending", target: "THIRD_PARTY_FRAUD" },
+      { text: "Collect phishing text details: sender number, URL domain", status: "pending", target: "SCAM" },
+      { text: "Ask when CM entered credentials on the site", status: "pending", target: "SCAM" },
     ],
-    questions: [
-      "Collect phishing text details: sender number, URL domain",
-      "Ask when CM entered credentials on the site",
-      "Confirm whether CM has changed passwords since",
-    ],
-    riskFlags: ["Phishing/social engineering confirmed", "Credential compromise likely", "Scam hypothesis surging"],
-    eligibility: [],
+    informationSufficient: false,
     caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 4", turnRange: "Turn 14-16",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.38, trend: "down" },
-      { category: "First-Party Fraud", score: 0.03, trend: "down" },
-      { category: "Scam", score: 0.57, trend: "up" },
-      { category: "Billing Dispute", score: 0.02, trend: "stable" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
+      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
+      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
+      { text: "Check for additional compromised accounts", status: "pending", target: "SCAM" },
     ],
-    questions: [
-      "Correlate timeline: phishing event vs. first unauthorized charge",
-      "Ask if CM changed password after the phishing event",
-      "Check for additional compromised accounts",
-    ],
-    riskFlags: ["Short code 55247 flagged as known phishing vector", "Charge timeline matches credential theft pattern"],
-    eligibility: [],
+    informationSufficient: false,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 5", turnRange: "Turn 17-19",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.32, trend: "down" },
-      { category: "First-Party Fraud", score: 0.02, trend: "stable" },
-      { category: "Scam", score: 0.64, trend: "up" },
-      { category: "Billing Dispute", score: 0.02, trend: "stable" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
+      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
+      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
+      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
+      { text: "Ask about password reuse across services", status: "pending", target: "SCAM" },
     ],
-    questions: [
-      "Advise CM to change passwords on all financial sites",
-      "Ask about password reuse across services",
-      "Recommend enabling two-factor authentication",
-    ],
-    riskFlags: ["Password not changed \u2014 account still at risk", "Credential theft confirmed via phishing"],
-    eligibility: [],
+    informationSufficient: false,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 6", turnRange: "Turn 20-22",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.28, trend: "down" },
-      { category: "First-Party Fraud", score: 0.02, trend: "stable" },
-      { category: "Scam", score: 0.68, trend: "up" },
-      { category: "Billing Dispute", score: 0.02, trend: "stable" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
+      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
+      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
+      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
+      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
+      { text: "Verify CM's location on date of in-store transaction", status: "pending", target: "THIRD_PARTY_FRAUD" },
     ],
-    questions: [
-      "Confirm CM did not authorize the TechMart purchase",
-      "Verify CM's location on date of in-store transaction",
-      "Check auth logs for device/IP anomalies",
-    ],
-    riskFlags: ["Password reused across financial services", "Broad credential exposure risk", "CM confirms no authorization"],
-    eligibility: [],
+    informationSufficient: false,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 7", turnRange: "Turn 23-24",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.22, trend: "down" },
-      { category: "First-Party Fraud", score: 0.01, trend: "down" },
-      { category: "Scam", score: 0.76, trend: "up" },
-      { category: "Billing Dispute", score: 0.01, trend: "stable" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
+      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
+      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
+      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
+      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
+      { text: "Verify CM's location on date of in-store transaction", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Document geographic impossibility as evidence", status: "pending", target: "THIRD_PARTY_FRAUD" },
     ],
-    questions: [
-      "Cross-reference Manhattan transactions to confirm CM location",
-      "Document geographic impossibility as evidence",
-    ],
-    riskFlags: ["Geographic impossibility: NYC and Dallas same day", "Counterfeit card creation suspected"],
-    eligibility: [],
+    informationSufficient: false,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 8", turnRange: "Turn 25-27",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.18, trend: "down" },
-      { category: "First-Party Fraud", score: 0.01, trend: "stable" },
-      { category: "Scam", score: 0.80, trend: "up" },
-      { category: "Billing Dispute", score: 0.01, trend: "stable" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
+      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
+      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
+      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
+      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
+      { text: "Verify CM's location on date of in-store transaction", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Document geographic impossibility as evidence", status: "answered", target: "THIRD_PARTY_FRAUD" },
     ],
-    questions: [
-      "Confirm full attack chain: phishing \u2192 credential theft \u2192 card cloning",
-      "Prepare case summary for investigation team",
-    ],
-    riskFlags: ["Full attack chain confirmed", "Manhattan alibi corroborated by transaction data"],
-    eligibility: [],
+    informationSufficient: true,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 9", turnRange: "Turn 28-30",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.15, trend: "down" },
-      { category: "First-Party Fraud", score: 0.01, trend: "stable" },
-      { category: "Scam", score: 0.83, trend: "up" },
-      { category: "Billing Dispute", score: 0.01, trend: "stable" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
+      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
+      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
+      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
+      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
+      { text: "Verify CM's location on date of in-store transaction", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Document geographic impossibility as evidence", status: "answered", target: "THIRD_PARTY_FRAUD" },
     ],
-    questions: [
-      "Confirm CM understands next steps and timeline",
-      "Provide case reference number",
-    ],
-    riskFlags: ["Scam classification high confidence", "Recommend immediate card deactivation"],
-    eligibility: [],
+    informationSufficient: true,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
     runLabel: "Copilot Run 10", turnRange: "Turn 31-35",
-    scores: [
-      { category: "Third-Party Fraud", score: 0.12, trend: "down" },
-      { category: "First-Party Fraud", score: 0.01, trend: "stable" },
-      { category: "Scam", score: 0.86, trend: "stable" },
-      { category: "Billing Dispute", score: 0.01, trend: "stable" },
+    probingQuestions: [
+      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
+      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
+      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
+      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
+      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
+      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
+      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
+      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
+      { text: "Verify CM's location on date of in-store transaction", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Document geographic impossibility as evidence", status: "answered", target: "THIRD_PARTY_FRAUD" },
     ],
-    questions: [],
-    riskFlags: ["Case resolved \u2014 scam via phishing with card cloning"],
-    eligibility: [],
+    informationSufficient: true,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
 ];
@@ -360,68 +357,115 @@ function ChatBubble({ msg, isNew }: { msg: Message; isNew: boolean }) {
   );
 }
 
-function ScoreBar({ category, score, trend }: CopilotResult["scores"][0]) {
-  const pct = Math.round(score * 100);
-  const trendIcon = trend === "up" ? "\u2191" : trend === "down" ? "\u2193" : "\u2192";
-  const trendColor = trend === "up" ? "#CF291D" : trend === "down" ? "#008000" : "#53565A";
-  const barColor =
-    score >= 0.5 ? "#CF291D" : score >= 0.3 ? "#F5A623" : "#008000";
+
+function QuestionStatusBadge({ status }: { status: ProbingQuestion["status"] }) {
+  const statusColor =
+    status === "answered" ? "#008000" :
+    status === "invalidated" ? "#CF291D" :
+    status === "skipped" ? "#53565A" :
+    "#F5A623";
+  const statusBg =
+    status === "answered" ? "#D4EDDA" :
+    status === "invalidated" ? "#F8D7DA" :
+    status === "skipped" ? "#E2E3E5" :
+    "#FFF3CD";
+  return (
+    <span style={{
+      display: "inline-block",
+      padding: "1px 8px",
+      borderRadius: 10,
+      fontSize: 12,
+      fontWeight: 700,
+      background: statusBg,
+      color: statusColor,
+      whiteSpace: "nowrap",
+      flexShrink: 0,
+      marginTop: 2,
+    }}>{status}</span>
+  );
+}
+
+function QuestionListPanel({ result }: { result: CopilotResult | null }) {
+  if (!result) {
+    return (
+      <div style={{ padding: 20, color: "#53565A", fontSize: 14, textAlign: "center" }}>
+        {"\u23F3"} Waiting for copilot...
+      </div>
+    );
+  }
+
+  const pending = result.probingQuestions.filter((pq) => pq.status === "pending");
+  const resolved = result.probingQuestions.filter((pq) => pq.status !== "pending");
 
   return (
-    <div className="score-row">
-      <div className="score-label">{category}</div>
-      <div className="score-bar-track">
-        <div className="score-bar-fill" style={{ width: `${pct}%`, background: barColor }} />
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Pending questions — what CCP should ask */}
+      <div>
+        <div className="copilot-section-title" style={{ marginBottom: 8 }}>
+          Pending ({pending.length})
+        </div>
+        {pending.length > 0 ? (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {pending.map((pq, i) => (
+              <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8, padding: "8px 10px", background: "#FFF3CD20", border: "1px solid #F5A62330", borderRadius: 8 }}>
+                <QuestionStatusBadge status={pq.status} />
+                <span style={{ fontSize: 15, lineHeight: 1.4 }}>
+                  {pq.text}
+                  <span style={{ color: "#53565A", fontSize: 13, marginLeft: 4 }}>[{pq.target}]</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div style={{ fontSize: 15, color: "#53565A", fontStyle: "italic" }}>No pending questions</div>
+        )}
       </div>
-      <div className="score-value">{pct}%</div>
-      <div className="score-trend" style={{ color: trendColor }}>{trendIcon}</div>
+
+      {/* Resolved questions */}
+      {resolved.length > 0 && (
+        <div>
+          <div className="copilot-section-title" style={{ marginBottom: 8 }}>
+            Resolved ({resolved.length})
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {resolved.map((pq, i) => (
+              <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6, opacity: 0.8 }}>
+                <QuestionStatusBadge status={pq.status} />
+                <span style={{ fontSize: 14, lineHeight: 1.4, color: "#53565A" }}>
+                  {pq.text}
+                  <span style={{ fontSize: 12, marginLeft: 4 }}>[{pq.target}]</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Information sufficient banner */}
+      {result.informationSufficient && (
+        <div style={{
+          fontSize: 14,
+          fontWeight: 700,
+          color: "#008000",
+          padding: "10px 14px",
+          background: "#D4EDDA",
+          borderRadius: 8,
+          textAlign: "center",
+        }}>
+          {"\u2705"} Information sufficient — ready to proceed
+        </div>
+      )}
     </div>
   );
 }
 
-function CopilotPanel({ result, isActive }: { result: CopilotResult; isActive: boolean }) {
+function CaseEligibilityPanel({ result, isActive }: { result: CopilotResult; isActive: boolean }) {
   return (
     <div className={`copilot-panel ${isActive ? "copilot-active" : ""}`}>
       <div className="copilot-header">
         <span className="copilot-run-badge">{result.runLabel}</span>
         <span className="copilot-turn-range">{result.turnRange}</span>
       </div>
-
-      {/* Scores */}
-      <div className="copilot-section">
-        <div className="copilot-section-title">Case Typing Scores</div>
-        {result.scores.map((s) => (
-          <ScoreBar key={s.category} {...s} />
-        ))}
-      </div>
-
-      {/* Probing Questions */}
-      <div className="copilot-section">
-        <div className="copilot-section-title">Probing Questions</div>
-        {result.questions.length > 0 ? (
-          <ul className="copilot-list">
-            {result.questions.map((q, i) => (
-              <li key={i}>{q}</li>
-            ))}
-          </ul>
-        ) : (
-          <div style={{ fontSize: 14, fontWeight: 600, color: "#008000" }}>
-            Question probing is completed
-          </div>
-        )}
-      </div>
-
-      {/* Risk Flags */}
-      <div className="copilot-section">
-        <div className="copilot-section-title">Risk Flags</div>
-        <div className="copilot-flags">
-          {result.riskFlags.map((f, i) => (
-            <span key={i} className="risk-flag">{f}</span>
-          ))}
-        </div>
-      </div>
-
-      {/* Case Eligibility */}
       <div className="copilot-section">
         <div className="copilot-section-title">Case Opening Eligibility</div>
         <div className="case-eligibility-row">
@@ -498,7 +542,7 @@ export default function DemoPage() {
         </div>
       </div>
 
-      {/* Main content */}
+      {/* Main content — three panels */}
       <div className="demo-content">
         {/* Left: Conversation */}
         <div className="demo-chat-panel">
@@ -521,11 +565,22 @@ export default function DemoPage() {
           </div>
         </div>
 
-        {/* Right: CCP Desktop */}
+        {/* Middle: Question List */}
+        <div className="demo-question-panel">
+          <div className="demo-panel-header">
+            <span className="demo-panel-dot" style={{ background: "#F5A623" }} />
+            Probing Questions
+          </div>
+          <div className="demo-question-scroll">
+            <QuestionListPanel result={activeRun >= 0 ? copilotResults[activeRun] : null} />
+          </div>
+        </div>
+
+        {/* Right: Copilot Run Results */}
         <div className="demo-copilot-panel">
           <div className="demo-panel-header">
             <span className="demo-panel-dot" style={{ background: "#006FCF" }} />
-            CCP Desktop — Copilot Suggestions
+            Copilot Run Results
           </div>
           <div className="demo-copilot-scroll">
             {activeRun < 0 ? (
@@ -537,9 +592,7 @@ export default function DemoPage() {
             ) : (
               <>
                 <ScoreCurveChart visibleRuns={activeRun + 1} />
-                {copilotResults.slice(0, activeRun + 1).reverse().map((r, i, arr) => (
-                  <CopilotPanel key={r.runLabel} result={r} isActive={i === 0} />
-                ))}
+                <CaseEligibilityPanel result={copilotResults[activeRun]} isActive={true} />
               </>
             )}
           </div>

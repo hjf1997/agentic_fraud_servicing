@@ -356,7 +356,7 @@ body {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #E0E0E0;
-  max-width: 33.333%;
+  min-width: 0;
 }
 
 .demo-panel-header {
@@ -471,12 +471,37 @@ body {
   white-space: nowrap;
 }
 
+/* ── Question Panel (Middle) ── */
+
+.demo-question-panel {
+  flex: 1.2;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #E0E0E0;
+  min-width: 0;
+}
+
+.demo-question-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.demo-question-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.demo-question-scroll::-webkit-scrollbar-thumb {
+  background: #C8C9C7;
+  border-radius: 3px;
+}
+
 /* ── Copilot Panel (Right) ── */
 
 .demo-copilot-panel {
-  flex: 2;
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .demo-copilot-scroll {
@@ -549,7 +574,7 @@ body {
 .copilot-run-badge {
   background: linear-gradient(135deg, #006FCF, #0050A0);
   color: #fff;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   padding: 4px 12px;
   border-radius: 6px;
@@ -557,7 +582,7 @@ body {
 }
 
 .copilot-turn-range {
-  font-size: 14px;
+  font-size: 16px;
   color: #53565A;
   font-weight: 500;
 }
@@ -571,7 +596,7 @@ body {
 }
 
 .copilot-section-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   color: #53565A;
   text-transform: uppercase;
@@ -734,17 +759,17 @@ body {
 }
 
 .case-eligibility-icon {
-  font-size: 22px;
+  font-size: 28px;
 }
 
 .case-eligibility-label {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   color: #00175A;
 }
 
 .case-eligibility-status {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
@@ -770,7 +795,7 @@ body {
   border-radius: 10px;
   padding: 10px 14px;
   animation: panel-in 0.5s ease-out;
-  max-width: 50%;
+  max-width: 100%;
 }
 
 .score-curve-svg {

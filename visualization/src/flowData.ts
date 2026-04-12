@@ -58,7 +58,7 @@ const agentNodes: AgentNode[] = [
     type: "agent",
     position: { x: 60, y: 140 },
     data: {
-      label: "Allegation Extractor",
+      label: "Intent Extractor",
       subtitle: "17-type allegation taxonomy",
       icon: "\uD83D\uDCCB",
       color: C.phase1,
@@ -87,11 +87,11 @@ const agentNodes: AgentNode[] = [
     },
   },
 
-  // Phase 2: specialists (parallel)
+  // Phase 2: specialists + question validator (parallel)
   {
     id: "dispute_spec",
     type: "agent",
-    position: { x: 40, y: 250 },
+    position: { x: 10, y: 250 },
     data: {
       label: "Dispute Specialist",
       subtitle: "Merchant performance claims",
@@ -102,7 +102,7 @@ const agentNodes: AgentNode[] = [
   {
     id: "scam_spec",
     type: "agent",
-    position: { x: 340, y: 250 },
+    position: { x: 260, y: 250 },
     data: {
       label: "Scam Specialist",
       subtitle: "External manipulator detection",
@@ -113,11 +113,22 @@ const agentNodes: AgentNode[] = [
   {
     id: "fraud_spec",
     type: "agent",
-    position: { x: 640, y: 250 },
+    position: { x: 510, y: 250 },
     data: {
       label: "Fraud Specialist",
       subtitle: "Unauthorized access / compromise",
       icon: "\uD83D\uDEE1\uFE0F",
+      color: C.specialist,
+    },
+  },
+  {
+    id: "question_validator",
+    type: "agent",
+    position: { x: 780, y: 250 },
+    data: {
+      label: "Question Validator",
+      subtitle: "Validates pending probing questions",
+      icon: "\u2753",
       color: C.specialist,
     },
   },
@@ -181,7 +192,7 @@ const groupNodes: GroupNode[] = [
     data: {
       label: "Phase 1 \u2014 Retrieval & Triage",
       color: C.phase1,
-      width: 890,
+      width: 1010,
       height: 95,
     },
     draggable: false,
@@ -190,11 +201,11 @@ const groupNodes: GroupNode[] = [
   {
     id: "group_phase2",
     type: "group",
-    position: { x: -10, y: 230 },
+    position: { x: -20, y: 230 },
     data: {
-      label: "Phase 2 \u2014 Specialist Assessment",
+      label: "Phase 2 \u2014 Specialist Assessment & Probing Question Validation",
       color: C.specialist,
-      width: 910,
+      width: 1010,
       height: 95,
     },
     draggable: false,
@@ -205,7 +216,7 @@ const groupNodes: GroupNode[] = [
     type: "group",
     position: { x: 90, y: 345 },
     data: {
-      label: "Phase 3 \u2014 Decision & Guidance",
+      label: "Phase 3 \u2014 Aggregation & Decision",
       color: C.arbitrator,
       width: 680,
       height: 95,
@@ -262,7 +273,7 @@ export const initialEdges: Edge[] = [
   makeEdge("orchestrator", "retrieval", undefined, C.phase1),
   makeEdge("orchestrator", "auth", undefined, C.phase1),
 
-  // Phase 1 -> Phase 2
+  // Phase 1 -> Phase 2 (Specialists)
   makeEdge("triage", "dispute_spec", undefined, C.specialist),
   makeEdge("triage", "scam_spec", undefined, C.specialist),
   makeEdge("triage", "fraud_spec", undefined, C.specialist),
@@ -273,6 +284,9 @@ export const initialEdges: Edge[] = [
   makeEdge("auth", "scam_spec", undefined, C.specialist),
   makeEdge("auth", "fraud_spec", undefined, C.specialist),
 
+  // Phase 1 -> Phase 2 (Question Validator — uses transcript + hypothesis scores)
+  makeEdge("orchestrator", "question_validator", undefined, C.specialist),
+
   // Specialists -> Arbitrator + Advisor
   makeEdge("dispute_spec", "arbitrator", undefined, C.arbitrator),
   makeEdge("scam_spec", "arbitrator", undefined, C.arbitrator),
@@ -280,6 +294,9 @@ export const initialEdges: Edge[] = [
   makeEdge("dispute_spec", "advisor", undefined, C.arbitrator),
   makeEdge("scam_spec", "advisor", undefined, C.arbitrator),
   makeEdge("fraud_spec", "advisor", undefined, C.arbitrator),
+
+  // Question Validator -> Case Advisor (validated question list)
+  makeEdge("question_validator", "advisor", undefined, C.arbitrator),
 
   // Synthesis -> Output
   makeEdge("arbitrator", "suggestion", undefined, C.output),
@@ -340,14 +357,15 @@ export type AnimationStep = {
 };
 
 // Helper to build a pipeline run (steps 2-8 of each run)
+// Run 1 has no pending probing questions, so Question Validator is skipped.
 const pipelineEdges = {
   phase1: ["orchestrator-triage", "orchestrator-retrieval", "orchestrator-auth"],
-  phase1to2: [
+  phase1to2Specialists: [
     "triage-dispute_spec", "triage-scam_spec", "triage-fraud_spec",
     "retrieval-dispute_spec", "retrieval-scam_spec", "retrieval-fraud_spec",
     "auth-dispute_spec", "auth-scam_spec", "auth-fraud_spec",
   ],
-  arb: [
+  arbBase: [
     "dispute_spec-arbitrator", "scam_spec-arbitrator", "fraud_spec-arbitrator",
     "dispute_spec-advisor", "scam_spec-advisor", "fraud_spec-advisor",
   ],
@@ -356,6 +374,18 @@ const pipelineEdges = {
 
 function makeRun(runNum: number, turnLabel: string): AnimationStep[] {
   const r = `Run ${runNum}`;
+  const hasValidator = runNum > 1;
+
+  const phase2Nodes = ["dispute_spec", "scam_spec", "fraud_spec"];
+  const phase2Edges = [...pipelineEdges.phase1to2Specialists];
+  const phase3Edges = [...pipelineEdges.arbBase];
+
+  if (hasValidator) {
+    phase2Nodes.push("question_validator");
+    phase2Edges.push("orchestrator-question_validator");
+    phase3Edges.push("question_validator-advisor");
+  }
+
   return [
     {
       activeNodes: ["conversation_bar", "transcript"],
@@ -380,16 +410,18 @@ function makeRun(runNum: number, turnLabel: string): AnimationStep[] {
       label: `${r} \u2014 Phase 1: Extraction + Retrieval + Auth in parallel`,
     },
     {
-      activeNodes: ["dispute_spec", "scam_spec", "fraud_spec"],
-      activeEdges: pipelineEdges.phase1to2,
+      activeNodes: phase2Nodes,
+      activeEdges: phase2Edges,
       doneNodes: ["triage", "retrieval", "auth"],
       duration: 1800,
-      label: `${r} \u2014 Phase 2: Three specialists assess in parallel`,
+      label: hasValidator
+        ? `${r} \u2014 Phase 2: Specialists + Question Validator in parallel`
+        : `${r} \u2014 Phase 2: Three specialists assess in parallel`,
     },
     {
       activeNodes: ["arbitrator", "advisor"],
-      activeEdges: pipelineEdges.arb,
-      doneNodes: ["dispute_spec", "scam_spec", "fraud_spec"],
+      activeEdges: phase3Edges,
+      doneNodes: phase2Nodes,
       duration: 1800,
       label: `${r} \u2014 Arbitrator scores hypotheses; Advisor plans questions`,
     },
