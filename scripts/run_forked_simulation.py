@@ -48,8 +48,12 @@ discover_scenarios()
 
 from agentic_fraud_servicing.config import get_settings  # noqa: E402
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator  # noqa: E402
+from agentic_fraud_servicing.gateway.tool_gateway import AuthContext  # noqa: E402
+from agentic_fraud_servicing.gateway.tools.write_tools import create_case  # noqa: E402
 from agentic_fraud_servicing.ingestion.redaction import redact_all  # noqa: E402
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event  # noqa: E402
+from agentic_fraud_servicing.models.case import AuditEntry, Case  # noqa: E402
+from agentic_fraud_servicing.models.enums import CaseStatus  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
 from agentic_fraud_servicing.providers.bedrock_provider import BedrockModelProvider  # noqa: E402
 from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
@@ -235,6 +239,7 @@ async def run_forked_simulation(
     cm_instructions: str,
     scenario_name: str | None = None,
     max_forked_turns: int = 14,
+    sim_name: str | None = None,
 ) -> None:
     """Run a forked simulation: replay real transcript, then fork to LLM.
 
@@ -244,6 +249,7 @@ async def run_forked_simulation(
         cm_instructions: User-provided instructions for the CM agent.
         scenario_name: Optional scenario name for evidence seeding.
         max_forked_turns: Maximum turns to generate after the fork point.
+        sim_name: Output directory name. Defaults to {scenario}_fork_turn{N}.
     """
     wall_start = time.perf_counter()
 
@@ -292,7 +298,9 @@ async def run_forked_simulation(
         simulator_provider = model_provider
 
     # -- Setup gateway and optional evidence seeding --
-    sim_name = f"forked_{os.path.splitext(os.path.basename(transcript_path))[0]}"
+    if not sim_name:
+        base = scenario_name or os.path.splitext(os.path.basename(transcript_path))[0]
+        sim_name = f"{base}_fork_turn{fork_after}"
     db_dir = f"data/simulation/{sim_name}"
     gateway = create_gateway(db_dir)
     print(f"{DIM}Gateway created with SQLite stores in {db_dir}/{RESET}")
@@ -307,6 +315,28 @@ async def run_forked_simulation(
         nodes = gateway.evidence_store.get_nodes_by_case(case_id)
         edges = gateway.evidence_store.get_edges_by_case(case_id)
         print(f"  Seeded {len(nodes)} evidence nodes, {len(edges)} edges from {scenario_name}")
+    else:
+        # Create a minimal case so the copilot and trace store have a valid case_id
+        ctx = AuthContext(agent_id="simulation", case_id=case_id, permissions={"write"})
+        now = datetime.now(timezone.utc)
+        minimal_case = Case(
+            case_id=case_id,
+            call_id=call_id,
+            customer_id="unknown",
+            account_id="unknown",
+            status=CaseStatus.OPEN,
+            audit_trail=[
+                AuditEntry(
+                    timestamp=now,
+                    action="case_created",
+                    agent_id="simulation",
+                    details="Minimal case for forked simulation (no scenario evidence).",
+                ),
+            ],
+            created_at=now,
+        )
+        create_case(gateway, ctx, minimal_case)
+        print(f"  {DIM}Created minimal case (no evidence seeded){RESET}")
 
     # -- Setup copilot --
     copilot = CopilotOrchestrator(gateway, model_provider)
@@ -540,6 +570,13 @@ def main() -> None:
         default=14,
         help="Maximum turns to generate after the fork point (default: 14).",
     )
+    parser.add_argument(
+        "--name",
+        "-n",
+        default=None,
+        help="Output directory name under data/simulation/. "
+        "Defaults to {scenario}_fork_turn{N} or {transcript}_fork_turn{N}.",
+    )
     args = parser.parse_args()
 
     # Validate transcript exists
@@ -548,7 +585,11 @@ def main() -> None:
         sys.exit(1)
 
     # Determine output directory and set up logging
-    sim_name = f"forked_{os.path.splitext(os.path.basename(args.transcript))[0]}"
+    if args.name:
+        sim_name = args.name
+    else:
+        base = args.scenario or os.path.splitext(os.path.basename(args.transcript))[0]
+        sim_name = f"{base}_fork_turn{args.fork_after}"
     output_dir = f"data/simulation/{sim_name}"
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, "simulation_output.txt")
@@ -564,6 +605,7 @@ def main() -> None:
                     cm_instructions=args.cm_instructions,
                     scenario_name=args.scenario,
                     max_forked_turns=args.max_forked_turns,
+                    sim_name=sim_name,
                 )
             )
         finally:
