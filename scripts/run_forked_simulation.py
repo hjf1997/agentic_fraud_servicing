@@ -238,7 +238,7 @@ async def run_forked_simulation(
     fork_after: int,
     cm_instructions: str,
     scenario_name: str | None = None,
-    max_forked_turns: int = 14,
+    min_forked_turns: int = 10,
     sim_name: str | None = None,
 ) -> None:
     """Run a forked simulation: replay real transcript, then fork to LLM.
@@ -248,7 +248,7 @@ async def run_forked_simulation(
         fork_after: Number of events to replay before forking.
         cm_instructions: User-provided instructions for the CM agent.
         scenario_name: Optional scenario name for evidence seeding.
-        max_forked_turns: Maximum turns to generate after the fork point.
+        min_forked_turns: Minimum turns to generate before allowing early stop.
         sim_name: Output directory name. Defaults to {scenario}_fork_turn{N}.
     """
     wall_start = time.perf_counter()
@@ -407,8 +407,9 @@ async def run_forked_simulation(
 
     # CCP always goes first after the fork — the whole point is to test
     # whether asking the copilot's probing questions surfaces useful info.
+    # Run at least min_forked_turns, then stop when information_sufficient.
     forked_turns = 0
-    while forked_turns < max_forked_turns:
+    while True:
         # -- CCP turn (guided by probing questions) --
         turn += 1
         forked_turns += 1
@@ -439,8 +440,7 @@ async def run_forked_simulation(
             duration_ms=ccp_dur,
         )
 
-        if forked_turns >= max_forked_turns:
-            break
+        # (continue to CM turn)
 
         # -- CM turn --
         turn += 1
@@ -461,7 +461,7 @@ async def run_forked_simulation(
         # Feed CM turn to copilot
         raw_event = _make_event(call_id, turn, "CARDMEMBER", cm_text)
         event = parse_transcript_event(raw_event)
-        is_last_cm = forked_turns + 2 >= max_forked_turns
+        is_last_cm = False  # we don't know when the conversation ends
         t0 = time.perf_counter()
         suggestion = await copilot.process_event(event, is_last=is_last_cm)
         copilot_dur = (time.perf_counter() - t0) * 1000
@@ -489,8 +489,8 @@ async def run_forked_simulation(
                 duration_ms=copilot_dur,
             )
 
-        # Stop early if copilot has enough information
-        if suggestion and suggestion.information_sufficient:
+        # Stop once minimum turns reached and copilot has enough information
+        if forked_turns >= min_forked_turns and suggestion and suggestion.information_sufficient:
             print(f"\n  {GREEN}Copilot: information sufficient — ending conversation{RESET}")
             break
 
@@ -565,11 +565,11 @@ def main() -> None:
         help="Optional scenario name for evidence seeding (e.g., scam_techvault).",
     )
     parser.add_argument(
-        "--max-forked-turns",
+        "--min-forked-turns",
         "-m",
         type=int,
-        default=14,
-        help="Maximum turns to generate after the fork point (default: 14).",
+        default=10,
+        help="Minimum forked turns before allowing early stop (default: 10).",
     )
     parser.add_argument(
         "--name",
@@ -605,7 +605,7 @@ def main() -> None:
                     fork_after=args.fork_after,
                     cm_instructions=args.cm_instructions,
                     scenario_name=args.scenario,
-                    max_forked_turns=args.max_forked_turns,
+                    min_forked_turns=args.min_forked_turns,
                     sim_name=sim_name,
                 )
             )
