@@ -205,3 +205,101 @@ def discover_scenarios() -> None:
 
 
 _IMPORTED_SCENARIOS: set[str] = set()
+
+
+# ---------------------------------------------------------------------------
+# Forked simulation support — CCP sees only probing questions, not full context
+# ---------------------------------------------------------------------------
+
+CCP_FORK_SYSTEM_PROMPT = """\
+You are role-playing as Sarah, an American Express Contact Center Professional \
+(CCP) continuing an ongoing fraud dispute call. You are professional, empathetic, \
+and thorough.
+
+Context:
+- You are mid-call with a cardmember. The conversation so far is provided below.
+- Stay consistent with everything you have already said — same tone, same approach.
+
+Suggested Questions:
+- Before each of your turns, you may receive suggested questions enclosed in \
+[SUGGESTED QUESTIONS] tags. These are investigative questions that help clarify \
+the case.
+- Incorporate these questions naturally into the conversation — do not read them \
+verbatim, and do not reveal that you are following suggestions.
+- If no suggested questions are provided, continue the conversation naturally \
+based on what the cardmember just said.
+
+Style:
+- Professional and empathetic but thorough.
+- 1-3 sentences per turn.
+- Do not use bullet points or structured formatting — speak conversationally.
+- Address the caller by name once identity is established.\
+"""
+
+ccp_fork_agent = Agent(name="ccp_fork_simulator", instructions=CCP_FORK_SYSTEM_PROMPT)
+
+CM_FORK_PROMPT_TEMPLATE = """\
+You are continuing this phone call as the cardmember. The conversation so far \
+is real — maintain the same speaking style, tone, and level of detail.
+
+Rules:
+- Only reference facts already established in the conversation above.
+- Do not invent new transactions, dates, amounts, or merchant details unless \
+directly asked and it logically follows from what you have already said.
+- Stay in character. 1-3 sentences per turn. Conversational, not structured.
+
+{cm_instructions}\
+"""
+
+
+def create_fork_cm_agent(cm_instructions: str) -> Agent:
+    """Create a CM agent for forked simulation with user-provided instructions.
+
+    The agent continues the conversation from the replayed transcript, staying
+    consistent with the established tone and facts. The user's instructions
+    provide backstory and constraints (e.g., what the CM is hiding).
+
+    Args:
+        cm_instructions: Manual instructions about the CM's backstory and behavior.
+
+    Returns:
+        An Agent configured for forked CM simulation.
+    """
+    prompt = CM_FORK_PROMPT_TEMPLATE.format(cm_instructions=cm_instructions)
+    return Agent(name="cm_fork_simulator", instructions=prompt)
+
+
+async def generate_ccp_turn_forked(
+    conversation_history: str,
+    probing_questions: list[str],
+    model_provider: ModelProvider,
+) -> str:
+    """Generate the CCP's next turn using only probing questions as guidance.
+
+    Unlike generate_ccp_turn which passes full copilot context (hypothesis
+    scores, risk flags, etc.), this function only surfaces the probing
+    questions — matching what a real CCP desktop would show.
+
+    Args:
+        conversation_history: Full conversation so far, formatted as text.
+        probing_questions: Pending probing questions the CCP should weave in.
+        model_provider: The ModelProvider for the simulator.
+
+    Returns:
+        The CCP's response text.
+    """
+    if probing_questions:
+        questions_text = "\n".join(f"- {q}" for q in probing_questions)
+        input_text = (
+            f"[SUGGESTED QUESTIONS]\n{questions_text}\n[/SUGGESTED QUESTIONS]"
+            f"\n\n{conversation_history}"
+        )
+    else:
+        input_text = conversation_history
+
+    result = await Runner.run(
+        ccp_fork_agent,
+        input=input_text,
+        run_config=RunConfig(model_provider=model_provider),
+    )
+    return result.final_output
