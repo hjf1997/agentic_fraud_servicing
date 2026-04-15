@@ -402,6 +402,7 @@ async def run_forked_simulation(
     _print_header("Phase B: Forked Generation — CCP Follows Probing Questions")
 
     cm_agent = create_fork_cm_agent(cm_instructions)
+    print(f"\n  {DIM}CM instructions: {cm_instructions}{RESET}")
     turn = fork_after
 
     # CCP always goes first after the fork — the whole point is to test
@@ -426,7 +427,7 @@ async def run_forked_simulation(
         _print_turn(turn, "CCP", ccp_text, forked=True)
 
         if pending_qs:
-            print(f"  {DIM}(CCP was given: {'; '.join(pending_qs[:3])}){RESET}")
+            print(f"  {DIM}(Suggested questions: {'; '.join(pending_qs[:3])}){RESET}")
 
         _persist_trace(
             gateway,
