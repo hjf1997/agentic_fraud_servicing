@@ -7,6 +7,7 @@ import LayersPage from "./LayersPage";
 import AgentDiagramPage from "./AgentDiagramPage";
 import ExportWorkflow from "./ExportWorkflow";
 import VisionPage from "./VisionPage";
+import ReplayPage from "./ReplayPage";
 
 function Router() {
   const [page, setPage] = useState(window.location.hash);
@@ -20,6 +21,7 @@ function Router() {
   if (page === "#/export") return <ExportWorkflow />;
   if (page === "#/vision") return <VisionPage />;
   if (page === "#/demo") return <DemoPage />;
+  if (page === "#/replay") return <ReplayPage />;
   if (page === "#/layers") return <LayersPage />;
   if (page.startsWith("#/agent")) return <AgentDiagramPage />;
   return <App />;

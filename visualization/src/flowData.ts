@@ -6,11 +6,12 @@ import type { GroupLabelData } from "./components/GroupLabel";
 const C = {
   input: "#006FCF", // AMEX blue
   orchestrator: "#00175A", // AMEX dark blue
-  phase1: "#006FCF", // AMEX blue
+  stage1: "#006FCF", // AMEX blue
   specialist: "#008000", // green
   arbitrator: "#CF291D", // AMEX red
   advisor: "#006FCF", // AMEX blue
   output: "#00175A", // AMEX dark blue
+  knowledge: "#B7791F", // Knowledge layer gold
   group: "#53565A", // AMEX grey
 };
 
@@ -52,46 +53,35 @@ const agentNodes: AgentNode[] = [
     },
   },
 
-  // Phase 1: parallel
+  // Stage 1: parallel
   {
     id: "triage",
     type: "agent",
-    position: { x: 60, y: 140 },
+    position: { x: 170, y: 140 },
     data: {
       label: "Intent Extractor",
-      subtitle: "17-type allegation taxonomy",
+      subtitle: "17-type intent taxonomy",
       icon: "\uD83D\uDCCB",
-      color: C.phase1,
+      color: C.stage1,
     },
   },
   {
     id: "retrieval",
     type: "agent",
-    position: { x: 350, y: 140 },
+    position: { x: 430, y: 140 },
     data: {
       label: "Retrieval Agent",
       subtitle: "Structured data including transactions",
       icon: "\uD83D\uDD0D",
-      color: C.phase1,
-    },
-  },
-  {
-    id: "auth",
-    type: "agent",
-    position: { x: 660, y: 140 },
-    data: {
-      label: "Auth Agent",
-      subtitle: "Impersonation risk & step-up",
-      icon: "\uD83D\uDD12",
-      color: C.phase1,
+      color: C.stage1,
     },
   },
 
-  // Phase 2: specialists + question validator (parallel)
+  // Stage 2: specialists (parallel)
   {
     id: "dispute_spec",
     type: "agent",
-    position: { x: 10, y: 250 },
+    position: { x: 70, y: 250 },
     data: {
       label: "Dispute Specialist",
       subtitle: "Merchant performance claims",
@@ -102,7 +92,7 @@ const agentNodes: AgentNode[] = [
   {
     id: "scam_spec",
     type: "agent",
-    position: { x: 260, y: 250 },
+    position: { x: 310, y: 250 },
     data: {
       label: "Scam Specialist",
       subtitle: "External manipulator detection",
@@ -113,7 +103,7 @@ const agentNodes: AgentNode[] = [
   {
     id: "fraud_spec",
     type: "agent",
-    position: { x: 510, y: 250 },
+    position: { x: 550, y: 250 },
     data: {
       label: "Fraud Specialist",
       subtitle: "Unauthorized access / compromise",
@@ -121,15 +111,17 @@ const agentNodes: AgentNode[] = [
       color: C.specialist,
     },
   },
+
+  // Knowledge Database — single node feeding into specialists
   {
-    id: "question_validator",
+    id: "knowledge_db",
     type: "agent",
-    position: { x: 780, y: 250 },
+    position: { x: 780, y: 155 },
     data: {
-      label: "Question Validator",
-      subtitle: "Validates pending probing questions",
-      icon: "\u2753",
-      color: C.specialist,
+      label: "Knowledge Database",
+      subtitle: "Historical case summary",
+      icon: "\uD83D\uDCD6",
+      color: C.knowledge,
     },
   },
 
@@ -137,7 +129,7 @@ const agentNodes: AgentNode[] = [
   {
     id: "arbitrator",
     type: "agent",
-    position: { x: 140, y: 365 },
+    position: { x: 170, y: 365 },
     data: {
       label: "Typing Arbitrator",
       subtitle: "4-category Bayesian scoring",
@@ -148,7 +140,7 @@ const agentNodes: AgentNode[] = [
   {
     id: "advisor",
     type: "agent",
-    position: { x: 520, y: 365 },
+    position: { x: 460, y: 365 },
     data: {
       label: "Case Advisor",
       subtitle: "Probing questions & case eligibility",
@@ -161,7 +153,7 @@ const agentNodes: AgentNode[] = [
   {
     id: "suggestion",
     type: "agent",
-    position: { x: 340, y: 460 },
+    position: { x: 310, y: 460 },
     data: {
       label: "Copilot Suggestion",
       subtitle: "Scores, questions, risk flags, eligibility",
@@ -188,11 +180,11 @@ const groupNodes: GroupNode[] = [
   {
     id: "group_phase1",
     type: "group",
-    position: { x: 10, y: 120 },
+    position: { x: 130, y: 120 },
     data: {
-      label: "Phase 1 \u2014 Retrieval & Triage",
-      color: C.phase1,
-      width: 1010,
+      label: "Stage 1 \u2014 Retrieval & Triage",
+      color: C.stage1,
+      width: 600,
       height: 95,
     },
     draggable: false,
@@ -201,11 +193,11 @@ const groupNodes: GroupNode[] = [
   {
     id: "group_phase2",
     type: "group",
-    position: { x: -20, y: 230 },
+    position: { x: 30, y: 230 },
     data: {
-      label: "Phase 2 \u2014 Specialist Assessment & Probing Question Validation",
+      label: "Stage 2 \u2014 Specialist Assessment",
       color: C.specialist,
-      width: 1010,
+      width: 780,
       height: 95,
     },
     draggable: false,
@@ -214,11 +206,11 @@ const groupNodes: GroupNode[] = [
   {
     id: "group_synth",
     type: "group",
-    position: { x: 90, y: 345 },
+    position: { x: 130, y: 345 },
     data: {
-      label: "Phase 3 \u2014 Aggregation & Decision",
+      label: "Stage 3 \u2014 Aggregation & Decision",
       color: C.arbitrator,
-      width: 680,
+      width: 600,
       height: 95,
     },
     draggable: false,
@@ -252,6 +244,10 @@ const makeEdge = (
   labelBgBorderRadius: 4,
 });
 
+const knowledgeEdges = ["dispute_spec", "scam_spec", "fraud_spec"].map(
+  (spec) => `knowledge_db-${spec}`
+);
+
 export const initialEdges: Edge[] = [
   // Input -> Orchestrator (horizontal, right to left)
   {
@@ -268,24 +264,30 @@ export const initialEdges: Edge[] = [
     labelBgBorderRadius: 4,
   },
 
-  // Orchestrator -> Phase 1
-  makeEdge("orchestrator", "triage", undefined, C.phase1),
-  makeEdge("orchestrator", "retrieval", undefined, C.phase1),
-  makeEdge("orchestrator", "auth", undefined, C.phase1),
+  // Orchestrator -> Stage 1
+  makeEdge("orchestrator", "triage", undefined, C.stage1),
+  makeEdge("orchestrator", "retrieval", undefined, C.stage1),
 
-  // Phase 1 -> Phase 2 (Specialists)
+  // Stage 1 -> Stage 2 (Specialists)
   makeEdge("triage", "dispute_spec", undefined, C.specialist),
   makeEdge("triage", "scam_spec", undefined, C.specialist),
   makeEdge("triage", "fraud_spec", undefined, C.specialist),
   makeEdge("retrieval", "dispute_spec", undefined, C.specialist),
   makeEdge("retrieval", "scam_spec", undefined, C.specialist),
   makeEdge("retrieval", "fraud_spec", undefined, C.specialist),
-  makeEdge("auth", "dispute_spec", undefined, C.specialist),
-  makeEdge("auth", "scam_spec", undefined, C.specialist),
-  makeEdge("auth", "fraud_spec", undefined, C.specialist),
 
-  // Phase 1 -> Phase 2 (Question Validator — uses transcript + hypothesis scores)
-  makeEdge("orchestrator", "question_validator", undefined, C.specialist),
+
+  // Knowledge Database -> Specialists (dashed)
+  ...(["dispute_spec", "scam_spec", "fraud_spec"] as const).map(
+    (spec): Edge => ({
+      id: `knowledge_db-${spec}`,
+      source: "knowledge_db",
+      sourceHandle: "left_source",
+      target: spec,
+      animated: false,
+      style: { stroke: C.knowledge, strokeWidth: 1.5, opacity: 0.3, strokeDasharray: "6 3" },
+    })
+  ),
 
   // Specialists -> Arbitrator + Advisor
   makeEdge("dispute_spec", "arbitrator", undefined, C.arbitrator),
@@ -295,8 +297,6 @@ export const initialEdges: Edge[] = [
   makeEdge("scam_spec", "advisor", undefined, C.arbitrator),
   makeEdge("fraud_spec", "advisor", undefined, C.arbitrator),
 
-  // Question Validator -> Case Advisor (validated question list)
-  makeEdge("question_validator", "advisor", undefined, C.arbitrator),
 
   // Synthesis -> Output
   makeEdge("arbitrator", "suggestion", undefined, C.output),
@@ -356,15 +356,14 @@ export type AnimationStep = {
   label: string;
 };
 
-// Helper to build a pipeline run (steps 2-8 of each run)
-// Run 1 has no pending probing questions, so Question Validator is skipped.
+// Helper to build a pipeline run
 const pipelineEdges = {
-  phase1: ["orchestrator-triage", "orchestrator-retrieval", "orchestrator-auth"],
-  phase1to2Specialists: [
+  stage1: ["orchestrator-triage", "orchestrator-retrieval"],
+  stage1to2Specialists: [
     "triage-dispute_spec", "triage-scam_spec", "triage-fraud_spec",
     "retrieval-dispute_spec", "retrieval-scam_spec", "retrieval-fraud_spec",
-    "auth-dispute_spec", "auth-scam_spec", "auth-fraud_spec",
   ],
+  stage2Knowledge: knowledgeEdges,
   arbBase: [
     "dispute_spec-arbitrator", "scam_spec-arbitrator", "fraud_spec-arbitrator",
     "dispute_spec-advisor", "scam_spec-advisor", "fraud_spec-advisor",
@@ -374,17 +373,6 @@ const pipelineEdges = {
 
 function makeRun(runNum: number, turnLabel: string): AnimationStep[] {
   const r = `Run ${runNum}`;
-  const hasValidator = runNum > 1;
-
-  const phase2Nodes = ["dispute_spec", "scam_spec", "fraud_spec"];
-  const phase2Edges = [...pipelineEdges.phase1to2Specialists];
-  const phase3Edges = [...pipelineEdges.arbBase];
-
-  if (hasValidator) {
-    phase2Nodes.push("question_validator");
-    phase2Edges.push("orchestrator-question_validator");
-    phase3Edges.push("question_validator-advisor");
-  }
 
   return [
     {
@@ -403,27 +391,32 @@ function makeRun(runNum: number, turnLabel: string): AnimationStep[] {
       label: `${r} \u2014 Orchestrator decides which agents to trigger`,
     },
     {
-      activeNodes: ["triage", "retrieval", "auth"],
-      activeEdges: pipelineEdges.phase1,
+      activeNodes: ["triage", "retrieval"],
+      activeEdges: pipelineEdges.stage1,
       doneNodes: ["orchestrator"],
       duration: 1800,
-      label: `${r} \u2014 Phase 1: Extraction + Retrieval + Auth in parallel`,
+      label: `${r} \u2014 Stage 1: Extraction + Retrieval in parallel`,
     },
     {
-      activeNodes: phase2Nodes,
-      activeEdges: phase2Edges,
-      doneNodes: ["triage", "retrieval", "auth"],
+      activeNodes: ["dispute_spec", "scam_spec", "fraud_spec"],
+      activeEdges: pipelineEdges.stage1to2Specialists,
+      doneNodes: ["triage", "retrieval"],
+      duration: 1500,
+      label: `${r} \u2014 Stage 2: Specialists receive triage + retrieval results`,
+    },
+    {
+      activeNodes: ["dispute_spec", "scam_spec", "fraud_spec", "knowledge_db"],
+      activeEdges: pipelineEdges.stage2Knowledge,
+      doneNodes: ["triage", "retrieval"],
       duration: 1800,
-      label: hasValidator
-        ? `${r} \u2014 Phase 2: Specialists + Question Validator in parallel`
-        : `${r} \u2014 Phase 2: Three specialists assess in parallel`,
+      label: `${r} \u2014 Stage 2: Specialists consult Knowledge Database for policy-aware assessment`,
     },
     {
       activeNodes: ["arbitrator", "advisor"],
-      activeEdges: phase3Edges,
-      doneNodes: phase2Nodes,
+      activeEdges: pipelineEdges.arbBase,
+      doneNodes: ["dispute_spec", "scam_spec", "fraud_spec", "knowledge_db"],
       duration: 1800,
-      label: `${r} \u2014 Arbitrator scores hypotheses; Advisor plans questions`,
+      label: `${r} \u2014 Stage 3: Arbitrator scores hypotheses; Advisor plans questions`,
     },
     {
       activeNodes: ["suggestion"],

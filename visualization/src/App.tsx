@@ -18,6 +18,7 @@ import "@xyflow/react/dist/style.css";
 import AgentNode from "./components/AgentNode";
 import GroupLabel from "./components/GroupLabel";
 import ConversationBarNode from "./components/ConversationBarNode";
+import MergeNode from "./components/MergeNode";
 import {
   initialNodes,
   initialEdges,
@@ -26,7 +27,7 @@ import {
 } from "./flowData";
 import type { AgentNodeData } from "./components/AgentNode";
 
-const nodeTypes = { agent: AgentNode, group: GroupLabel, conversationBar: ConversationBarNode };
+const nodeTypes = { agent: AgentNode, group: GroupLabel, conversationBar: ConversationBarNode, merge: MergeNode };
 
 function applyStep(
   step: AnimationStep,
@@ -38,7 +39,7 @@ function applyStep(
   const activeEdgeSet = new Set(step.activeEdges);
 
   const nodes = baseNodes.map((n) => {
-    if (n.type !== "agent") return n;
+    if (n.type !== "agent" && n.type !== "merge") return n;
     const d = n.data as unknown as AgentNodeData;
     let status: "idle" | "running" | "done" = "idle";
     if (activeSet.has(n.id)) status = "running";

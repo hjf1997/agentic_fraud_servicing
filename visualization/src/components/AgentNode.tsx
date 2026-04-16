@@ -246,6 +246,18 @@ const AgentNode: React.FC<NodeProps> = ({ data }) => {
       />
       <Handle
         type="target"
+        position={Position.Right}
+        id="right_target"
+        style={{ background: d.color, width: 8, height: 8, border: "none" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        id="left_source"
+        style={{ background: d.color, width: 8, height: 8, border: "none" }}
+      />
+      <Handle
+        type="target"
         position={Position.Left}
         id="left"
         style={{ background: d.color, width: 8, height: 8, border: "none" }}

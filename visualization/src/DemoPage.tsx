@@ -26,59 +26,60 @@ type CopilotResult = {
 const conversation: (Message & { run?: number })[] = [
   // Pre-copilot
   { speaker: "CCP", text: "Thank you for calling American Express. How can I help you today?" },
-  { speaker: "CM", text: "Hi, I noticed a charge on my card for $487.50 from an electronics store. I never made this purchase." },
+  { speaker: "CM", text: "Hi, I need to report a fraudulent charge on my card. There's a $1,850 transaction from LuxFurniture that I never made." },
   { speaker: "CCP", text: "I'm sorry to hear that. Let me pull up your account. Can you confirm the last four digits of your card?" },
-  { speaker: "CM", text: "It ends in 4821." },
-  { speaker: "CCP", text: "I can see the transaction from TechMart on March 15th for $487.50. You're saying you didn't authorize this?" },
+  { speaker: "CM", text: "It ends in 7293." },
+  { speaker: "CCP", text: "I can see the charge \u2014 LuxFurniture, March 20th, $1,850.00. You're saying you didn't authorize this transaction?" },
   // Run 1
-  { speaker: "CM", text: "No, I've never even heard of that store. I had my card with me the whole time.", run: 1 },
-  { speaker: "CCP", text: "I understand. Were you traveling or did anyone else have access to your card recently?" },
-  { speaker: "CM", text: "No, I was home all week. Nobody else uses my card." },
+  { speaker: "CM", text: "No, absolutely not. I don't know what LuxFurniture is. I've never shopped there.", run: 1 },
+  { speaker: "CCP", text: "I understand. Was your card lost or stolen at any point around that date?" },
+  { speaker: "CM", text: "No, I've had the card with me the whole time." },
   // Run 2
-  { speaker: "CCP", text: "Have you noticed any other unfamiliar charges on your account?", run: 2 },
-  { speaker: "CM", text: "Actually yes, there's another one for $52.99 from a streaming service I don't use." },
-  { speaker: "CCP", text: "Did you receive any emails or texts asking you to verify your card information recently?" },
+  { speaker: "CCP", text: "Have you shared your card details with anyone, or noticed any other unfamiliar charges?", run: 2 },
+  { speaker: "CM", text: "No, I never share my card. This is the only charge I don't recognize." },
+  { speaker: "CCP", text: "Do you have any family members or authorized users on this account?" },
   // Run 3
-  { speaker: "CM", text: "Now that you mention it, I got a text last week saying my account was locked and to click a link to verify. I clicked it and entered my card details.", run: 3 },
-  { speaker: "CCP", text: "That sounds like a phishing attempt. Can you tell me more about that text \u2014 what number it came from?" },
+  { speaker: "CM", text: "No, it's just me on the account. Nobody else has access.", run: 3 },
+  { speaker: "CCP", text: "Our records show this was an online transaction with your billing address. Did you receive any suspicious emails asking you to click a link or verify your account?" },
+  { speaker: "CM", text: "No, nothing like that. I'm very careful with emails." },
   // Run 4
-  { speaker: "CM", text: "It was a short code, something like 55247. The website looked exactly like the Amex login page.", run: 4 },
-  { speaker: "CCP", text: "I see. And after you entered your details on that site, when did the unauthorized charges start appearing?" },
-  { speaker: "CM", text: "The TechMart charge showed up two days after I clicked that link. The streaming one appeared the next day." },
+  { speaker: "CCP", text: "I see. The transaction used your saved card credentials and was shipped to your billing address. Can you confirm your current address for me?", run: 4 },
+  { speaker: "CM", text: "It's 142 Oak Street, apartment 5B. But I'm telling you, I didn't order anything." },
+  { speaker: "CCP", text: "That matches the shipping address on the order. Did anyone else have access to your home to receive a delivery around March 22nd?" },
   // Run 5
-  { speaker: "CCP", text: "That timeline is very consistent with credential theft. Have you changed your password since then?", run: 5 },
-  { speaker: "CM", text: "No, I didn't know I needed to. Should I?" },
-  { speaker: "CCP", text: "Yes, absolutely. We'll also need to secure your account. Did you use the same password for any other financial services?" },
+  { speaker: "CM", text: "No, I live alone. Maybe someone stole the package after delivery? I really don't know what this charge is.", run: 5 },
+  { speaker: "CCP", text: "I understand. Let me check a few more things on our end." },
+  { speaker: "CCP", text: "I can see the device used for this purchase was an iPhone registered to your account. Does that sound familiar?" },
   // Run 6
-  { speaker: "CM", text: "I... I think I use the same password for my bank and a couple of shopping sites.", run: 6 },
-  { speaker: "CCP", text: "I strongly recommend changing those as well. Now, I want to confirm \u2014 you definitely did not make the $487.50 purchase at TechMart?" },
-  { speaker: "CM", text: "Absolutely not. I don't even know where that store is." },
+  { speaker: "CM", text: "I mean, I have an iPhone, but I didn't use it to buy anything from that store. Maybe my phone was hacked?", run: 6 },
+  { speaker: "CCP", text: "That's possible. We'll look into that. Were you using any public Wi-Fi around that time?" },
+  { speaker: "CM", text: "I sometimes use the coffee shop Wi-Fi, but I wouldn't buy furniture on public Wi-Fi." },
   // Run 7
-  { speaker: "CCP", text: "Our records show the TechMart transaction was an in-store chip purchase in Dallas, Texas. Can you confirm your location on March 15th?", run: 7 },
-  { speaker: "CM", text: "I was in New York. I haven't been to Texas in years. You can check my other transactions \u2014 I was using my card at restaurants in Manhattan that same day." },
+  { speaker: "CCP", text: "I appreciate your patience. I want to be thorough here. Our system shows a prior case on your account \u2014 did you previously contact us about this same LuxFurniture charge?", run: 7 },
+  { speaker: "CM", text: "Uh... what do you mean?" },
+  { speaker: "CCP", text: "Our records show you called on March 25th and opened a dispute case for this same $1,850 charge from LuxFurniture. You told our colleague that you ordered a dining table but received a damaged item, and you wanted a chargeback because the merchant refused a return." },
   // Run 8
-  { speaker: "CCP", text: "That's very helpful. I can see Manhattan transactions on your account that same day, which confirms you couldn't have been in Dallas.", run: 8 },
-  { speaker: "CM", text: "So someone cloned my card after I entered my details on that fake website?" },
-  { speaker: "CCP", text: "That appears to be the case. The phishing site likely captured your full card details, which were then used to create a counterfeit card." },
+  { speaker: "CM", text: "Oh... yes, I did call about that. But the situation has changed. I realized the charge might actually be fraud because I don't think I actually placed that order myself.", run: 8 },
+  { speaker: "CCP", text: "I see. But in the previous call you confirmed you placed the order, described the item you received, and provided details about your communication with the merchant about the return. Those details suggest you were aware of the purchase." },
+  { speaker: "CM", text: "I was confused at the time. I think someone may have used my card and I just assumed it was my order." },
   // Run 9
-  { speaker: "CM", text: "This is really scary. What happens next? Will I get my money back?", run: 9 },
-  { speaker: "CCP", text: "Yes, I'm going to file a fraud claim and a scam protection claim for both transactions. You'll receive provisional credit within 24-48 hours." },
-  { speaker: "CCP", text: "We'll also issue you a new card number immediately. The old card ending in 4821 will be deactivated." },
+  { speaker: "CCP", text: "I understand this can be confusing. However, the previous dispute case includes your confirmation that you authorized the purchase and received merchandise. Reporting the same charge as unauthorized fraud after filing a merchant dispute creates a significant inconsistency.", run: 9 },
+  { speaker: "CM", text: "I see. So what happens now? I just want the charge resolved." },
+  { speaker: "CCP", text: "Based on the full history, this case is consistent with a merchant dispute rather than unauthorized fraud. The existing dispute case is already being investigated by our team." },
   // Run 10
-  { speaker: "CM", text: "OK, thank you. Is there anything else I need to do?", run: 10 },
-  { speaker: "CCP", text: "Please change your passwords for all financial sites, enable two-factor authentication, and monitor your credit report. I'm also flagging the phishing number 55247 to our security team." },
-  { speaker: "CM", text: "I will. Thank you so much for your help." },
-  { speaker: "CCP", text: "You're welcome. Your new card will arrive in 3-5 business days. Your case reference number is FRD-2024-84721. Is there anything else I can help with?" },
-  { speaker: "CM", text: "No, that's everything. Thank you again." },
+  { speaker: "CM", text: "OK, so the original dispute is still being handled?", run: 10 },
+  { speaker: "CCP", text: "Yes, your dispute case DSP-2024-39102 is still active. Our investigations team is reviewing the merchant's response. You should hear back within 10 business days. We cannot open a separate fraud case for a charge you previously confirmed authorizing." },
+  { speaker: "CM", text: "Alright, I understand. I'll wait for the dispute outcome then." },
+  { speaker: "CCP", text: "That's the best path forward. If you have any new information about the merchant or the damaged item, you can call us to add it to the existing case. Is there anything else I can help with?" },
+  { speaker: "CM", text: "No, that's it. Thank you." },
 ];
 
 const copilotResults: CopilotResult[] = [
   {
     runLabel: "Copilot Run 1", turnRange: "Turn 1-8",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "pending", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "pending", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "pending", target: "THIRD_PARTY_FRAUD" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "pending", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "pending", target: "FRAUD" },
     ],
     informationSufficient: false,
     caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
@@ -86,148 +87,104 @@ const copilotResults: CopilotResult[] = [
   {
     runLabel: "Copilot Run 2", turnRange: "Turn 9-11",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "pending", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "pending", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "pending", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "pending", target: "THIRD_PARTY_FRAUD" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
     ],
     informationSufficient: false,
     caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
   },
   {
-    runLabel: "Copilot Run 3", turnRange: "Turn 12-13",
+    runLabel: "Copilot Run 3", turnRange: "Turn 12-14",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "pending", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "pending", target: "THIRD_PARTY_FRAUD" },
-      { text: "Collect phishing text details: sender number, URL domain", status: "pending", target: "SCAM" },
-      { text: "Ask when CM entered credentials on the site", status: "pending", target: "SCAM" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
+      { text: "Ask if CM received phishing emails or suspicious links", status: "pending", target: "SCAM" },
     ],
     informationSufficient: false,
     caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
   },
   {
-    runLabel: "Copilot Run 4", turnRange: "Turn 14-16",
+    runLabel: "Copilot Run 4", turnRange: "Turn 15-17",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
-      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
-      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
-      { text: "Check for additional compromised accounts", status: "pending", target: "SCAM" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
+      { text: "Ask if CM received phishing emails or suspicious links", status: "answered", target: "SCAM" },
     ],
     informationSufficient: false,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
-    runLabel: "Copilot Run 5", turnRange: "Turn 17-19",
+    runLabel: "Copilot Run 5", turnRange: "Turn 18-20",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
-      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
-      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
-      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
-      { text: "Ask about password reuse across services", status: "pending", target: "SCAM" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
+      { text: "Ask if CM received phishing emails or suspicious links", status: "answered", target: "SCAM" },
+      { text: "Confirm whether anyone else could have received the delivery", status: "pending", target: "BOGUS" },
     ],
     informationSufficient: false,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
-    runLabel: "Copilot Run 6", turnRange: "Turn 20-22",
+    runLabel: "Copilot Run 6", turnRange: "Turn 21-23",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
-      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
-      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
-      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
-      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
-      { text: "Verify CM's location on date of in-store transaction", status: "pending", target: "THIRD_PARTY_FRAUD" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
+      { text: "Ask if CM received phishing emails or suspicious links", status: "invalidated", target: "SCAM" },
+      { text: "Confirm whether anyone else could have received the delivery", status: "answered", target: "BOGUS" },
     ],
     informationSufficient: false,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
-    runLabel: "Copilot Run 7", turnRange: "Turn 23-24",
+    runLabel: "Copilot Run 7", turnRange: "Turn 24-26",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
-      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
-      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
-      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
-      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
-      { text: "Verify CM's location on date of in-store transaction", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Document geographic impossibility as evidence", status: "pending", target: "THIRD_PARTY_FRAUD" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
+      { text: "Ask if CM received phishing emails or suspicious links", status: "invalidated", target: "SCAM" },
+      { text: "Confirm whether anyone else could have received the delivery", status: "answered", target: "BOGUS" },
+      { text: "Ask if CM previously filed a dispute for this same charge", status: "pending", target: "BOGUS" },
     ],
     informationSufficient: false,
     caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
   },
   {
-    runLabel: "Copilot Run 8", turnRange: "Turn 25-27",
+    runLabel: "Copilot Run 8", turnRange: "Turn 27-29",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
-      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
-      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
-      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
-      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
-      { text: "Verify CM's location on date of in-store transaction", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Document geographic impossibility as evidence", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
+      { text: "Ask if CM received phishing emails or suspicious links", status: "invalidated", target: "SCAM" },
+      { text: "Confirm whether anyone else could have received the delivery", status: "skipped", target: "BOGUS" },
+      { text: "Ask if CM previously filed a dispute for this same charge", status: "answered", target: "BOGUS" },
+      { text: "Clarify why allegation changed from dispute to fraud", status: "pending", target: "BOGUS" },
+    ],
+    informationSufficient: false,
+    caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
+  },
+  {
+    runLabel: "Copilot Run 9", turnRange: "Turn 30-32",
+    probingQuestions: [
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
+      { text: "Ask if CM received phishing emails or suspicious links", status: "invalidated", target: "SCAM" },
+      { text: "Confirm whether anyone else could have received the delivery", status: "skipped", target: "BOGUS" },
+      { text: "Ask if CM previously filed a dispute for this same charge", status: "answered", target: "BOGUS" },
+      { text: "Clarify why allegation changed from dispute to fraud", status: "answered", target: "BOGUS" },
     ],
     informationSufficient: true,
-    caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
+    caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
   },
   {
-    runLabel: "Copilot Run 9", turnRange: "Turn 28-30",
+    runLabel: "Copilot Run 10", turnRange: "Turn 33-37",
     probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
-      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
-      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
-      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
-      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
-      { text: "Verify CM's location on date of in-store transaction", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Document geographic impossibility as evidence", status: "answered", target: "THIRD_PARTY_FRAUD" },
+      { text: "Ask if card was lost, stolen, or shared with anyone", status: "answered", target: "FRAUD" },
+      { text: "Check if there are other unrecognized charges", status: "answered", target: "FRAUD" },
+      { text: "Ask if CM received phishing emails or suspicious links", status: "invalidated", target: "SCAM" },
+      { text: "Confirm whether anyone else could have received the delivery", status: "skipped", target: "BOGUS" },
+      { text: "Ask if CM previously filed a dispute for this same charge", status: "answered", target: "BOGUS" },
+      { text: "Clarify why allegation changed from dispute to fraud", status: "answered", target: "BOGUS" },
     ],
     informationSufficient: true,
-    caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
-  },
-  {
-    runLabel: "Copilot Run 10", turnRange: "Turn 31-35",
-    probingQuestions: [
-      { text: "Ask if CM received suspicious emails or texts recently", status: "answered", target: "SCAM" },
-      { text: "Check if there are additional unauthorized charges", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Confirm whether card has chip or contactless enabled", status: "skipped", target: "THIRD_PARTY_FRAUD" },
-      { text: "Probe for social engineering indicators", status: "answered", target: "SCAM" },
-      { text: "Verify the $52.99 streaming charge details", status: "invalidated", target: "THIRD_PARTY_FRAUD" },
-      { text: "Collect phishing text details: sender number, URL domain", status: "answered", target: "SCAM" },
-      { text: "Ask when CM entered credentials on the site", status: "answered", target: "SCAM" },
-      { text: "Check for additional compromised accounts", status: "answered", target: "SCAM" },
-      { text: "Ask about password reuse across services", status: "answered", target: "SCAM" },
-      { text: "Verify CM's location on date of in-store transaction", status: "answered", target: "THIRD_PARTY_FRAUD" },
-      { text: "Document geographic impossibility as evidence", status: "answered", target: "THIRD_PARTY_FRAUD" },
-    ],
-    informationSufficient: true,
-    caseEligibility: { fraudCase: "eligible", disputeCase: "blocked" },
+    caseEligibility: { fraudCase: "blocked", disputeCase: "blocked" },
   },
 ];
 
@@ -236,22 +193,33 @@ const copilotResults: CopilotResult[] = [
 type ScorePoint = { label: string; scores: Record<string, number> };
 
 const scoreHistory: ScorePoint[] = [
-  { label: "Prior", scores: { "Third-Party Fraud": 0.25, "First-Party Fraud": 0.25, "Scam": 0.25, "Billing Dispute": 0.25 } },
-  { label: "R1", scores: { "Third-Party Fraud": 0.72, "First-Party Fraud": 0.15, "Scam": 0.08, "Billing Dispute": 0.05 } },
-  { label: "R2", scores: { "Third-Party Fraud": 0.68, "First-Party Fraud": 0.12, "Scam": 0.15, "Billing Dispute": 0.05 } },
-  { label: "R3", scores: { "Third-Party Fraud": 0.45, "First-Party Fraud": 0.05, "Scam": 0.48, "Billing Dispute": 0.02 } },
-  { label: "R4", scores: { "Third-Party Fraud": 0.38, "First-Party Fraud": 0.03, "Scam": 0.57, "Billing Dispute": 0.02 } },
-  { label: "R5", scores: { "Third-Party Fraud": 0.32, "First-Party Fraud": 0.02, "Scam": 0.64, "Billing Dispute": 0.02 } },
-  { label: "R6", scores: { "Third-Party Fraud": 0.28, "First-Party Fraud": 0.02, "Scam": 0.68, "Billing Dispute": 0.02 } },
-  { label: "R7", scores: { "Third-Party Fraud": 0.22, "First-Party Fraud": 0.01, "Scam": 0.76, "Billing Dispute": 0.01 } },
-  { label: "R8", scores: { "Third-Party Fraud": 0.18, "First-Party Fraud": 0.01, "Scam": 0.80, "Billing Dispute": 0.01 } },
-  { label: "R9", scores: { "Third-Party Fraud": 0.15, "First-Party Fraud": 0.01, "Scam": 0.83, "Billing Dispute": 0.01 } },
-  { label: "R10", scores: { "Third-Party Fraud": 0.12, "First-Party Fraud": 0.01, "Scam": 0.86, "Billing Dispute": 0.01 } },
+  // Prior: uniform
+  { label: "Prior", scores: { "Fraud": 0.25, "Bogus": 0.25, "Scam": 0.25, "Billing Dispute": 0.25 } },
+  // R1: CM claims unauthorized charge — third-party fraud signal
+  { label: "R1", scores: { "Fraud": 0.60, "Bogus": 0.10, "Scam": 0.10, "Billing Dispute": 0.20 } },
+  // R2: card not lost, no sharing, single charge — still looks like fraud
+  { label: "R2", scores: { "Fraud": 0.62, "Bogus": 0.12, "Scam": 0.08, "Billing Dispute": 0.18 } },
+  // R3: no phishing, no suspicious links — scam unlikely, but device/address match raises doubt
+  { label: "R3", scores: { "Fraud": 0.55, "Bogus": 0.18, "Scam": 0.05, "Billing Dispute": 0.22 } },
+  // R4: shipped to CM's address, used saved credentials — contradiction with fraud claim
+  { label: "R4", scores: { "Fraud": 0.42, "Bogus": 0.28, "Scam": 0.04, "Billing Dispute": 0.26 } },
+  // R5: CM's device used, lives alone, no one else could receive — first-party fraud rises
+  { label: "R5", scores: { "Fraud": 0.32, "Bogus": 0.35, "Scam": 0.03, "Billing Dispute": 0.30 } },
+  // R6: CM's own iPhone confirmed, weak hacking explanation
+  { label: "R6", scores: { "Fraud": 0.25, "Bogus": 0.40, "Scam": 0.03, "Billing Dispute": 0.32 } },
+  // R7: TURNING POINT — prior dispute case discovered, CM evasive
+  { label: "R7", scores: { "Fraud": 0.10, "Bogus": 0.35, "Scam": 0.03, "Billing Dispute": 0.52 } },
+  // R8: CM admits prior dispute, confirms authorized purchase — fraud claim collapses
+  { label: "R8", scores: { "Fraud": 0.05, "Bogus": 0.30, "Scam": 0.02, "Billing Dispute": 0.63 } },
+  // R9: inconsistency confirmed, dispute is the true category
+  { label: "R9", scores: { "Fraud": 0.04, "Bogus": 0.25, "Scam": 0.02, "Billing Dispute": 0.69 } },
+  // R10: final — dispute dominant, first-party fraud elevated, fraud collapsed
+  { label: "R10", scores: { "Fraud": 0.03, "Bogus": 0.22, "Scam": 0.02, "Billing Dispute": 0.73 } },
 ];
 
 const categoryColors: Record<string, string> = {
-  "Third-Party Fraud": "#006FCF",
-  "First-Party Fraud": "#F5A623",
+  "Fraud": "#006FCF",
+  "Bogus": "#F5A623",
   "Scam": "#CF291D",
   "Billing Dispute": "#008000",
 };
@@ -381,11 +349,36 @@ function QuestionStatusBadge({ status }: { status: ProbingQuestion["status"] }) 
       whiteSpace: "nowrap",
       flexShrink: 0,
       marginTop: 2,
+      transition: "background 0.8s ease, color 0.8s ease",
     }}>{status}</span>
   );
 }
 
-function QuestionListPanel({ result }: { result: CopilotResult | null }) {
+/**
+ * Determine which copilot run first introduced each question by scanning all
+ * results up to and including the active run.
+ */
+function buildQuestionOrigins(activeRun: number): Record<string, number> {
+  const origins: Record<string, number> = {};
+  for (let r = 0; r <= activeRun; r++) {
+    for (const pq of copilotResults[r].probingQuestions) {
+      if (!(pq.text in origins)) {
+        origins[pq.text] = r;
+      }
+    }
+  }
+  return origins;
+}
+
+function QuestionListPanel({
+  result,
+  prevResult,
+  activeRun,
+}: {
+  result: CopilotResult | null;
+  prevResult: CopilotResult | null;
+  activeRun: number;
+}) {
   if (!result) {
     return (
       <div style={{ padding: 20, color: "#53565A", fontSize: 14, textAlign: "center" }}>
@@ -394,52 +387,105 @@ function QuestionListPanel({ result }: { result: CopilotResult | null }) {
     );
   }
 
-  const pending = result.probingQuestions.filter((pq) => pq.status === "pending");
-  const resolved = result.probingQuestions.filter((pq) => pq.status !== "pending");
+  // Build a map of previous statuses by question text to detect changes
+  const prevStatuses: Record<string, string> = {};
+  if (prevResult) {
+    prevResult.probingQuestions.forEach((pq) => { prevStatuses[pq.text] = pq.status; });
+  }
+
+  // Determine which run each question was first generated in
+  const origins = buildQuestionOrigins(activeRun);
+
+  const pending = result.probingQuestions.filter((pq) => pq.status === "pending").length;
+  const resolved = result.probingQuestions.filter((pq) => pq.status !== "pending").length;
+
+  const statusBg: Record<string, string> = {
+    pending: "#FFF8E1",
+    answered: "#D4EDDA",
+    invalidated: "#F8D7DA",
+    skipped: "#E2E3E5",
+  };
+  const statusBorder: Record<string, string> = {
+    pending: "#F5A62330",
+    answered: "#00800030",
+    invalidated: "#CF291D30",
+    skipped: "#53565A30",
+  };
+
+  // Group questions by their origin run for section headers
+  let lastOriginRun = -1;
 
   return (
-    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Pending questions — what CCP should ask */}
-      <div>
-        <div className="copilot-section-title" style={{ marginBottom: 8 }}>
-          Pending ({pending.length})
-        </div>
-        {pending.length > 0 ? (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {pending.map((pq, i) => (
-              <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8, padding: "8px 10px", background: "#FFF3CD20", border: "1px solid #F5A62330", borderRadius: 8 }}>
-                <QuestionStatusBadge status={pq.status} />
-                <span style={{ fontSize: 15, lineHeight: 1.4 }}>
-                  {pq.text}
-                  <span style={{ color: "#53565A", fontSize: 13, marginLeft: 4 }}>[{pq.target}]</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div style={{ fontSize: 15, color: "#53565A", fontStyle: "italic" }}>No pending questions</div>
-        )}
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Summary counts */}
+      <div style={{ display: "flex", gap: 12, fontSize: 14, color: "#53565A" }}>
+        <span style={{ fontWeight: 700 }}>{result.probingQuestions.length} total</span>
+        <span style={{ color: "#F5A623" }}>{pending} pending</span>
+        <span style={{ color: "#008000" }}>{resolved} resolved</span>
       </div>
 
-      {/* Resolved questions */}
-      {resolved.length > 0 && (
-        <div>
-          <div className="copilot-section-title" style={{ marginBottom: 8 }}>
-            Resolved ({resolved.length})
-          </div>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {resolved.map((pq, i) => (
-              <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6, opacity: 0.8 }}>
+      {/* All questions in original order, with run section headers */}
+      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        {result.probingQuestions.map((pq, i) => {
+          const isResolved = pq.status !== "pending";
+          const prevStatus = prevStatuses[pq.text];
+          const isNew = !prevStatus;
+          const statusChanged = prevStatus !== undefined && prevStatus !== pq.status;
+          const originRun = origins[pq.text] ?? 0;
+          const showHeader = originRun !== lastOriginRun;
+          if (showHeader) lastOriginRun = originRun;
+          const runInfo = copilotResults[originRun];
+
+          return (
+            <React.Fragment key={pq.text}>
+              {showHeader && (
+                <li style={{
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "#006FCF",
+                  padding: "10px 4px 6px 4px",
+                  marginTop: i > 0 ? 10 : 0,
+                  borderBottom: "1px solid #E0E4EA",
+                  letterSpacing: 0.3,
+                }}>
+                  {runInfo.runLabel} &middot; {runInfo.turnRange}
+                </li>
+              )}
+              <li style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 8,
+                marginBottom: 4,
+                marginTop: 4,
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: statusBg[pq.status] || "#FFF8E1",
+                border: `1px solid ${statusBorder[pq.status] || "#E0E0E0"}`,
+                opacity: isResolved ? 0.75 : 1,
+                transition: "background 0.8s ease, border-color 0.8s ease, opacity 0.8s ease",
+                animation: isNew ? "fadeSlideIn 0.5s ease" : statusChanged ? "statusPulse 0.8s ease" : "none",
+              }}>
                 <QuestionStatusBadge status={pq.status} />
-                <span style={{ fontSize: 14, lineHeight: 1.4, color: "#53565A" }}>
+                <span style={{
+                  fontSize: isResolved ? 15 : 16,
+                  lineHeight: 1.4,
+                  color: isResolved ? "#53565A" : "#00175A",
+                  fontWeight: pq.text.includes("previously filed a dispute") ? 700 : "normal",
+                  transition: "color 0.8s ease, font-size 0.3s ease",
+                }}>
                   {pq.text}
-                  <span style={{ fontSize: 12, marginLeft: 4 }}>[{pq.target}]</span>
+                  <span style={{
+                    color: "#53565A",
+                    fontSize: isResolved ? 13 : 14,
+                    marginLeft: 4,
+                    transition: "font-size 0.3s ease",
+                  }}>[{pq.target}]</span>
                 </span>
               </li>
-            ))}
-          </ul>
-        </div>
-      )}
+            </React.Fragment>
+          );
+        })}
+      </ul>
 
       {/* Information sufficient banner */}
       {result.informationSufficient && (
@@ -492,6 +538,7 @@ export default function DemoPage() {
   const [activeRun, setActiveRun] = useState(-1); // -1 = no run yet
   const [playing, setPlaying] = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const questionEndRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-advance messages
@@ -515,6 +562,11 @@ export default function DemoPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [visibleMessages]);
+
+  // Auto-scroll probing questions
+  useEffect(() => {
+    questionEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [activeRun]);
 
   const togglePlay = () => setPlaying((p) => !p);
   const restart = () => {
@@ -540,6 +592,44 @@ export default function DemoPage() {
           </button>
           <a href="#/" className="demo-btn-link">Back to Workflow</a>
         </div>
+      </div>
+
+      {/* Scenario summary bar */}
+      <div style={{
+        padding: "8px 24px",
+        borderBottom: "1px solid #E0E0E0",
+        background: activeRun >= 6 ? "rgba(207, 41, 29, 0.04)" : "rgba(0, 111, 207, 0.04)",
+        transition: "background 1s ease",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexShrink: 0,
+      }}>
+        <span style={{
+          fontSize: 15, fontWeight: 700, textTransform: "uppercase" as const,
+          letterSpacing: 1.2, color: "#53565A", flexShrink: 0,
+        }}>Simulation Narrator</span>
+        <span style={{
+          width: 1, height: 20, background: "#C8C9C7", flexShrink: 0,
+        }} />
+        <span style={{
+          width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+          background: activeRun >= 6 ? "#CF291D" : "#006FCF",
+          transition: "background 0.8s ease",
+        }} />
+        <span style={{
+          fontSize: 17, fontWeight: 600, letterSpacing: 0.3,
+          color: activeRun >= 6 ? "#CF291D" : "#006FCF",
+          transition: "color 0.8s ease",
+        }}>
+          {activeRun < 0
+            ? "Scenario: CM claims fraud, but previously opened a dispute case for the same charge"
+            : activeRun < 6
+            ? "Based on CM's narrative, fraud likelihood increases and fraud case is eligible to open"
+            : activeRun === 6
+            ? "Copilot fetched previous dispute record and raised the question: did you claim this case as a dispute?"
+            : "CM admits prior dispute claim \u2014 copilot shifts to dispute; fraud case opening is blocked"}
+        </span>
       </div>
 
       {/* Main content — three panels */}
@@ -572,7 +662,12 @@ export default function DemoPage() {
             Probing Questions
           </div>
           <div className="demo-question-scroll">
-            <QuestionListPanel result={activeRun >= 0 ? copilotResults[activeRun] : null} />
+            <QuestionListPanel
+              result={activeRun >= 0 ? copilotResults[activeRun] : null}
+              prevResult={activeRun > 0 ? copilotResults[activeRun - 1] : null}
+              activeRun={activeRun}
+            />
+            <div ref={questionEndRef} />
           </div>
         </div>
 
@@ -592,7 +687,7 @@ export default function DemoPage() {
             ) : (
               <>
                 <ScoreCurveChart visibleRuns={activeRun + 1} />
-                <CaseEligibilityPanel result={copilotResults[activeRun]} isActive={true} />
+                {/* <CaseEligibilityPanel result={copilotResults[activeRun]} isActive={true} /> */}
               </>
             )}
           </div>

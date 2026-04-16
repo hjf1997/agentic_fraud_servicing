@@ -7,10 +7,12 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const Database = require("better-sqlite3");
 
 const app = express();
 const PORT = 3457;
 const FLOW_DATA_PATH = path.join(__dirname, "src", "flowData.ts");
+const SIM_BASE_DIR = path.join(__dirname, "..", "data", "simulation");
 
 app.use(express.json({ limit: "2mb" }));
 
@@ -218,6 +220,121 @@ app.post("/api/save", (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("Save failed:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Simulation replay API — reads SQLite stores for CCP desktop replay
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/scenarios — list available simulation scenario directories.
+ * Returns scenarios that contain a cases.db file.
+ */
+app.get("/api/scenarios", (req, res) => {
+  try {
+    if (!fs.existsSync(SIM_BASE_DIR)) {
+      return res.json([]);
+    }
+    const entries = fs.readdirSync(SIM_BASE_DIR, { withFileTypes: true });
+    const scenarios = entries
+      .filter(
+        (e) =>
+          e.isDirectory() &&
+          fs.existsSync(path.join(SIM_BASE_DIR, e.name, "cases.db"))
+      )
+      .map((e) => e.name)
+      .sort();
+    res.json(scenarios);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/scenario/:name — load full simulation data for replay.
+ * Returns case, transcript turns, and copilot suggestions.
+ */
+app.get("/api/scenario/:name", (req, res) => {
+  try {
+    const scenarioDir = path.join(SIM_BASE_DIR, req.params.name);
+    const casesPath = path.join(scenarioDir, "cases.db");
+    const tracesPath = path.join(scenarioDir, "traces.db");
+
+    if (!fs.existsSync(casesPath)) {
+      return res.status(404).json({ error: "Scenario not found" });
+    }
+
+    // Load case
+    let caseData = null;
+    const casesDb = new Database(casesPath, { readonly: true });
+    const caseRow = casesDb
+      .prepare("SELECT data FROM cases ORDER BY created_at DESC LIMIT 1")
+      .get();
+    casesDb.close();
+    if (caseRow) {
+      caseData = JSON.parse(caseRow.data);
+    }
+
+    const caseId = caseData ? caseData.case_id : "";
+
+    // Load traces
+    let turns = [];
+    let suggestions = [];
+    let finalState = null;
+
+    if (fs.existsSync(tracesPath) && caseId) {
+      const tracesDb = new Database(tracesPath, { readonly: true });
+      const traces = tracesDb
+        .prepare(
+          "SELECT agent_id, action, input_data, output_data FROM traces WHERE case_id = ? ORDER BY timestamp ASC"
+        )
+        .all(caseId);
+      tracesDb.close();
+
+      for (const trace of traces) {
+        if (
+          trace.agent_id === "transcript" &&
+          trace.action === "conversation_turn"
+        ) {
+          try {
+            const output = JSON.parse(trace.output_data);
+            turns.push({
+              turn: output.turn || 0,
+              speaker: output.speaker || "",
+              text: output.text || "",
+            });
+          } catch {}
+        } else if (
+          trace.agent_id === "copilot_suggestion" &&
+          trace.action === "suggestion"
+        ) {
+          try {
+            const suggestion = JSON.parse(trace.output_data);
+            const input = JSON.parse(trace.input_data);
+            suggestions.push({
+              turn: input.turn || 0,
+              phase: input.phase || "live",
+              suggestion,
+            });
+          } catch {}
+        } else if (
+          trace.agent_id === "copilot_final" &&
+          trace.action === "final_state"
+        ) {
+          try {
+            finalState = JSON.parse(trace.output_data);
+          } catch {}
+        }
+      }
+
+      turns.sort((a, b) => a.turn - b.turn);
+      suggestions.sort((a, b) => a.turn - b.turn);
+    }
+
+    res.json({ case: caseData, turns, suggestions, finalState });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
