@@ -38,6 +38,15 @@ class OpenAIModelProvider(ModelProvider):
             )
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
 
+    @property
+    def client(self) -> AsyncOpenAI:
+        """Return the underlying AsyncOpenAI client for direct API calls.
+
+        Used by the logprob-based hypothesis scorer which bypasses the
+        Agents SDK to make raw completions calls with logprobs enabled.
+        """
+        return self._client
+
     def get_model(self, model_name: str | None) -> Model:
         """Return an OpenAIChatCompletionsModel for the given model name.
 

@@ -117,7 +117,6 @@ def _mock_specialist_outputs():
     return {
         "DISPUTE": SpecialistAssessment(
             category="DISPUTE",
-            likelihood=0.2,
             reasoning="No merchant issue identified.",
             eligibility="blocked",
             evidence_gaps=[],
@@ -125,13 +124,11 @@ def _mock_specialist_outputs():
         ),
         "SCAM": SpecialistAssessment(
             category="SCAM",
-            likelihood=0.1,
             reasoning="No scam pattern.",
             eligibility="eligible",
         ),
         "THIRD_PARTY_FRAUD": SpecialistAssessment(
             category="THIRD_PARTY_FRAUD",
-            likelihood=0.5,
             reasoning="Unfamiliar device used.",
             eligibility="eligible",
             evidence_gaps=["Identity verification pending", "Authorization method unclear"],
@@ -174,9 +171,15 @@ def _mock_case_advisory(questions=None):
 
 
 def _make_orchestrator() -> CopilotOrchestrator:
-    """Create a CopilotOrchestrator with mock gateway and provider."""
+    """Create a CopilotOrchestrator with mock gateway and provider.
+
+    The model_provider mock uses OpenAIModelProvider as spec so that
+    isinstance checks in _run_arbitrator_safe pass correctly.
+    """
+    from agentic_fraud_servicing.providers.openai_provider import OpenAIModelProvider
+
     gateway = MagicMock()
-    model_provider = MagicMock()
+    model_provider = MagicMock(spec=OpenAIModelProvider)
     return CopilotOrchestrator(gateway=gateway, model_provider=model_provider, assess_interval=1)
 
 

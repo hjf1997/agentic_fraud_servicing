@@ -27,9 +27,16 @@ class TestTriageAgent:
         """Agent has AllegationExtractionResult as output_type."""
         assert triage_agent.output_type.output_type is AllegationExtractionResult
 
-    def test_instructions_contain_all_17_allegation_detail_types(self):
-        """Instructions reference all 17 AllegationDetailType enum values."""
+    def test_instructions_contain_allegation_detail_types(self):
+        """Instructions reference all AllegationDetailType values except UNRECOGNIZED_TRANSACTION.
+
+        UNRECOGNIZED_TRANSACTION is handled by the retrieval agent, not
+        the triage agent. It is kept in the enum for reuse elsewhere.
+        """
+        excluded = {"UNRECOGNIZED_TRANSACTION"}
         for ct in AllegationDetailType:
+            if ct.value in excluded:
+                continue
             assert ct.value in TRIAGE_INSTRUCTIONS, f"Missing {ct.value}"
 
     def test_instructions_contain_entity_guidance(self):
@@ -59,7 +66,6 @@ class TestTriageAgent:
 
     def test_instructions_contain_example_phrases(self):
         """Instructions contain natural language example phrases."""
-        assert "I didn't make this charge" in TRIAGE_INSTRUCTIONS
         assert "Package never arrived" in TRIAGE_INSTRUCTIONS
         assert "charged me twice" in TRIAGE_INSTRUCTIONS
 

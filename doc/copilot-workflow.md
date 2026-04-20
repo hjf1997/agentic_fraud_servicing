@@ -20,7 +20,7 @@ flowchart TD
 
     subgraph Phase1["Phase 1: Parallel — asyncio.gather()"]
         direction LR
-        Triage["Triage Agent<br/>─────────────<br/>Extract 0-8 allegations<br/>per turn using 17-value<br/>AllegationDetailType"]
+        Triage["Triage Agent<br/>─────────────<br/>Extract 0-8 allegations<br/>per turn using 16-value<br/>AllegationDetailType"]
         Auth["Auth Agent<br/>─────────────<br/>Impersonation risk<br/>score (0.0-1.0)<br/>+ step-up method"]
         Retrieval["Retrieval Agent<br/>─────────────<br/>Fetch transactions,<br/>auth logs, customer<br/>profile (idempotent)"]
     end
@@ -31,7 +31,7 @@ flowchart TD
 
     subgraph Phase2a["Phase 2a: Parallel — asyncio.gather()"]
         direction LR
-        Specs["run_specialists()<br/>─────────────<br/>3 parallel specialists:<br/>Dispute · Scam · Fraud<br/>Each: likelihood, eligibility,<br/>evidence_gaps, policy_citations"]
+        Specs["run_specialists()<br/>─────────────<br/>3 parallel evidence analysts:<br/>Dispute · Scam · Fraud<br/>Each: eligibility,<br/>evidence_gaps, policy_citations"]
         QValidator["Question Validator<br/>─────────────<br/>Validate pending<br/>probing questions<br/>against new turns<br/>(skipped if none pending)"]
     end
 
@@ -39,7 +39,7 @@ flowchart TD
 
     subgraph Phase2b["Phase 2b: Parallel — asyncio.gather()"]
         direction LR
-        Arb["Arbitrator Agent<br/>─────────────<br/>Bayesian scoring:<br/>THIRD_PARTY_FRAUD<br/>FIRST_PARTY_FRAUD<br/>SCAM | DISPUTE"]
+        Arb["Arbitrator<br/>─────────────<br/>Logit scorer (logprobs)<br/>+ Reasoning agent<br/>→ 5-category scores<br/>+ qualitative reasoning"]
         CaseAdv["Case Advisor<br/>─────────────<br/>Question planner<br/>consuming specialist<br/>evidence gaps<br/>+ validated question list<br/>+ 0-3 NEW questions<br/>+ stopping signal"]
     end
 
@@ -83,7 +83,7 @@ For assessment turns the pipeline is:
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
 | **OUTPUT** | `allegations` | `list[AllegationExtraction]` | 0-8 per turn (typically 0-2) |
-| | `.detail_type` | `AllegationDetailType` | One of 17 values (e.g. `UNRECOGNIZED_TRANSACTION`, `LOST_STOLEN_CARD`, `GOODS_NOT_RECEIVED`, `DUPLICATE_CHARGE`) |
+| | `.detail_type` | `AllegationDetailType` | One of 16 values extracted by triage (e.g. `LOST_STOLEN_CARD`, `GOODS_NOT_RECEIVED`, `DUPLICATE_CHARGE`). `UNRECOGNIZED_TRANSACTION` is handled by the retrieval agent. |
 | | `.description` | `str` | Paraphrase of what the CM alleged |
 | | `.entities` | `dict[str, str]` | Structured key-value pairs (e.g. `merchant_name`, `amount`, `transaction_date`) |
 | | `.confidence` | `float` | 0.0-1.0 extraction confidence |
@@ -157,9 +157,9 @@ For assessment turns the pipeline is:
 
 ### 4. Specialist Panel (`run_specialists`)
 
-**Role**: Three parallel category specialists evaluate allegations and evidence against policy checklists.
+**Role**: Three parallel evidence analysts evaluate allegations and evidence against policy checklists.
 
-Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party Fraud**. They run in parallel via `asyncio.gather` and produce independent assessments including likelihood, eligibility, evidence gaps, and policy citations. Their outputs are consumed by both the Arbitrator (for scoring) and the Case Advisor (for question generation).
+Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party Fraud**. They run in parallel via `asyncio.gather` and produce independent evidence analyses including eligibility, supporting/contradicting evidence, evidence gaps, and policy citations. They do NOT produce likelihood scores — scoring is handled by the Arbitrator's logprob-based scorer. Their outputs are consumed by both the Arbitrator (for scoring and reasoning) and the Case Advisor (for question generation).
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
@@ -173,7 +173,6 @@ Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party
 |-----------|-------|------|-------------|
 | **OUTPUT** | `assessments` | `dict[str, SpecialistAssessment]` | Keyed by category: `DISPUTE`, `SCAM`, `THIRD_PARTY_FRAUD` |
 | | `.category` | `str` | The investigation category |
-| | `.likelihood` | `float` | 0.0-1.0 likelihood this category explains the case |
 | | `.reasoning` | `str` | Explanation of the assessment |
 | | `.supporting_evidence` | `list[str]` | Evidence supporting this category |
 | | `.contradicting_evidence` | `list[str]` | Evidence contradicting this category |
@@ -213,25 +212,32 @@ Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party
 
 ## Phase 2b — Arbitrator + Case Advisor (parallel on turn 4+)
 
-### 5. Arbitrator Agent
+### 5. Arbitrator (Logit Scorer + Reasoning Agent)
 
-**Role**: Score 4 investigation categories as a probability distribution, synthesizing specialist assessments.
+**Role**: Produce a 5-category probability distribution and qualitative reasoning by combining two parallel calls.
+
+The arbitrator makes two parallel calls via `asyncio.gather`:
+
+1. **Logit scorer** (raw OpenAI API) — forced-choice A/B/C/D classification with `max_tokens=1, logprobs=True, top_logprobs=10`. The logprob distribution over answer tokens becomes the 4-category score. `UNABLE_TO_DETERMINE` is derived from the Shannon entropy of the 4-category distribution (higher entropy → higher UTD). This produces more consistent and grounded scores than asking the LLM to generate float values.
+
+2. **Reasoning agent** (Agents SDK) — qualitative analysis producing per-category reasoning, contradiction detection, and first-party fraud identification. Does NOT produce scores.
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
-| **INPUT** | `specialist_assessments` | `dict[str, SpecialistAssessment]` | Outputs from the specialist panel |
+| **INPUT** | `specialist_assessments` | `dict[str, SpecialistAssessment]` | Evidence analyses from the specialist panel |
 | **INPUT** | `allegations_summary` | `str` | All accumulated allegations formatted with types, descriptions, confidence, and entities |
 | **INPUT** | `auth_summary` | `str` | Formatted auth assessment (impersonation risk, risk factors, step-up method, summary) |
-| **INPUT** | `current_scores` | `dict[str, float]` | Previous turn's hypothesis scores (Bayesian prior): `{THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE}` |
-| **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
+| **INPUT** | `current_scores` | `dict[str, float]` | Previous turn's hypothesis scores: `{THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE, UNABLE_TO_DETERMINE}` |
+| **INPUT** | `model_provider` | `ModelProvider` | LLM provider for the reasoning agent |
+| **INPUT** | `openai_client` | `AsyncOpenAI` | Raw OpenAI client for the logprob scorer |
 | **INPUT** | `previous_reasoning` | `HypothesisAssessment \| None` | Previous turn's full assessment for reasoning continuity |
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
-| **OUTPUT** | `scores` | `dict[str, float]` | `{THIRD_PARTY_FRAUD: 0.XX, FIRST_PARTY_FRAUD: 0.XX, SCAM: 0.XX, DISPUTE: 0.XX}` (sums to ~1.0) |
-| **OUTPUT** | `reasoning` | `dict[str, str]` | Per-category explanation (1-3 sentences each) |
-| **OUTPUT** | `contradictions` | `list[str]` | Detected contradictions between allegations and evidence |
-| **OUTPUT** | `assessment_summary` | `str` | 2-4 sentence overall assessment |
+| **OUTPUT** | `scores` | `dict[str, float]` | `{THIRD_PARTY_FRAUD: 0.XX, FIRST_PARTY_FRAUD: 0.XX, SCAM: 0.XX, DISPUTE: 0.XX, UNABLE_TO_DETERMINE: 0.XX}` (sums to 1.0). From logprob scorer. |
+| **OUTPUT** | `reasoning` | `dict[str, str]` | Per-category explanation (1-3 sentences each). From reasoning agent. |
+| **OUTPUT** | `contradictions` | `list[str]` | Detected contradictions between allegations and evidence. From reasoning agent. |
+| **OUTPUT** | `assessment_summary` | `str` | 2-4 sentence overall assessment. From reasoning agent. |
 
 **Side effects**:
 - Updates `orchestrator.hypothesis_scores`
@@ -303,16 +309,19 @@ All agent results are assembled into a single `CopilotSuggestion`:
 ```
 Triage --> accumulated_allegations --+
                                      |
-Retrieval --> transactions ----------+-> Specialists --+--> Arbitrator --> hypothesis_scores
-           |  auth_events -----------+   (Dispute,     |
-           +- customer_profile ------+    Scam,    +---+--> Case Advisor
-                  |                       Fraud)   |        (validated question list
-                  |                          |     |         + NEW questions + stopping)
+Retrieval --> transactions ----------+-> Specialists --+--> Arbitrator ──┐
+           |  auth_events -----------+   (Dispute,     |   ├─ Logit scorer (logprobs) → scores
+           +- customer_profile ------+    Scam,    +---+   └─ Reasoning agent → reasoning
+                  |                       Fraud)   |          │
+                  |                          |     |          +--> hypothesis_scores
                   +-> Auth Agent             |     |
-                       |                     |     +-- Question Validator
-                       +--> impersonation_risk     (pending questions + new turns
-                       +--> risk_flags              --> answered/invalidated/pending)
-                       +--> Arbitrator (auth_summary)
+                       |                     |     +--> Case Advisor
+                       +--> impersonation_risk         (validated question list
+                       +--> risk_flags          +--     + NEW questions + stopping)
+                       +--> Arbitrator          |
+                            (auth_summary)      +-- Question Validator
+                                                (pending questions + new turns
+                                                 --> answered/invalidated/pending)
 ```
 
 ---
@@ -321,7 +330,8 @@ Retrieval --> transactions ----------+-> Specialists --+--> Arbitrator --> hypot
 
 - **Hub-and-spoke**: The orchestrator explicitly controls which agents run and when. No free handoffs.
 - **7 agents in 3 phases**: Triage, Auth, Retrieval (Phase 1) → 3 category Specialists + Question Validator (Phase 2a) → Arbitrator + Case Advisor (Phase 2b).
-- **Specialist panel as shared resource**: Three category specialists (Dispute, Scam, Third-Party Fraud) run once in Phase 2a. Their outputs feed both the Arbitrator (for Bayesian scoring) and the Case Advisor (for question generation), eliminating redundant policy evaluation.
+- **Specialist panel as shared resource**: Three category specialists (Dispute, Scam, Third-Party Fraud) run once in Phase 2a as evidence analysts — they classify evidence as supporting/contradicting/gap but do not produce scores. Their outputs feed both the Arbitrator (for logprob scoring and reasoning) and the Case Advisor (for question generation), eliminating redundant policy evaluation.
+- **Logprob-based scoring**: Hypothesis scores come from logprob distributions over forced-choice classification tokens (A/B/C/D), reflecting the model's actual internal confidence rather than fabricated float values. This produces more consistent scores across runs. `UNABLE_TO_DETERMINE` is derived from Shannon entropy — not a class the model picks.
 - **Specialist eligibility**: Each specialist outputs `eligible` or `blocked` plus `evidence_gaps` and `policy_citations`. The Case Advisor maps these directly to `CaseTypeAssessment` objects — no separate eligibility evaluation needed.
 - **Conditional auth**: Auth agent is skipped after turn 3 if impersonation risk drops below 0.4, saving an LLM call.
 - **Retrieval with cache invalidation**: Retrieval caches its result but invalidates when triage persists new allegations (evidence store changed). Re-fetches in parallel on the next assessment turn.
@@ -358,9 +368,12 @@ When `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, LangFuse is enable
 ### What's Captured
 
 **Auto-instrumented** (via `openinference-instrumentation-openai-agents`):
-- Every `Runner.run()` LLM call across all 6 agents (including 3 specialists): prompts, completions, tokens, model, latency
+- Every `Runner.run()` LLM call across all agents (including 3 specialists + hypothesis reasoning): prompts, completions, tokens, model, latency
 - Tool invocations with arguments and return values
 - Agent handoffs
+
+**Manually instrumented** (via `langfuse.generation()`):
+- `logit_scorer` — the raw `AsyncOpenAI` call for logprob-based scoring bypasses the Agents SDK's `Runner.run()`, so it has a manual LangFuse generation span recording: model, prompt, completion token, logprobs, category probabilities, entropy, final scores, and latency
 
 **Orchestrator-added context** (via `propagate_attributes` + `start_as_current_observation`):
 - `session_id` — groups all turns for one case
@@ -380,7 +393,8 @@ Trace: "copilot_turn" (session_id=case_id)
 │  ├─ auto: scam_specialist → LLM generation
 │  ├─ auto: fraud_specialist → LLM generation
 │  ├─ auto: question_validator → LLM generation (skipped if no pending questions)
-│  ├─ auto: arbitrator → LLM generation
+│  ├─ manual: logit_scorer → OpenAI completion (max_tokens=1, logprobs=True)
+│  ├─ auto: hypothesis_reasoning → LLM generation
 │  └─ auto: case_advisor → LLM generation
 ```
 

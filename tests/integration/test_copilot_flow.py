@@ -82,7 +82,6 @@ _HYPOTHESIS_RESULT = HypothesisAssessment(
 _SPECIALIST_OUTPUTS = {
     "DISPUTE": SpecialistAssessment(
         category="DISPUTE",
-        likelihood=0.15,
         reasoning="Merchant identified, amount confirmed. No merchant issue.",
         eligibility="eligible",
         evidence_gaps=[],
@@ -90,13 +89,11 @@ _SPECIALIST_OUTPUTS = {
     ),
     "SCAM": SpecialistAssessment(
         category="SCAM",
-        likelihood=0.15,
         reasoning="No social engineering indicators detected.",
         eligibility="eligible",
     ),
     "THIRD_PARTY_FRAUD": SpecialistAssessment(
         category="THIRD_PARTY_FRAUD",
-        likelihood=0.60,
         reasoning="CM claims unauthorized charge, no contradictions yet.",
         eligibility="eligible",
         evidence_gaps=["Identity verification pending", "Date reported missing"],

@@ -187,7 +187,6 @@ class TestMapSpecialistsToCaseTypes:
         specs = {
             "DISPUTE": SpecialistAssessment(
                 category="DISPUTE",
-                likelihood=0.7,
                 eligibility="eligible",
                 supporting_evidence=["Merchant confirmed cancellation"],
                 evidence_gaps=["Refund policy not confirmed"],
@@ -195,7 +194,6 @@ class TestMapSpecialistsToCaseTypes:
             ),
             "THIRD_PARTY_FRAUD": SpecialistAssessment(
                 category="THIRD_PARTY_FRAUD",
-                likelihood=0.2,
                 eligibility="blocked",
                 reasoning="CM's device was used for auth.",
                 evidence_gaps=[],
@@ -218,7 +216,7 @@ class TestMapSpecialistsToCaseTypes:
     def test_scam_not_mapped(self):
         """Scam specialist does not produce a CaseTypeAssessment."""
         specs = {
-            "SCAM": SpecialistAssessment(category="SCAM", likelihood=0.5, eligibility="eligible"),
+            "SCAM": SpecialistAssessment(category="SCAM", eligibility="eligible"),
         }
         result = _map_specialists_to_case_types(specs)
         assert len(result) == 0
@@ -295,20 +293,17 @@ class TestRunCaseAdvisor:
         return {
             "DISPUTE": SpecialistAssessment(
                 category="DISPUTE",
-                likelihood=0.3,
                 reasoning="Some merchant issue.",
                 eligibility="eligible",
                 evidence_gaps=["Merchant contact confirmation"],
             ),
             "SCAM": SpecialistAssessment(
                 category="SCAM",
-                likelihood=0.1,
                 reasoning="No scam indicators.",
                 eligibility="eligible",
             ),
             "THIRD_PARTY_FRAUD": SpecialistAssessment(
                 category="THIRD_PARTY_FRAUD",
-                likelihood=0.5,
                 reasoning="Unfamiliar device detected.",
                 eligibility="eligible",
                 evidence_gaps=["Device fingerprint details"],

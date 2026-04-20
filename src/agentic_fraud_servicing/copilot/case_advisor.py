@@ -382,7 +382,6 @@ def _format_specialists_for_advisor(
         )
         parts.append(
             f"### {_LABELS[category]}\n"
-            f"Likelihood: {a.likelihood:.2f}\n"
             f"Eligibility: {a.eligibility}\n"
             f"Reasoning: {a.reasoning}\n"
             f"Evidence gaps: {gaps}\n"

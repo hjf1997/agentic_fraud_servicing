@@ -1,0 +1,378 @@
+"""Logprob-based hypothesis scorer using forced-choice classification.
+
+Makes a single OpenAI API call with max_tokens=1 and logprobs=True to get
+a probability distribution over 4 investigation categories. Derives
+UNABLE_TO_DETERMINE from the Shannon entropy of the 4-category distribution
+rather than asking the LLM to generate it as a class.
+
+This produces more consistent and grounded scores than asking the LLM to
+generate float values, because logprobs reflect the model's actual internal
+confidence about its classification rather than a fabricated number.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+import time
+from typing import TYPE_CHECKING, Any
+
+from openai import AsyncOpenAI
+
+if TYPE_CHECKING:
+    from agentic_fraud_servicing.copilot.hypothesis_specialists import (
+        SpecialistAssessment,
+    )
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Category mapping
+# ---------------------------------------------------------------------------
+
+_TOKEN_TO_CATEGORY: dict[str, str] = {
+    "A": "THIRD_PARTY_FRAUD",
+    "B": "FIRST_PARTY_FRAUD",
+    "C": "SCAM",
+    "D": "DISPUTE",
+}
+
+_ALL_CATEGORIES = [
+    "THIRD_PARTY_FRAUD",
+    "FIRST_PARTY_FRAUD",
+    "SCAM",
+    "DISPUTE",
+    "UNABLE_TO_DETERMINE",
+]
+
+_UNIFORM_SCORES: dict[str, float] = {cat: 0.20 for cat in _ALL_CATEGORIES}
+
+# ---------------------------------------------------------------------------
+# Entropy tuning knobs
+# ---------------------------------------------------------------------------
+
+# Exponent applied to normalized entropy before capping. >1 means low entropy
+# yields very low UTD, high entropy yields substantial UTD (supralinear).
+UTD_ENTROPY_EXPONENT: float = 1.5
+
+# Maximum probability mass UNABLE_TO_DETERMINE can absorb. Prevents UTD from
+# dominating even on perfectly ambiguous cases.
+UTD_MAX_MASS: float = 0.5
+
+# Floor probability for tokens missing from top_logprobs (very unlikely).
+_FLOOR_PROB: float = 1e-6
+
+# ---------------------------------------------------------------------------
+# Prompt construction
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = """\
+You are a fraud investigation classifier for AMEX card disputes. You will
+receive evidence analysis from three category specialists (Dispute, Scam,
+Third-Party Fraud) plus accumulated allegations and authentication data.
+
+## Classification Guidelines
+
+- Base your judgment on system evidence and specialist findings, not on
+  cardmember allegations alone. Allegations establish which hypotheses to
+  investigate but are not evidence of what actually happened.
+- Previously known information restated in a new turn is not new evidence.
+  Only genuinely new findings should influence your classification.
+- Contradictions between allegations and evidence are one signal among many.
+  Weigh all specialist evidence proportionally — no single signal type
+  should dominate your decision.
+- Consider whether one specialist's contradicting evidence undermines
+  another specialist's supporting evidence.
+- If contradicting evidence exists across specialists without any evidence
+  of an external manipulator, consider first-party fraud.
+
+## Task
+
+Based on ALL the evidence below, which single investigation category BEST
+explains this case? Answer with exactly one letter.
+
+A) Third-party fraud — unauthorized transaction by an external criminal
+B) First-party fraud — cardmember is misrepresenting the transaction
+C) Scam — cardmember was deceived into authorizing by an external fraudster
+D) Dispute — authorized transaction with a merchant performance issue
+"""
+
+
+def _format_specialist_evidence(
+    assessments: dict[str, SpecialistAssessment],
+) -> str:
+    """Format specialist outputs for the logit prompt (no likelihood scores)."""
+    _LABELS = {
+        "DISPUTE": "Dispute Specialist",
+        "SCAM": "Scam Specialist",
+        "THIRD_PARTY_FRAUD": "Fraud Specialist (Third-Party)",
+    }
+    parts: list[str] = []
+    for category in ("DISPUTE", "SCAM", "THIRD_PARTY_FRAUD"):
+        a = assessments.get(category)
+        if a is None:
+            parts.append(f"### {_LABELS[category]}\nNot available.")
+            continue
+        supporting = ", ".join(a.supporting_evidence) if a.supporting_evidence else "none"
+        contradicting = ", ".join(a.contradicting_evidence) if a.contradicting_evidence else "none"
+        gaps = ", ".join(a.evidence_gaps) if a.evidence_gaps else "none"
+        parts.append(
+            f"### {_LABELS[category]}\n"
+            f"Eligibility: {a.eligibility}\n"
+            f"Reasoning: {a.reasoning}\n"
+            f"Supporting evidence: {supporting}\n"
+            f"Contradicting evidence: {contradicting}\n"
+            f"Evidence gaps: {gaps}"
+        )
+    return "\n\n".join(parts)
+
+
+def build_logit_prompt(
+    specialist_assessments: dict[str, SpecialistAssessment],
+    allegations_summary: str,
+    auth_summary: str,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Build the system and user messages for the logit classification call.
+
+    Returns:
+        (system_message, user_message) as dicts with 'role' and 'content' keys.
+    """
+    user_content = (
+        f"## Specialist Evidence Analysis\n\n"
+        f"{_format_specialist_evidence(specialist_assessments)}\n\n"
+        f"## Authentication Assessment\n{auth_summary}\n\n"
+        f"## Accumulated Allegations\n{allegations_summary}\n\n"
+        f"Answer with a single letter: A, B, C, or D."
+    )
+    return (
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Logprob extraction and scoring
+# ---------------------------------------------------------------------------
+
+
+def extract_category_probs(top_logprobs: list[Any]) -> dict[str, float]:
+    """Extract 4-category probabilities from the top_logprobs list.
+
+    Normalizes token strings (strip whitespace, uppercase) before matching.
+    Tokens not found in top_logprobs get a floor probability.
+
+    Args:
+        top_logprobs: List of logprob objects from the OpenAI response,
+            each with .token and .logprob attributes.
+
+    Returns:
+        Dict with 4 category keys mapped to normalized probabilities
+        summing to 1.0.
+    """
+    # Build lookup: normalized token -> raw probability
+    token_probs: dict[str, float] = {}
+    for entry in top_logprobs:
+        normalized = entry.token.strip().upper()
+        token_probs[normalized] = math.exp(entry.logprob)
+
+    # Extract probabilities for our 4 target tokens
+    raw: dict[str, float] = {}
+    for token, category in _TOKEN_TO_CATEGORY.items():
+        raw[category] = token_probs.get(token, _FLOOR_PROB)
+
+    # Normalize to sum to 1.0
+    total = sum(raw.values())
+    if total <= 0:
+        return {cat: 0.25 for cat in _TOKEN_TO_CATEGORY.values()}
+    return {cat: prob / total for cat, prob in raw.items()}
+
+
+def compute_entropy(probs: dict[str, float]) -> float:
+    """Compute normalized Shannon entropy for a 4-category distribution.
+
+    Returns:
+        Value between 0.0 (certain — one category dominates) and 1.0
+        (maximally uncertain — uniform distribution).
+    """
+    h_max = math.log2(len(probs))  # log2(4) = 2.0
+    if h_max == 0:
+        return 0.0
+    h = -sum(p * math.log2(p) for p in probs.values() if p > 0)
+    return h / h_max
+
+
+def derive_unable_to_determine(probs: dict[str, float]) -> float:
+    """Derive UNABLE_TO_DETERMINE score from entropy of the 4-category distribution.
+
+    Higher entropy (flatter distribution) → higher UTD. The relationship is
+    supralinear (exponent > 1) so peaked distributions get very low UTD.
+
+    Returns:
+        UTD score between 0.0 and UTD_MAX_MASS.
+    """
+    normalized_entropy = compute_entropy(probs)
+    return min(normalized_entropy**UTD_ENTROPY_EXPONENT, UTD_MAX_MASS)
+
+
+def build_final_scores(category_probs: dict[str, float], utd: float) -> dict[str, float]:
+    """Combine 4-category probs with UTD into a 5-key distribution summing to 1.0.
+
+    Each real category is scaled down by (1 - utd) to make room for UTD.
+    """
+    scale = 1.0 - utd
+    scores: dict[str, float] = {cat: prob * scale for cat, prob in category_probs.items()}
+    scores["UNABLE_TO_DETERMINE"] = utd
+    return scores
+
+
+# ---------------------------------------------------------------------------
+# Main scoring function
+# ---------------------------------------------------------------------------
+
+
+async def compute_logprob_scores(
+    client: AsyncOpenAI,
+    model: str,
+    specialist_assessments: dict[str, SpecialistAssessment],
+    allegations_summary: str,
+    auth_summary: str,
+) -> dict[str, float]:
+    """Compute hypothesis scores via logprob-based forced-choice classification.
+
+    Makes a single OpenAI API call asking the model to pick one of 4
+    investigation categories. The logprob distribution over the answer
+    tokens becomes the score. UNABLE_TO_DETERMINE is derived from entropy.
+
+    Args:
+        client: AsyncOpenAI client for direct API calls.
+        model: OpenAI model identifier (e.g. 'gpt-4.1').
+        specialist_assessments: Evidence analysis from 3 category specialists.
+        allegations_summary: Formatted accumulated allegations.
+        auth_summary: Formatted auth assessment.
+
+    Returns:
+        Dict with 5 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM,
+        DISPUTE, UNABLE_TO_DETERMINE) summing to 1.0.
+    """
+    system_msg, user_msg = build_logit_prompt(
+        specialist_assessments, allegations_summary, auth_summary
+    )
+
+    start_time = time.monotonic()
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[system_msg, user_msg],
+            max_tokens=1,
+            logprobs=True,
+            top_logprobs=10,
+            temperature=0.0,
+        )
+
+        duration_ms = (time.monotonic() - start_time) * 1000
+
+        # Extract logprobs from the first (only) content token
+        choice = response.choices[0]
+        if choice.logprobs and choice.logprobs.content:
+            top_lps = choice.logprobs.content[0].top_logprobs
+        else:
+            logger.warning("Logit scorer: no logprobs in response, using uniform")
+            return dict(_UNIFORM_SCORES)
+
+        category_probs = extract_category_probs(top_lps)
+        utd = derive_unable_to_determine(category_probs)
+        scores = build_final_scores(category_probs, utd)
+
+        # Manual LangFuse span for observability
+        _trace_logit_call(
+            model=model,
+            system_msg=system_msg["content"],
+            user_msg=user_msg["content"],
+            completion_token=choice.message.content or "",
+            scores=scores,
+            category_probs=category_probs,
+            entropy=compute_entropy(category_probs),
+            duration_ms=duration_ms,
+        )
+
+        logger.debug(
+            "Logit scorer: probs=%s, entropy=%.3f, utd=%.3f, scores=%s",
+            {k: f"{v:.3f}" for k, v in category_probs.items()},
+            compute_entropy(category_probs),
+            utd,
+            {k: f"{v:.3f}" for k, v in scores.items()},
+        )
+
+        return scores
+
+    except Exception as exc:
+        duration_ms = (time.monotonic() - start_time) * 1000
+        logger.error("Logit scorer failed (%.0fms): %s", duration_ms, exc)
+        _trace_logit_error(str(exc), duration_ms)
+        return dict(_UNIFORM_SCORES)
+
+
+# ---------------------------------------------------------------------------
+# LangFuse observability
+# ---------------------------------------------------------------------------
+
+
+def _trace_logit_call(
+    model: str,
+    system_msg: str,
+    user_msg: str,
+    completion_token: str,
+    scores: dict[str, float],
+    category_probs: dict[str, float],
+    entropy: float,
+    duration_ms: float,
+) -> None:
+    """Record the logit scoring call as a LangFuse generation span."""
+    try:
+        from agentic_fraud_servicing.copilot.langfuse_tracing import get_langfuse
+
+        lf = get_langfuse()
+        if lf is None:
+            return
+
+        lf.generation(
+            name="logit_scorer",
+            model=model,
+            input=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            output=completion_token,
+            metadata={
+                "category_probs": {k: round(v, 4) for k, v in category_probs.items()},
+                "entropy": round(entropy, 4),
+                "final_scores": {k: round(v, 4) for k, v in scores.items()},
+                "max_tokens": 1,
+                "logprobs": True,
+                "top_logprobs": 10,
+                "temperature": 0.0,
+            },
+            level="DEFAULT",
+            status_message=f"top={max(scores, key=scores.get)}, entropy={entropy:.3f}",
+        )
+    except Exception:
+        pass
+
+
+def _trace_logit_error(error_msg: str, duration_ms: float) -> None:
+    """Record a failed logit scoring call in LangFuse."""
+    try:
+        from agentic_fraud_servicing.copilot.langfuse_tracing import (
+            get_langfuse,
+        )
+
+        lf = get_langfuse()
+        if lf is None:
+            return
+        lf.generation(
+            name="logit_scorer",
+            level="ERROR",
+            status_message=f"Failed ({duration_ms:.0f}ms): {error_msg[:500]}",
+        )
+    except Exception:
+        pass

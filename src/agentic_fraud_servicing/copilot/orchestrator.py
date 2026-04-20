@@ -422,9 +422,7 @@ class CopilotOrchestrator:
             running_summary=self._build_allegations_summary(),
             safety_guidance=self._build_safety_guidance(),
             hypothesis_scores=dict(self.hypothesis_scores),
-            specialist_likelihoods={
-                cat: a.likelihood for cat, a in (self._last_specialist_assessments or {}).items()
-            },
+            specialist_likelihoods={},
             impersonation_risk=self.impersonation_risk,
             case_eligibility=case_eligibility,
             case_advisory_summary=case_advisory_summary,
@@ -740,12 +738,20 @@ class CopilotOrchestrator:
         """
         t0 = time.perf_counter()
         try:
+            # Extract OpenAI client for logprob-based scoring
+            from agentic_fraud_servicing.providers.openai_provider import (
+                OpenAIModelProvider,
+            )
+
+            if not isinstance(self.model_provider, OpenAIModelProvider):
+                raise RuntimeError("Logprob scoring requires OpenAI provider")
             result = await run_arbitrator(
                 specialist_assessments=specialist_assessments,
                 allegations_summary=self._format_allegations_for_hypothesis(),
                 auth_summary=self._format_auth_for_hypothesis(auth_result),
                 current_scores=dict(self.hypothesis_scores),
                 model_provider=self.model_provider,
+                openai_client=self.model_provider.client,
                 previous_reasoning=self._last_hypothesis,
             )
             # Attach specialist outputs for next-turn incremental reasoning

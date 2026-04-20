@@ -5,9 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agentic_fraud_servicing.copilot.hypothesis_agent import (
-    HYPOTHESIS_INSTRUCTIONS,
+    HYPOTHESIS_REASONING_INSTRUCTIONS,
     HypothesisAssessment,
-    hypothesis_agent,
+    HypothesisReasoning,
+    hypothesis_reasoning_agent,
     run_arbitrator,
 )
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
@@ -27,7 +28,6 @@ class TestSpecialistAssessment:
         """SpecialistAssessment with required fields has correct defaults."""
         assessment = SpecialistAssessment(category="DISPUTE")
         assert assessment.category == "DISPUTE"
-        assert assessment.likelihood == 0.0
         assert assessment.reasoning == ""
         assert assessment.supporting_evidence == []
         assert assessment.contradicting_evidence == []
@@ -39,7 +39,6 @@ class TestSpecialistAssessment:
         """SpecialistAssessment accepts all fields."""
         assessment = SpecialistAssessment(
             category="SCAM",
-            likelihood=0.7,
             reasoning="Strong social engineering indicators.",
             supporting_evidence=["Coached language in transcript"],
             contradicting_evidence=["No unusual payment method"],
@@ -47,7 +46,6 @@ class TestSpecialistAssessment:
             evidence_gaps=["Communication trail with scammer"],
             eligibility="blocked",
         )
-        assert assessment.likelihood == 0.7
         assert len(assessment.supporting_evidence) == 1
         assert len(assessment.policy_citations) == 1
         assert assessment.evidence_gaps == ["Communication trail with scammer"]
@@ -57,7 +55,6 @@ class TestSpecialistAssessment:
         """SpecialistAssessment survives JSON serialization."""
         original = SpecialistAssessment(
             category="THIRD_PARTY_FRAUD",
-            likelihood=0.4,
             reasoning="Some unfamiliar device activity.",
             evidence_gaps=["Device fingerprint data"],
             eligibility="eligible",
@@ -177,7 +174,7 @@ class TestHypothesisAssessment:
         """specialist_assessments is excluded from JSON serialization."""
         assessment = HypothesisAssessment()
         assessment.specialist_assessments = {
-            "DISPUTE": SpecialistAssessment(category="DISPUTE", likelihood=0.5),
+            "DISPUTE": SpecialistAssessment(category="DISPUTE"),
         }
         dumped = assessment.model_dump()
         assert "specialist_assessments" not in dumped
@@ -185,9 +182,9 @@ class TestHypothesisAssessment:
     def test_specialist_assessments_stored(self):
         """specialist_assessments can be set and read programmatically."""
         assessment = HypothesisAssessment()
-        sa = SpecialistAssessment(category="DISPUTE", likelihood=0.8)
+        sa = SpecialistAssessment(category="DISPUTE")
         assessment.specialist_assessments = {"DISPUTE": sa}
-        assert assessment.specialist_assessments["DISPUTE"].likelihood == 0.8
+        assert assessment.specialist_assessments["DISPUTE"].category == "DISPUTE"
 
 
 # ---------------------------------------------------------------------------
@@ -195,29 +192,28 @@ class TestHypothesisAssessment:
 # ---------------------------------------------------------------------------
 
 
-class TestHypothesisAgent:
-    """Tests for the hypothesis_agent (arbitrator) Agent instance."""
+class TestHypothesisReasoningAgent:
+    """Tests for the hypothesis_reasoning_agent Agent instance."""
 
     def test_agent_name(self):
         """Agent has the correct name."""
-        assert hypothesis_agent.name == "hypothesis"
+        assert hypothesis_reasoning_agent.name == "hypothesis_reasoning"
 
     def test_agent_output_type(self):
-        """Agent has HypothesisAssessment as output_type."""
-        assert hypothesis_agent.output_type.output_type is HypothesisAssessment
+        """Agent has HypothesisReasoning as output_type."""
+        assert hypothesis_reasoning_agent.output_type.output_type is HypothesisReasoning
 
-    def test_instructions_contain_arbitrator_concepts(self):
-        """Instructions reference arbitrator-specific concepts."""
-        lower = HYPOTHESIS_INSTRUCTIONS.lower()
+    def test_instructions_contain_reasoning_concepts(self):
+        """Instructions reference reasoning-specific concepts."""
+        lower = HYPOTHESIS_REASONING_INSTRUCTIONS.lower()
         assert "specialist" in lower
         assert "first_party_fraud" in lower or "first-party fraud" in lower
-        assert "arbitrator" in lower
-        assert "probability distribution" in lower
-        assert "bayesian prior" in lower or "prior" in lower
+        assert "reasoning" in lower
+        assert "contradictions" in lower
 
     def test_instructions_contain_first_party_fraud_detection(self):
         """Instructions describe first-party fraud cross-cutting detection."""
-        lower = HYPOTHESIS_INSTRUCTIONS.lower()
+        lower = HYPOTHESIS_REASONING_INSTRUCTIONS.lower()
         assert "cross-cutting" in lower or "cross-specialist" in lower
         assert "external manipulator" in lower or "external deceiver" in lower
         assert "contradicting evidence" in lower
@@ -238,9 +234,7 @@ class TestRunSpecialists:
     async def test_returns_three_assessments(self, mock_provider):
         """run_specialists returns dict with 3 category keys."""
         mock_result = MagicMock()
-        mock_result.final_output = SpecialistAssessment(
-            category="placeholder", likelihood=0.5, reasoning="Test."
-        )
+        mock_result.final_output = SpecialistAssessment(category="placeholder", reasoning="Test.")
 
         with patch(
             "agentic_fraud_servicing.copilot.hypothesis_specialists.run_with_retry",
@@ -256,7 +250,7 @@ class TestRunSpecialists:
             assert isinstance(assessment, SpecialistAssessment)
 
     async def test_handles_specialist_failure(self, mock_provider):
-        """Failing specialist returns default assessment with likelihood 0.0."""
+        """Failing specialist returns default assessment with eligibility 'eligible'."""
         call_count = 0
 
         async def _side_effect(*args, **kwargs):
@@ -265,9 +259,7 @@ class TestRunSpecialists:
             if call_count == 1:
                 raise ValueError("LLM timeout")
             mock_result = MagicMock()
-            mock_result.final_output = SpecialistAssessment(
-                category="ok", likelihood=0.5, reasoning="Fine."
-            )
+            mock_result.final_output = SpecialistAssessment(category="ok", reasoning="Fine.")
             return mock_result
 
         with patch(
@@ -279,10 +271,10 @@ class TestRunSpecialists:
                 "allegations", "evidence", "conversation", mock_provider
             )
 
-        # One failed, two succeeded
-        likelihoods = [a.likelihood for a in results.values()]
-        assert 0.0 in likelihoods  # the failed one
-        assert sum(1 for v in likelihoods if v == 0.5) == 2
+        # One failed (default: reasoning contains error), two succeeded
+        reasonings = [a.reasoning for a in results.values()]
+        assert any("unavailable" in r.lower() for r in reasonings)
+        assert sum(1 for r in reasonings if r == "Fine.") == 2
 
     async def test_passes_previous_assessments(self, mock_provider):
         """Previous assessments are included in specialist user messages."""
@@ -291,15 +283,11 @@ class TestRunSpecialists:
         async def _capture(*args, **kwargs):
             captured_inputs.append(kwargs.get("input", args[1] if len(args) > 1 else ""))
             mock_result = MagicMock()
-            mock_result.final_output = SpecialistAssessment(
-                category="test", likelihood=0.3, reasoning="Ok."
-            )
+            mock_result.final_output = SpecialistAssessment(category="test", reasoning="Ok.")
             return mock_result
 
         prev = {
-            "DISPUTE": SpecialistAssessment(
-                category="DISPUTE", likelihood=0.6, reasoning="Looks like dispute."
-            ),
+            "DISPUTE": SpecialistAssessment(category="DISPUTE", reasoning="Looks like dispute."),
         }
 
         with patch(
@@ -308,14 +296,17 @@ class TestRunSpecialists:
             side_effect=_capture,
         ):
             await run_specialists(
-                "allegations", "evidence", "conversation",
-                mock_provider, previous_assessments=prev,
+                "allegations",
+                "evidence",
+                "conversation",
+                mock_provider,
+                previous_assessments=prev,
             )
 
         # The dispute specialist should see its previous assessment
         dispute_input = captured_inputs[0]  # DISPUTE is first in _SPECIALISTS
         assert "Your Previous Assessment" in dispute_input
-        assert "0.60" in dispute_input
+        assert "eligible" in dispute_input
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +320,10 @@ class TestRunArbitrator:
     @pytest.fixture
     def mock_provider(self):
         return MagicMock()
+
+    @pytest.fixture
+    def mock_openai_client(self):
+        return AsyncMock()
 
     @pytest.fixture
     def sample_assessment(self):
@@ -354,14 +349,10 @@ class TestRunArbitrator:
     @pytest.fixture
     def mock_specialist_outputs(self):
         return {
-            "DISPUTE": SpecialistAssessment(
-                category="DISPUTE", likelihood=0.1, reasoning="No merchant issue."
-            ),
-            "SCAM": SpecialistAssessment(
-                category="SCAM", likelihood=0.2, reasoning="Some urgency."
-            ),
+            "DISPUTE": SpecialistAssessment(category="DISPUTE", reasoning="No merchant issue."),
+            "SCAM": SpecialistAssessment(category="SCAM", reasoning="Some urgency."),
             "THIRD_PARTY_FRAUD": SpecialistAssessment(
-                category="THIRD_PARTY_FRAUD", likelihood=0.1, reasoning="Enrolled device."
+                category="THIRD_PARTY_FRAUD", reasoning="Enrolled device."
             ),
         }
 
@@ -375,17 +366,54 @@ class TestRunArbitrator:
             "UNABLE_TO_DETERMINE": 0.20,
         }
 
+    @pytest.fixture
+    def sample_reasoning(self):
+        return HypothesisReasoning(
+            reasoning={
+                "THIRD_PARTY_FRAUD": "Low — enrolled device used",
+                "FIRST_PARTY_FRAUD": "High — chip+PIN contradiction",
+                "SCAM": "Moderate — some urgency",
+                "DISPUTE": "Low — no merchant issue",
+                "UNABLE_TO_DETERMINE": "Some evidence gaps remain",
+            },
+            contradictions=["CM claims unauthorized but chip+PIN auth"],
+            assessment_summary="First-party fraud indicators present.",
+        )
+
+    @pytest.fixture
+    def sample_logit_scores(self):
+        return {
+            "THIRD_PARTY_FRAUD": 0.1,
+            "FIRST_PARTY_FRAUD": 0.5,
+            "SCAM": 0.15,
+            "DISPUTE": 0.1,
+            "UNABLE_TO_DETERMINE": 0.15,
+        }
+
     async def test_returns_hypothesis_assessment(
-        self, mock_provider, sample_assessment, mock_specialist_outputs, default_scores
+        self,
+        mock_provider,
+        mock_openai_client,
+        sample_reasoning,
+        sample_logit_scores,
+        mock_specialist_outputs,
+        default_scores,
     ):
         """run_arbitrator returns HypothesisAssessment."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = sample_assessment
+        mock_run_result.final_output = sample_reasoning
 
-        with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
-            new_callable=AsyncMock,
-            return_value=mock_run_result,
+        with (
+            patch(
+                "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
+                new_callable=AsyncMock,
+                return_value=mock_run_result,
+            ),
+            patch(
+                "agentic_fraud_servicing.copilot.hypothesis_agent.compute_logprob_scores",
+                new_callable=AsyncMock,
+                return_value=sample_logit_scores,
+            ),
         ):
             result = await run_arbitrator(
                 specialist_assessments=mock_specialist_outputs,
@@ -393,29 +421,43 @@ class TestRunArbitrator:
                 auth_summary="Impersonation risk: 0.2",
                 current_scores=default_scores,
                 model_provider=mock_provider,
+                openai_client=mock_openai_client,
             )
 
         assert isinstance(result, HypothesisAssessment)
         assert result.scores["FIRST_PARTY_FRAUD"] == 0.5
 
-    async def test_includes_specialist_outputs_in_arbitrator_message(
-        self, mock_provider, mock_specialist_outputs, default_scores
+    async def test_includes_specialist_outputs_in_reasoning_message(
+        self,
+        mock_provider,
+        mock_openai_client,
+        mock_specialist_outputs,
+        default_scores,
+        sample_logit_scores,
     ):
-        """Arbitrator user message contains formatted specialist assessments."""
+        """Reasoning agent user message contains formatted specialist assessments."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = HypothesisAssessment()
+        mock_run_result.final_output = HypothesisReasoning()
 
-        with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
-            new_callable=AsyncMock,
-            return_value=mock_run_result,
-        ) as mock_run:
+        with (
+            patch(
+                "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
+                new_callable=AsyncMock,
+                return_value=mock_run_result,
+            ) as mock_run,
+            patch(
+                "agentic_fraud_servicing.copilot.hypothesis_agent.compute_logprob_scores",
+                new_callable=AsyncMock,
+                return_value=sample_logit_scores,
+            ),
+        ):
             await run_arbitrator(
                 specialist_assessments=mock_specialist_outputs,
                 allegations_summary="claims",
                 auth_summary="auth",
                 current_scores=default_scores,
                 model_provider=mock_provider,
+                openai_client=mock_openai_client,
             )
 
         call_args = mock_run.call_args
@@ -424,8 +466,6 @@ class TestRunArbitrator:
         assert "Dispute Specialist" in user_input
         assert "Scam Specialist" in user_input
         assert "Fraud Specialist (Third-Party)" in user_input
-        assert "0.10" in user_input  # dispute likelihood
-        assert "0.20" in user_input  # scam likelihood
 
     def test_does_not_import_run_specialists(self):
         """run_arbitrator module does not import run_specialists — decoupled."""
@@ -433,24 +473,32 @@ class TestRunArbitrator:
 
         assert not hasattr(mod, "run_specialists")
 
-    async def test_wraps_exceptions(self, mock_provider, default_scores):
-        """run_arbitrator wraps SDK exceptions in RuntimeError."""
+    async def test_wraps_exceptions(self, mock_provider, mock_openai_client, default_scores):
+        """run_arbitrator wraps exceptions in RuntimeError."""
         mock_specialist_outputs = {
             "DISPUTE": SpecialistAssessment(category="DISPUTE"),
             "SCAM": SpecialistAssessment(category="SCAM"),
             "THIRD_PARTY_FRAUD": SpecialistAssessment(category="THIRD_PARTY_FRAUD"),
         }
 
-        with patch(
-            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
-            new_callable=AsyncMock,
-            side_effect=ValueError("LLM call failed"),
+        with (
+            patch(
+                "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
+                new_callable=AsyncMock,
+                side_effect=ValueError("LLM call failed"),
+            ),
+            patch(
+                "agentic_fraud_servicing.copilot.hypothesis_agent.compute_logprob_scores",
+                new_callable=AsyncMock,
+                side_effect=ValueError("API failed"),
+            ),
         ):
-            with pytest.raises(RuntimeError, match="Hypothesis agent failed"):
+            with pytest.raises(RuntimeError, match="Hypothesis arbitrator failed"):
                 await run_arbitrator(
                     specialist_assessments=mock_specialist_outputs,
                     allegations_summary="claims",
                     auth_summary="auth",
                     current_scores=default_scores,
                     model_provider=mock_provider,
+                    openai_client=mock_openai_client,
                 )
