@@ -176,8 +176,10 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     # Catches CVV references, partial amounts, counts, turn numbers.
     # ("OTP", re.compile(r"\b\d{3}\b")),
 
-    # Numbers with 4+ digits — looks like card numbers to DLP filters.
-    ("LONG_NUMBER", re.compile(r"\b\d{4,}\b")),
+    # DISABLED: Catches card last-4 digits, transaction IDs, amounts, and
+    # reference numbers that agents need for fraud investigation reasoning.
+    # The CREDIT_CARD pattern already handles full card numbers.
+    # ("LONG_NUMBER", re.compile(r"\b\d{4,}\b")),
 ]
 
 # Subset of patterns safe for structured data (dicts/JSON). Excludes patterns

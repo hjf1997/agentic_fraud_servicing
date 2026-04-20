@@ -252,8 +252,8 @@ solely on evaluating how well "merchant dispute" explains the evidence.
    - `blocked` — evidence actively contradicts the dispute allegation, OR a
      specific policy rule prevents case opening. Cite the relevant policy.
    **When eligibility is `blocked`, your `reasoning` field MUST start with
-   "BLOCKED:" followed by the specific reason (e.g., "BLOCKED: CM confirmed
-   receiving goods and acknowledges the charge — policy II ").**
+   "BLOCKED:" followed by the specific reason and the relevant policy
+   section header.**
 7. **Identify evidence gaps**: List specific information still needed. Flag
    which gaps are obtainable only offline (e.g., "merchant delivery records
    [offline]", "refund policy documentation [offline]").
@@ -345,8 +345,8 @@ apply. Focus solely on evaluating how well "scam" explains the evidence.
      clearly initiated the transaction without any external influence), OR a
      specific policy rule prevents it. Cite the relevant policy.
    **When eligibility is `blocked`, your `reasoning` field MUST start with
-   "BLOCKED:" followed by the specific reason (e.g., "BLOCKED: CM describes
-   a voluntary purchase with no external influence — fraud_case_checklist §4.1").**
+   "BLOCKED:" followed by the specific reason and the relevant policy
+   section header.**
 7. **Identify evidence gaps**: List specific information still needed. Flag
    which gaps are obtainable only offline (e.g., "communication trail with
    alleged scammer [offline]", "payment platform transaction records [offline]").
@@ -418,9 +418,8 @@ solely on evaluating how well "third-party fraud" explains the evidence.
      chip+PIN auth from CM's enrolled device with no signs of compromise), OR
      a specific policy rule prevents case opening. Cite the relevant policy.
    **When eligibility is `blocked`, your `reasoning` field MUST start with
-   "BLOCKED:" followed by the specific reason (e.g., "BLOCKED: Chip+PIN auth
-   from enrolled device with matching behavioral patterns confirms CM
-   authorization — fraud_case_checklist §2.1").**
+   "BLOCKED:" followed by the specific reason and the relevant policy
+   section header.**
 8. **Identify evidence gaps**: List specific information still needed. Flag
    which gaps are obtainable only offline (e.g., "detailed device fingerprint
    analysis [offline]", "merchant-side authorization records [offline]").
