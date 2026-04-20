@@ -211,9 +211,7 @@ def mark_transactions_disputed(
         gateway.log_call(
             ctx=ctx,
             action="mark_transactions_disputed",
-            input_summary=(
-                f'{{"case_id": "{case_id}", "count": {len(transaction_node_ids)}}}'
-            ),
+            input_summary=(f'{{"case_id": "{case_id}", "count": {len(transaction_node_ids)}}}'),
             output_summary=f'{{"updated": {updated}}}',
             duration_ms=duration_ms,
         )

@@ -146,16 +146,12 @@ class EvidenceStore:
                 (node.model_dump_json(), node.node_id),
             )
             if cursor.rowcount == 0:
-                raise RuntimeError(
-                    f"update_node failed: node_id '{node.node_id}' not found"
-                )
+                raise RuntimeError(f"update_node failed: node_id '{node.node_id}' not found")
             self._conn.commit()
         except RuntimeError:
             raise
         except sqlite3.Error as exc:
-            raise RuntimeError(
-                f"update_node failed for node_id '{node.node_id}': {exc}"
-            ) from exc
+            raise RuntimeError(f"update_node failed for node_id '{node.node_id}': {exc}") from exc
 
     def get_nodes_by_case(self, case_id: str) -> list[dict]:
         """Retrieve all evidence nodes for a case.

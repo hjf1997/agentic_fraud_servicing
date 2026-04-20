@@ -279,5 +279,7 @@ async def _match_flags(
 
         status_code, error_body = extract_http_error(exc)
         detail = f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)
-        print(f"[risk_flag_evaluator] LLM matching failed ({detail})", file=__import__("sys").stderr)
+        print(
+            f"[risk_flag_evaluator] LLM matching failed ({detail})", file=__import__("sys").stderr
+        )
         return FlagMatchResult(matches=[], unmatched=list(expected_flags))

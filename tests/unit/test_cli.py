@@ -448,10 +448,12 @@ class TestCmdEvaluate:
                 "agent_id": "copilot_final",
                 "action": "final_state",
                 "input_data": "{}",
-                "output_data": json.dumps({
-                    "hypothesis_scores": {"THIRD_PARTY_FRAUD": 0.6},
-                    "impersonation_risk": 0.1,
-                }),
+                "output_data": json.dumps(
+                    {
+                        "hypothesis_scores": {"THIRD_PARTY_FRAUD": 0.6},
+                        "impersonation_risk": 0.1,
+                    }
+                ),
                 "duration_ms": 0.0,
                 "timestamp": "2024-01-01T00:00:00Z",
                 "status": "success",

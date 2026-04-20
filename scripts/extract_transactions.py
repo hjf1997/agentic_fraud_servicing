@@ -107,8 +107,7 @@ def _call_with_retry(fn, max_attempts=5, base_delay=2.0, max_delay=60.0):
         except Exception as e:
             error_str = str(e).lower()
             retryable = any(
-                k in error_str
-                for k in ["timeout", "rate limit", "503", "502", "500", "429"]
+                k in error_str for k in ["timeout", "rate limit", "503", "502", "500", "429"]
             )
             if not retryable:
                 raise
@@ -147,9 +146,7 @@ def _resolve_model_index() -> str:
 
     idx = os.environ.get("CONNECTCHAIN_MODEL_INDEX")
     if not idx:
-        raise RuntimeError(
-            "CONNECTCHAIN_MODEL_INDEX environment variable is required"
-        )
+        raise RuntimeError("CONNECTCHAIN_MODEL_INDEX environment variable is required")
     return idx
 
 

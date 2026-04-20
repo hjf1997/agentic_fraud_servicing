@@ -34,12 +34,8 @@ class Settings:
             "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         )
         self.openai_api_key: str | None = os.environ.get("OPENAI_API_KEY")
-        self.connectchain_model_index: str | None = os.environ.get(
-            "CONNECTCHAIN_MODEL_INDEX"
-        )
-        self.azure_openai_api_version: str | None = os.environ.get(
-            "AZURE_OPENAI_API_VERSION"
-        )
+        self.connectchain_model_index: str | None = os.environ.get("CONNECTCHAIN_MODEL_INDEX")
+        self.azure_openai_api_version: str | None = os.environ.get("AZURE_OPENAI_API_VERSION")
         self.azure_openai_use_responses_api: bool = (
             os.environ.get("AZURE_OPENAI_USE_RESPONSES_API", "false").lower() == "true"
         )

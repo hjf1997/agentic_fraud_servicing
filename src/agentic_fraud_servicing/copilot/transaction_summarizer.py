@@ -119,8 +119,7 @@ def _format_disputed_grouped(disputed: list[dict]) -> str:
         max_date = _extract_date_str(max(txns, key=_txn_date_key))
 
         lines.append(
-            f"{merchant} ({len(txns)} txns, ${merchant_total:,.2f}, "
-            f"{min_date} to {max_date}):"
+            f"{merchant} ({len(txns)} txns, ${merchant_total:,.2f}, {min_date} to {max_date}):"
         )
 
         # Auth method distribution
@@ -149,9 +148,7 @@ def _format_disputed_grouped(disputed: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _pick_date_samples(
-    txns: list[dict], num_dates: int = 3
-) -> list[tuple[str, list[dict]]]:
+def _pick_date_samples(txns: list[dict], num_dates: int = 3) -> list[tuple[str, list[dict]]]:
     """Pick representative date groups spread across the date range.
 
     Selects earliest, middle, and latest dates to show amount patterns
@@ -185,9 +182,7 @@ def _pick_date_samples(
 # ---------------------------------------------------------------------------
 
 
-def _format_undisputed(
-    undisputed: list[dict], disputed_merchants: set[str]
-) -> str:
+def _format_undisputed(undisputed: list[dict], disputed_merchants: set[str]) -> str:
     """Format undisputed transactions as aggregates.
 
     Shows overall stats and per-merchant breakdown only for merchants
@@ -219,8 +214,7 @@ def _format_undisputed(
             m_min_date = _extract_date_str(min(txns, key=_txn_date_key))
             m_max_date = _extract_date_str(max(txns, key=_txn_date_key))
             lines.append(
-                f"- {merchant}: {len(txns)} txns, ${m_total:,.2f}, "
-                f"{m_min_date} to {m_max_date}"
+                f"- {merchant}: {len(txns)} txns, ${m_total:,.2f}, {m_min_date} to {m_max_date}"
             )
 
     return "\n".join(lines)

@@ -39,7 +39,9 @@ os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 # 2. Agents SDK "Error getting response" messages include HTTP status codes
 import logging
 
-_log_fmt = logging.Formatter("[%(asctime)s %(name)s %(levelname)s] %(message)s", datefmt="%H:%M:%S")
+_log_fmt = logging.Formatter(
+    "[%(asctime)s %(name)s %(levelname)s] %(message)s", datefmt="%H:%M:%S"
+)
 _stdout_handler = logging.StreamHandler(sys.stdout)
 _stdout_handler.setFormatter(_log_fmt)
 
@@ -54,7 +56,9 @@ class _HttpErrorFilter(logging.Filter):
             while current is not None:
                 if hasattr(current, "status_code"):
                     code = getattr(current, "status_code", None)
-                    body = getattr(current, "body", None) or getattr(current, "message", None) or ""
+                    body = (
+                        getattr(current, "body", None) or getattr(current, "message", None) or ""
+                    )
                     record.msg = f"HTTP {code} error — {body}\n(original: {record.msg})"
                     break
                 current = getattr(current, "__cause__", None)
@@ -65,7 +69,11 @@ class _HttpErrorFilter(logging.Filter):
                 while current is not None:
                     if hasattr(current, "status_code"):
                         code = getattr(current, "status_code", None)
-                        body = getattr(current, "body", None) or getattr(current, "message", None) or ""
+                        body = (
+                            getattr(current, "body", None)
+                            or getattr(current, "message", None)
+                            or ""
+                        )
                         record.msg = f"HTTP {code} error — {body}"
                         record.args = ()
                         break
@@ -204,7 +212,8 @@ def _build_evaluation_run_from_db(
     # 3. Load allegations from evidence store
     all_nodes = gateway.evidence_store.get_nodes_by_case(case_id)
     allegation_nodes = [
-        n for n in all_nodes
+        n
+        for n in all_nodes
         if n.get("source_type") == "ALLEGATION" or n.get("node_type") == "ALLEGATION_STATEMENT"
     ]
 
@@ -316,7 +325,10 @@ async def run_evaluation(scenario_name: str, data_dir: str, transcript_path: str
     print(f"{BOLD}{GREEN}{'=' * 60}{RESET}")
 
     evaluation_run = _build_evaluation_run_from_db(
-        scenario_name, data_dir, transcript_path, scenario.case_id,
+        scenario_name,
+        data_dir,
+        transcript_path,
+        scenario.case_id,
     )
 
     assessed_count = sum(
@@ -346,7 +358,9 @@ async def run_evaluation(scenario_name: str, data_dir: str, transcript_path: str
 
         status_code, error_body = extract_http_error(exc)
         if status_code is not None:
-            print(f"  {YELLOW}Warning: Report generation failed (HTTP {status_code}): {error_body[:300]}{RESET}")
+            print(
+                f"  {YELLOW}Warning: Report generation failed (HTTP {status_code}): {error_body[:300]}{RESET}"
+            )
         else:
             print(f"  {YELLOW}Warning: Report generation failed: {exc}{RESET}")
 
@@ -448,7 +462,9 @@ def main() -> None:
     data_dir = args.data_dir or f"data/simulation/{scenario_name}"
     if not os.path.isdir(data_dir):
         print(f"{RED}Error: Simulation data directory not found: {data_dir}{RESET}")
-        print(f"{YELLOW}Run the simulation first: python scripts/run_simulation.py -s {scenario_name}{RESET}")
+        print(
+            f"{YELLOW}Run the simulation first: python scripts/run_simulation.py -s {scenario_name}{RESET}"
+        )
         sys.exit(1)
 
     # Determine transcript path

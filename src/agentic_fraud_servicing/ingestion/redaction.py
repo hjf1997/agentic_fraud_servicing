@@ -100,9 +100,7 @@ _PHONE_RE = re.compile(
 # --- Email patterns ---
 
 # Standard email: user@domain.tld, also handles "dot" / "at" obfuscation
-_EMAIL_RE = re.compile(
-    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
-)
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 # Obfuscated email: "user at domain dot com"
 _EMAIL_OBFUSCATED_RE = re.compile(
     r"(?i)[a-zA-Z0-9._%+\-]+\s+(?:at|@)\s+[a-zA-Z0-9.\-]+\s+(?:dot|\.)\s+[a-zA-Z]{2,}"

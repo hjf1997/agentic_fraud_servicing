@@ -36,12 +36,15 @@ def _mock_langfuse_imports():
     mock_instrumentor_cls = mock_openinference_mod.OpenAIAgentsInstrumentor
 
     with (
-        patch.dict(sys.modules, {
-            "langfuse": mock_langfuse_mod,
-            "openinference": MagicMock(),
-            "openinference.instrumentation": MagicMock(),
-            "openinference.instrumentation.openai_agents": mock_openinference_mod,
-        }),
+        patch.dict(
+            sys.modules,
+            {
+                "langfuse": mock_langfuse_mod,
+                "openinference": MagicMock(),
+                "openinference.instrumentation": MagicMock(),
+                "openinference.instrumentation.openai_agents": mock_openinference_mod,
+            },
+        ),
     ):
         yield mock_langfuse_mod, mock_instrumentor_cls
 

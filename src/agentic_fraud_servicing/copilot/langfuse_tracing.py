@@ -161,9 +161,7 @@ def tag_agent_error(agent_name: str, exc: BaseException) -> None:
         pass
 
 
-def _classify_error(
-    agent_name: str, exc: BaseException
-) -> tuple[str, str, dict]:
+def _classify_error(agent_name: str, exc: BaseException) -> tuple[str, str, dict]:
     """Classify an agent exception into a type, status message, and metadata.
 
     Returns:
@@ -254,9 +252,12 @@ def extract_http_error(exc: BaseException) -> tuple[int | None, str]:
         # openai SDK exceptions have status_code and body/message
         if hasattr(current, "status_code"):
             code = getattr(current, "status_code", None)
-            body = getattr(current, "body", None) or getattr(current, "message", None) or str(current)
+            body = (
+                getattr(current, "body", None) or getattr(current, "message", None) or str(current)
+            )
             if isinstance(body, (dict, list)):
                 import json
+
                 body = json.dumps(body, default=str)
             return code, str(body)
         # httpx.HTTPStatusError

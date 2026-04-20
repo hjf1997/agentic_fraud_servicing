@@ -117,8 +117,7 @@ async def run_auth_assessment(
     if conversation_history:
         lines = [f"{speaker}: {text}" for speaker, text in conversation_history]
         parts.append(
-            f"Recent conversation ({len(conversation_history)} turns):\n"
-            + "\n".join(lines)
+            f"Recent conversation ({len(conversation_history)} turns):\n" + "\n".join(lines)
         )
     parts.append(f"Current turn:\n{transcript_text}")
     parts.append(f"\nAuth events:\n{json.dumps(auth_events, indent=2)}")

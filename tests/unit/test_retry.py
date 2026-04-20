@@ -103,7 +103,10 @@ class TestRunWithRetry:
             side_effect=[ModelBehaviorError("Invalid JSON"), mock_result],
         ) as mock_run:
             result = await run_with_retry(
-                "agent", input="test", max_retries=2, base_delay=0.01,
+                "agent",
+                input="test",
+                max_retries=2,
+                base_delay=0.01,
             )
             assert result is mock_result
             assert mock_run.call_count == 2
@@ -112,13 +115,16 @@ class TestRunWithRetry:
     async def test_no_retry_on_firewall_block(self):
         """Firewall blocks propagate immediately without retry."""
         exc = Exception("403 policy block")
-        with patch(
-            "agentic_fraud_servicing.providers.retry.Runner.run",
-            new_callable=AsyncMock,
-            side_effect=exc,
-        ) as mock_run, patch(
-            "agentic_fraud_servicing.copilot.langfuse_tracing.is_firewall_block",
-            return_value=True,
+        with (
+            patch(
+                "agentic_fraud_servicing.providers.retry.Runner.run",
+                new_callable=AsyncMock,
+                side_effect=exc,
+            ) as mock_run,
+            patch(
+                "agentic_fraud_servicing.copilot.langfuse_tracing.is_firewall_block",
+                return_value=True,
+            ),
         ):
             with pytest.raises(Exception, match="403 policy block"):
                 await run_with_retry("agent", input="test", max_retries=2)
@@ -137,7 +143,10 @@ class TestRunWithRetry:
         ) as mock_run:
             with pytest.raises(ModelBehaviorError, match="Invalid JSON"):
                 await run_with_retry(
-                    "agent", input="test", max_retries=2, base_delay=0.01,
+                    "agent",
+                    input="test",
+                    max_retries=2,
+                    base_delay=0.01,
                 )
             # 1 initial + 2 retries = 3 total
             assert mock_run.call_count == 3

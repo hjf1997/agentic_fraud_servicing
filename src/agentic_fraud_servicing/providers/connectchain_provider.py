@@ -63,9 +63,8 @@ class ConnectChainModelProvider(ModelProvider):
         try:
             lc_llm = get_connectchain_model(settings.connectchain_model_index)
             # Extract Azure OpenAI config from the LangChain LLM object
-            azure_endpoint = (
-                getattr(lc_llm, "azure_endpoint", None)
-                or getattr(lc_llm, "openai_api_base", None)
+            azure_endpoint = getattr(lc_llm, "azure_endpoint", None) or getattr(
+                lc_llm, "openai_api_base", None
             )
             deployment = (
                 getattr(lc_llm, "deployment_name", None)

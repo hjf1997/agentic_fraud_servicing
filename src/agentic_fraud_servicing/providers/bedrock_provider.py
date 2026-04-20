@@ -385,16 +385,12 @@ class BedrockModel(Model):
             # Record input (system + messages in Bedrock format)
             if tracing.include_data():
                 span.span_data.input = (
-                    [{"role": "system", "content": sys_text}] + messages
-                    if sys_text
-                    else messages
+                    [{"role": "system", "content": sys_text}] + messages if sys_text else messages
                 )
 
             # Call Bedrock (synchronous boto3 in a thread)
             try:
-                bedrock_response = await asyncio.to_thread(
-                    self._client.converse, **kwargs
-                )
+                bedrock_response = await asyncio.to_thread(self._client.converse, **kwargs)
             except Exception as exc:
                 raise ProviderError(
                     f"Bedrock converse() failed: {exc}",

@@ -228,8 +228,7 @@ async def run_triage(
     # Prepend allegation summary for dedup when available
     if allegation_summary:
         parts.append(
-            "Previously extracted allegations (do NOT re-extract these):\n"
-            f"{allegation_summary}"
+            f"Previously extracted allegations (do NOT re-extract these):\n{allegation_summary}"
         )
 
     # Add conversation turns with [CONTEXT] / [NEW] / [LATEST TURN] markers

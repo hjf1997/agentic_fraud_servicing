@@ -180,5 +180,7 @@ async def _match_allegations(
 
         status_code, error_body = extract_http_error(exc)
         detail = f"HTTP {status_code}: {error_body[:200]}" if status_code else str(exc)
-        print(f"[allegation_quality] LLM matching failed ({detail})", file=__import__("sys").stderr)
+        print(
+            f"[allegation_quality] LLM matching failed ({detail})", file=__import__("sys").stderr
+        )
         return [], list(ground_truth), list(extracted)

@@ -107,7 +107,7 @@ async def run_with_retry(
                 raise
 
             if attempt < max_retries:
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2**attempt)
                 agent_name = ""
                 if args:
                     agent_name = getattr(args[0], "name", "")
