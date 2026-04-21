@@ -20,9 +20,8 @@ from agentic_fraud_servicing.copilot.context import (
 )
 from agentic_fraud_servicing.copilot.hypothesis_agent import (
     HypothesisAssessment,
-    HypothesisReasoning,
     ReasoningNoteUpdate,
-    hypothesis_reasoning_agent,
+    hypothesis_agent,
     merge_reasoning_notes,
     run_arbitrator,
 )
@@ -64,9 +63,8 @@ __all__ = [
     "run_retrieval",
     # hypothesis_agent
     "HypothesisAssessment",
-    "HypothesisReasoning",
     "ReasoningNoteUpdate",
-    "hypothesis_reasoning_agent",
+    "hypothesis_agent",
     "merge_reasoning_notes",
     "run_arbitrator",
     # hypothesis_specialists

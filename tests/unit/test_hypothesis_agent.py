@@ -5,11 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agentic_fraud_servicing.copilot.hypothesis_agent import (
-    HYPOTHESIS_REASONING_INSTRUCTIONS,
+    HYPOTHESIS_INSTRUCTIONS,
     HypothesisAssessment,
-    HypothesisReasoning,
     ReasoningNoteUpdate,
-    hypothesis_reasoning_agent,
+    hypothesis_agent,
     merge_reasoning_notes,
     run_arbitrator,
 )
@@ -107,6 +106,7 @@ class TestHypothesisAssessment:
                 "FIRST_PARTY_FRAUD": "High — chip+PIN contradicts claim",
                 "SCAM": "Moderate — some urgency in language",
                 "DISPUTE": "Low — no merchant issue",
+                "UNABLE_TO_DETERMINE": "Low — some evidence available",
             },
             contradictions=[
                 "CM claims unauthorized but chip+PIN auth from enrolled device",
@@ -130,14 +130,15 @@ class TestHypothesisAssessment:
         }
         assert set(assessment.scores.keys()) == expected_keys
 
-    def test_reasoning_dict_has_four_keys(self):
-        """Default reasoning dict contains the 4 real categories (no UTD)."""
+    def test_reasoning_dict_has_five_keys(self):
+        """Default reasoning dict contains all 5 categories."""
         assessment = HypothesisAssessment()
         expected_keys = {
             "THIRD_PARTY_FRAUD",
             "FIRST_PARTY_FRAUD",
             "SCAM",
             "DISPUTE",
+            "UNABLE_TO_DETERMINE",
         }
         assert set(assessment.reasoning.keys()) == expected_keys
 
@@ -162,6 +163,7 @@ class TestHypothesisAssessment:
                 "FIRST_PARTY_FRAUD": "High",
                 "SCAM": "Low",
                 "DISPUTE": "Low",
+                "UNABLE_TO_DETERMINE": "Sufficient evidence",
             },
             contradictions=["chip+PIN from enrolled device"],
             assessment_summary="Likely first-party fraud.",
@@ -195,31 +197,36 @@ class TestHypothesisAssessment:
 # ---------------------------------------------------------------------------
 
 
-class TestHypothesisReasoningAgent:
-    """Tests for the hypothesis_reasoning_agent Agent instance."""
+class TestHypothesisAgent:
+    """Tests for the hypothesis_agent Agent instance."""
 
     def test_agent_name(self):
         """Agent has the correct name."""
-        assert hypothesis_reasoning_agent.name == "hypothesis_reasoning"
+        assert hypothesis_agent.name == "hypothesis"
 
     def test_agent_output_type(self):
-        """Agent has HypothesisReasoning as output_type."""
-        assert hypothesis_reasoning_agent.output_type.output_type is HypothesisReasoning
+        """Agent has HypothesisAssessment as output_type."""
+        assert hypothesis_agent.output_type.output_type is HypothesisAssessment
 
-    def test_instructions_contain_reasoning_concepts(self):
-        """Instructions reference reasoning-specific concepts."""
-        lower = HYPOTHESIS_REASONING_INSTRUCTIONS.lower()
+    def test_instructions_contain_scoring_concepts(self):
+        """Instructions reference scoring-specific concepts."""
+        lower = HYPOTHESIS_INSTRUCTIONS.lower()
         assert "specialist" in lower
         assert "first_party_fraud" in lower or "first-party fraud" in lower
-        assert "reasoning" in lower
+        assert "scoring rules" in lower
         assert "contradictions" in lower
 
     def test_instructions_contain_first_party_fraud_detection(self):
         """Instructions describe first-party fraud cross-cutting detection."""
-        lower = HYPOTHESIS_REASONING_INSTRUCTIONS.lower()
+        lower = HYPOTHESIS_INSTRUCTIONS.lower()
         assert "cross-cutting" in lower or "cross-specialist" in lower
         assert "external manipulator" in lower or "external deceiver" in lower
         assert "contradicting evidence" in lower
+
+    def test_instructions_contain_unable_to_determine(self):
+        """Instructions describe UNABLE_TO_DETERMINE scoring rules."""
+        assert "UNABLE_TO_DETERMINE" in HYPOTHESIS_INSTRUCTIONS
+        assert "evidence sufficiency" in HYPOTHESIS_INSTRUCTIONS.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -328,10 +335,6 @@ class TestRunArbitrator:
         return MagicMock()
 
     @pytest.fixture
-    def mock_openai_client(self):
-        return AsyncMock()
-
-    @pytest.fixture
     def sample_assessment(self):
         return HypothesisAssessment(
             scores={
@@ -346,6 +349,7 @@ class TestRunArbitrator:
                 "FIRST_PARTY_FRAUD": "High — chip+PIN contradiction",
                 "SCAM": "Moderate — some urgency",
                 "DISPUTE": "Low — no merchant issue",
+                "UNABLE_TO_DETERMINE": "Low — some evidence available",
             },
             contradictions=["CM claims unauthorized but chip+PIN auth"],
             assessment_summary="First-party fraud indicators present.",
@@ -371,53 +375,17 @@ class TestRunArbitrator:
             "UNABLE_TO_DETERMINE": 0.20,
         }
 
-    @pytest.fixture
-    def sample_reasoning(self):
-        return HypothesisReasoning(
-            reasoning={
-                "THIRD_PARTY_FRAUD": "Low — enrolled device used",
-                "FIRST_PARTY_FRAUD": "High — chip+PIN contradiction",
-                "SCAM": "Moderate — some urgency",
-                "DISPUTE": "Low — no merchant issue",
-            },
-            contradictions=["CM claims unauthorized but chip+PIN auth"],
-            assessment_summary="First-party fraud indicators present.",
-        )
-
-    @pytest.fixture
-    def sample_logit_scores(self):
-        return {
-            "THIRD_PARTY_FRAUD": 0.1,
-            "FIRST_PARTY_FRAUD": 0.5,
-            "SCAM": 0.15,
-            "DISPUTE": 0.1,
-            "UNABLE_TO_DETERMINE": 0.15,
-        }
-
     async def test_returns_hypothesis_assessment(
-        self,
-        mock_provider,
-        mock_openai_client,
-        sample_reasoning,
-        sample_logit_scores,
-        mock_specialist_outputs,
-        default_scores,
+        self, mock_provider, sample_assessment, mock_specialist_outputs, default_scores
     ):
         """run_arbitrator returns HypothesisAssessment."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = sample_reasoning
+        mock_run_result.final_output = sample_assessment
 
-        with (
-            patch(
-                "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
-                new_callable=AsyncMock,
-                return_value=mock_run_result,
-            ),
-            patch(
-                "agentic_fraud_servicing.copilot.hypothesis_agent.compute_logprob_scores",
-                new_callable=AsyncMock,
-                return_value=sample_logit_scores,
-            ),
+        with patch(
+            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
         ):
             result = await run_arbitrator(
                 specialist_assessments=mock_specialist_outputs,
@@ -425,43 +393,29 @@ class TestRunArbitrator:
                 auth_summary="Impersonation risk: 0.2",
                 current_scores=default_scores,
                 model_provider=mock_provider,
-                openai_client=mock_openai_client,
             )
 
         assert isinstance(result, HypothesisAssessment)
         assert result.scores["FIRST_PARTY_FRAUD"] == 0.5
 
-    async def test_includes_specialist_outputs_in_reasoning_message(
-        self,
-        mock_provider,
-        mock_openai_client,
-        mock_specialist_outputs,
-        default_scores,
-        sample_logit_scores,
+    async def test_includes_specialist_outputs_in_message(
+        self, mock_provider, mock_specialist_outputs, default_scores
     ):
-        """Reasoning agent user message contains formatted specialist assessments."""
+        """User message contains formatted specialist assessments."""
         mock_run_result = MagicMock()
-        mock_run_result.final_output = HypothesisReasoning()
+        mock_run_result.final_output = HypothesisAssessment()
 
-        with (
-            patch(
-                "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
-                new_callable=AsyncMock,
-                return_value=mock_run_result,
-            ) as mock_run,
-            patch(
-                "agentic_fraud_servicing.copilot.hypothesis_agent.compute_logprob_scores",
-                new_callable=AsyncMock,
-                return_value=sample_logit_scores,
-            ),
-        ):
+        with patch(
+            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ) as mock_run:
             await run_arbitrator(
                 specialist_assessments=mock_specialist_outputs,
                 allegations_summary="claims",
                 auth_summary="auth",
                 current_scores=default_scores,
                 model_provider=mock_provider,
-                openai_client=mock_openai_client,
             )
 
         call_args = mock_run.call_args
@@ -477,10 +431,8 @@ class TestRunArbitrator:
 
         assert not hasattr(mod, "run_specialists")
 
-    async def test_graceful_on_both_failures(
-        self, mock_provider, mock_openai_client, default_scores
-    ):
-        """run_arbitrator returns uniform scores with empty reasoning when both fail."""
+    async def test_wraps_exceptions(self, mock_provider, default_scores):
+        """run_arbitrator wraps agent exceptions in RuntimeError."""
         mock_specialist_outputs = {
             "DISPUTE": SpecialistAssessment(category="DISPUTE"),
             "SCAM": SpecialistAssessment(category="SCAM"),
@@ -493,53 +445,68 @@ class TestRunArbitrator:
                 new_callable=AsyncMock,
                 side_effect=ValueError("LLM call failed"),
             ),
-            patch(
-                "agentic_fraud_servicing.copilot.hypothesis_agent.compute_logprob_scores",
-                new_callable=AsyncMock,
-                side_effect=ValueError("API failed"),
-            ),
+            pytest.raises(RuntimeError, match="Hypothesis agent failed"),
         ):
-            result = await run_arbitrator(
+            await run_arbitrator(
                 specialist_assessments=mock_specialist_outputs,
                 allegations_summary="claims",
                 auth_summary="auth",
                 current_scores=default_scores,
                 model_provider=mock_provider,
-                openai_client=mock_openai_client,
             )
-            # Logit scorer failure → uniform scores
-            assert all(v == pytest.approx(0.20) for v in result.scores.values())
-            # Reasoning failure → empty reasoning with fallback summary
-            assert "failed" in result.assessment_summary.lower()
 
-    async def test_reasoning_failure_preserves_logit_scores(
-        self, mock_provider, mock_openai_client, default_scores
-    ):
-        """Reasoning agent failure still returns logit scores."""
+    async def test_update_turn_uses_merge(self, mock_provider, default_scores):
+        """On subsequent turns, run_arbitrator merges ReasoningNoteUpdate into previous."""
+        previous = HypothesisAssessment(
+            scores={
+                "THIRD_PARTY_FRAUD": 0.30,
+                "FIRST_PARTY_FRAUD": 0.10,
+                "SCAM": 0.10,
+                "DISPUTE": 0.10,
+                "UNABLE_TO_DETERMINE": 0.40,
+            },
+            reasoning={
+                "THIRD_PARTY_FRAUD": "Some device mismatch",
+                "FIRST_PARTY_FRAUD": "Low",
+                "SCAM": "Low",
+                "DISPUTE": "Low",
+                "UNABLE_TO_DETERMINE": "High — early turn",
+            },
+            contradictions=["contradiction A"],
+            assessment_summary="Early assessment.",
+        )
+        update = ReasoningNoteUpdate(
+            scores={
+                "THIRD_PARTY_FRAUD": 0.50,
+                "FIRST_PARTY_FRAUD": 0.10,
+                "SCAM": 0.10,
+                "DISPUTE": 0.10,
+                "UNABLE_TO_DETERMINE": 0.20,
+            },
+            reasoning={
+                "THIRD_PARTY_FRAUD": "Strong — unfamiliar device confirmed",
+                "FIRST_PARTY_FRAUD": "Low",
+                "SCAM": "Low",
+                "DISPUTE": "Low",
+                "UNABLE_TO_DETERMINE": "Decreased — more evidence",
+            },
+            assessment_summary="Likely third-party fraud.",
+            add_contradictions=["contradiction B"],
+        )
+
+        mock_run_result = MagicMock()
+        mock_run_result.final_output = update
+
         mock_specialist_outputs = {
             "DISPUTE": SpecialistAssessment(category="DISPUTE"),
             "SCAM": SpecialistAssessment(category="SCAM"),
             "THIRD_PARTY_FRAUD": SpecialistAssessment(category="THIRD_PARTY_FRAUD"),
         }
-        expected_scores = {
-            "THIRD_PARTY_FRAUD": 0.80,
-            "FIRST_PARTY_FRAUD": 0.05,
-            "SCAM": 0.05,
-            "DISPUTE": 0.05,
-            "UNABLE_TO_DETERMINE": 0.05,
-        }
 
-        with (
-            patch(
-                "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
-                new_callable=AsyncMock,
-                side_effect=ValueError("LLM call failed"),
-            ),
-            patch(
-                "agentic_fraud_servicing.copilot.hypothesis_agent.compute_logprob_scores",
-                new_callable=AsyncMock,
-                return_value=expected_scores,
-            ),
+        with patch(
+            "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
         ):
             result = await run_arbitrator(
                 specialist_assessments=mock_specialist_outputs,
@@ -547,10 +514,16 @@ class TestRunArbitrator:
                 auth_summary="auth",
                 current_scores=default_scores,
                 model_provider=mock_provider,
-                openai_client=mock_openai_client,
+                previous_reasoning=previous,
             )
-            # Logit scores preserved despite reasoning failure
-            assert result.scores == expected_scores
+
+        assert isinstance(result, HypothesisAssessment)
+        # Scores replaced from update
+        assert result.scores["THIRD_PARTY_FRAUD"] == 0.50
+        # Contradictions merged: A persisted + B added
+        assert "contradiction A" in result.contradictions
+        assert "contradiction B" in result.contradictions
+        assert result.assessment_summary == "Likely third-party fraud."
 
 
 # ---------------------------------------------------------------------------
@@ -681,12 +654,13 @@ class TestMergeReasoningNotes:
     """Tests for merge_reasoning_notes."""
 
     def test_contradictions_persist(self):
-        previous = HypothesisReasoning(
+        previous = HypothesisAssessment(
             reasoning={
                 "THIRD_PARTY_FRAUD": "Low",
                 "FIRST_PARTY_FRAUD": "High",
                 "SCAM": "Low",
                 "DISPUTE": "Low",
+                "UNABLE_TO_DETERMINE": "Some evidence gaps",
             },
             contradictions=["CM claims unauthorized but chip+PIN auth"],
             assessment_summary="Old summary.",
@@ -697,6 +671,7 @@ class TestMergeReasoningNotes:
                 "FIRST_PARTY_FRAUD": "Very high",
                 "SCAM": "Low",
                 "DISPUTE": "Low",
+                "UNABLE_TO_DETERMINE": "Low",
             },
             assessment_summary="New summary.",
         )
@@ -706,7 +681,7 @@ class TestMergeReasoningNotes:
         assert merged.assessment_summary == "New summary."
 
     def test_add_and_remove_contradictions(self):
-        previous = HypothesisReasoning(
+        previous = HypothesisAssessment(
             contradictions=["contradiction A", "contradiction B"],
         )
         update = ReasoningNoteUpdate(
@@ -720,7 +695,7 @@ class TestMergeReasoningNotes:
 
     def test_removal_then_addition(self):
         """Removals are applied before additions."""
-        previous = HypothesisReasoning(
+        previous = HypothesisAssessment(
             contradictions=["old item"],
         )
         update = ReasoningNoteUpdate(
@@ -729,3 +704,26 @@ class TestMergeReasoningNotes:
         )
         merged = merge_reasoning_notes(previous, update)
         assert merged.contradictions == ["replacement item"]
+
+    def test_scores_replaced(self):
+        """Scores from the update replace previous scores."""
+        previous = HypothesisAssessment(
+            scores={
+                "THIRD_PARTY_FRAUD": 0.20,
+                "FIRST_PARTY_FRAUD": 0.20,
+                "SCAM": 0.20,
+                "DISPUTE": 0.20,
+                "UNABLE_TO_DETERMINE": 0.20,
+            },
+        )
+        update = ReasoningNoteUpdate(
+            scores={
+                "THIRD_PARTY_FRAUD": 0.50,
+                "FIRST_PARTY_FRAUD": 0.10,
+                "SCAM": 0.10,
+                "DISPUTE": 0.10,
+                "UNABLE_TO_DETERMINE": 0.20,
+            },
+        )
+        merged = merge_reasoning_notes(previous, update)
+        assert merged.scores["THIRD_PARTY_FRAUD"] == 0.50

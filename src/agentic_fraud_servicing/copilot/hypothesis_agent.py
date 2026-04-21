@@ -1,24 +1,18 @@
 """Hypothesis scoring arbitrator for 5-category investigation assessment.
 
-Produces a 5-category probability distribution by combining two parallel calls:
-1. Logprob-based scorer — forced-choice classification via raw OpenAI API,
-   with UNABLE_TO_DETERMINE derived from Shannon entropy.
-2. Reasoning agent — qualitative analysis via Agents SDK structured output,
-   covering per-category reasoning, contradiction detection, and first-party
-   fraud identification.
-
-First-party fraud is detected cross-cuttingly by the reasoning agent — it has
-no dedicated specialist. Specialists are run externally by the orchestrator.
+Synthesizes three category specialist outputs (dispute, scam, fraud) into a
+holistic probability distribution across the 5 investigation categories.
+First-party fraud is detected cross-cuttingly by the arbitrator — it has no
+dedicated specialist. UNABLE_TO_DETERMINE absorbs probability mass when
+evidence is insufficient. Specialists are run externally by the orchestrator.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from agents import Agent, AgentOutputSchema, ModelProvider
 from agents.run_config import RunConfig
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator
 
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
@@ -27,7 +21,6 @@ from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     _add_deduped,
     _remove_by_substring,
 )
-from agentic_fraud_servicing.copilot.logit_scorer import compute_logprob_scores
 from agentic_fraud_servicing.providers.retry import run_with_retry
 
 logger = logging.getLogger(__name__)
@@ -36,8 +29,13 @@ logger = logging.getLogger(__name__)
 # Output models
 # ---------------------------------------------------------------------------
 
-
-_REASONING_CATEGORIES = ["THIRD_PARTY_FRAUD", "FIRST_PARTY_FRAUD", "SCAM", "DISPUTE"]
+_ALL_CATEGORIES = [
+    "THIRD_PARTY_FRAUD",
+    "FIRST_PARTY_FRAUD",
+    "SCAM",
+    "DISPUTE",
+    "UNABLE_TO_DETERMINE",
+]
 
 
 def _coerce_reasoning_values(v: dict) -> dict[str, str]:
@@ -52,39 +50,46 @@ def _coerce_reasoning_values(v: dict) -> dict[str, str]:
     return {k: str(val) if not isinstance(val, str) else val for k, val in v.items()}
 
 
-class HypothesisReasoning(BaseModel):
-    """Reasoning-only output from the hypothesis reasoning agent.
-
-    Does NOT produce scores — those come from the logprob-based scorer.
-    UNABLE_TO_DETERMINE is entropy-derived and has no LLM reasoning.
+class HypothesisAssessment(BaseModel):
+    """Structured output from the hypothesis scoring arbitrator.
 
     Attributes:
-        reasoning: Per-category explanation grounded in specialist findings.
-            Keys: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE.
-        contradictions: Detected contradictions between CM allegations and
-            evidence, consolidated from specialist findings + cross-cutting
-            analysis.
+        scores: Probability distribution across 5 investigation categories.
+            Keys: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE,
+            UNABLE_TO_DETERMINE. Values between 0.0 and 1.0, summing to
+            approximately 1.0.
+        reasoning: Per-category explanation of the score assignment.
+            Same 5 keys as scores.
+        contradictions: Detected contradictions between CM allegations and evidence.
         assessment_summary: Overall assessment of the current situation.
+        specialist_assessments: Specialist outputs from this turn, carried
+            forward to the next turn for incremental reasoning. NOT produced
+            by the LLM — set programmatically after the arbitrator returns.
     """
 
-    reasoning: dict[str, str] = {cat: "" for cat in _REASONING_CATEGORIES}
+    scores: dict[str, float] = {cat: 0.20 for cat in _ALL_CATEGORIES}
+    reasoning: dict[str, str] = {cat: "" for cat in _ALL_CATEGORIES}
     contradictions: list[str] = []
     assessment_summary: str = ""
+    specialist_assessments: dict[str, SpecialistAssessment] = Field(
+        default_factory=dict, exclude=True
+    )
 
     @field_validator("reasoning", mode="before")
     @classmethod
-    def _coerce_reasoning(cls, v: dict) -> dict[str, str]:
+    def _coerce_reasoning_values(cls, v: dict) -> dict[str, str]:
         return _coerce_reasoning_values(v)
 
 
 class ReasoningNoteUpdate(BaseModel):
-    """Incremental update to the hypothesis reasoning agent's working notes.
+    """Incremental update to the hypothesis arbitrator's working notes.
 
-    Reasoning dict and assessment_summary are regenerated each turn.
+    Scores, reasoning dict, and assessment_summary are regenerated each turn.
     Contradictions are incrementally updated to prevent flickering.
     """
 
-    reasoning: dict[str, str] = {cat: "" for cat in _REASONING_CATEGORIES}
+    scores: dict[str, float] = {cat: 0.20 for cat in _ALL_CATEGORIES}
+    reasoning: dict[str, str] = {cat: "" for cat in _ALL_CATEGORIES}
     assessment_summary: str = ""
 
     add_contradictions: list[str] = Field(default_factory=list)
@@ -96,51 +101,20 @@ class ReasoningNoteUpdate(BaseModel):
         return _coerce_reasoning_values(v)
 
 
-class HypothesisAssessment(BaseModel):
-    """Combined output from logprob scorer + reasoning agent.
-
-    Attributes:
-        scores: Probability distribution across 5 investigation categories.
-            Keys: THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE,
-            UNABLE_TO_DETERMINE. Values between 0.0 and 1.0, summing to
-            approximately 1.0. Produced by the logprob-based scorer.
-        reasoning: Per-category explanation of the assessment (4 keys).
-            UNABLE_TO_DETERMINE has no reasoning — its score is entropy-derived.
-        contradictions: Detected contradictions between CM allegations and evidence.
-        assessment_summary: Overall assessment of the current situation.
-        specialist_assessments: Specialist outputs from this turn, carried
-            forward to the next turn for incremental reasoning. NOT produced
-            by the LLM — set programmatically after the arbitrator returns.
-    """
-
-    scores: dict[str, float] = {
-        "THIRD_PARTY_FRAUD": 0.20,
-        "FIRST_PARTY_FRAUD": 0.20,
-        "SCAM": 0.20,
-        "DISPUTE": 0.20,
-        "UNABLE_TO_DETERMINE": 0.20,
-    }
-    reasoning: dict[str, str] = {cat: "" for cat in _REASONING_CATEGORIES}
-    contradictions: list[str] = []
-    assessment_summary: str = ""
-    specialist_assessments: dict[str, SpecialistAssessment] = Field(
-        default_factory=dict, exclude=True
-    )
-
-
 def merge_reasoning_notes(
-    previous: HypothesisReasoning,
+    previous: HypothesisAssessment,
     update: ReasoningNoteUpdate,
-) -> HypothesisReasoning:
-    """Merge an incremental update into previous reasoning notes.
+) -> HypothesisAssessment:
+    """Merge an incremental update into previous assessment notes.
 
-    Reasoning dict and assessment_summary are replaced wholesale.
+    Scores, reasoning dict, and assessment_summary are replaced wholesale.
     Contradictions are patched: removals first, then additions.
     """
     contradictions = _remove_by_substring(previous.contradictions, update.remove_contradictions)
     contradictions = _add_deduped(contradictions, update.add_contradictions)
 
-    return HypothesisReasoning(
+    return HypothesisAssessment(
+        scores=update.scores,
         reasoning=update.reasoning,
         contradictions=contradictions,
         assessment_summary=update.assessment_summary,
@@ -148,67 +122,111 @@ def merge_reasoning_notes(
 
 
 # ---------------------------------------------------------------------------
-# Reasoning agent prompt
+# System prompt
 # ---------------------------------------------------------------------------
 
-HYPOTHESIS_REASONING_INSTRUCTIONS = """\
-You are a hypothesis reasoning analyst for AMEX card dispute investigation.
-You analyze assessments from three category specialists (Dispute, Scam,
-Third-Party Fraud) and provide qualitative reasoning for each of the 5
-investigation categories. You do NOT produce scores — scoring is handled
-separately.
+HYPOTHESIS_INSTRUCTIONS = """\
+You are a hypothesis scoring arbitrator for AMEX card dispute investigation.
+You synthesize assessments from three category specialists (Dispute, Scam,
+Third-Party Fraud) into a final 5-category probability distribution.
 
 ## Your Input
 
 You receive the following context each turn:
 
-1. **Specialist Assessments** — Three independent evidence analyses, each with
+1. **Specialist Assessments** — Three independent evaluations, each with
    policy-grounded reasoning, supporting/contradicting evidence, evidence gaps,
-   and eligibility determinations. They evaluate their own category in isolation
+   and policy citations. Specialists evaluate their own category in isolation
    and cite specific policy documents.
 2. **Auth Assessment** — Impersonation risk score, risk factors, and step-up
    auth recommendations from the authentication specialist.
 3. **Accumulated Allegations** — What the cardmember claims, with detail types
    and extracted entities. Needed for cross-cutting first-party fraud detection.
-4. **Current Hypothesis Scores** — The current probability distribution across
-   the 5 categories. Use these as context for your reasoning.
+4. **Current Hypothesis Scores** — The previous turn's probability distribution
+   across the 5 categories. Use these as a Bayesian prior to update.
 5. **Previous Reasoning Trace** — Your own per-category reasoning from the
-   last assessment turn. Use this to ground your analysis: identify what changed
-   and explain how it shifts the assessment for each category.
+   last assessment turn. Use this to ground your update: identify what changed
+   and explain how it shifts each score.
 
-## Reasoning Discipline
+## Scoring Rules
 
-1. **Use previous reasoning as context.** Compare the current specialist outputs
-   against the previous reasoning trace. Explain what changed since then and
-   how new evidence shifts the assessment for each category.
+1. **Produce a 5-category distribution.** The three specialists cover Dispute,
+   Scam, and Third-Party Fraud. You must also score FIRST_PARTY_FRAUD and
+   UNABLE_TO_DETERMINE — these are your unique responsibilities as the
+   arbitrator.
 
-2. **Weigh specialist evidence critically.** Specialist assessments reflect how
-   well currently available evidence fits their category — they do not account
-   for evidence that could be collected offline after case opening. Your
-   reasoning should also be grounded in available evidence only. Consider
-   whether another specialist's contradicting evidence undermines a category.
+2. **Scores should approximate a probability distribution** — they should sum
+   to roughly 1.0. Small deviations are acceptable but avoid scores that sum
+   to more than 1.2 or less than 0.8.
+
+3. **Use previous scores as a prior.** Compare the current specialist outputs
+   against the previous reasoning trace. Scores should shift gradually unless
+   strong contradictory evidence emerges. Explain the delta for each category.
+
+4. **Weigh specialist assessments critically.** Specialist likelihood scores
+   reflect how well currently available evidence fits their category — they do
+   not account for evidence that could be collected offline after case opening.
+   Your scores should also be grounded in available evidence only. Consider
+   whether another specialist's contradicting evidence undermines a high score.
    Look at the full picture across all three assessments.
 
-3. **Allegations are not evidence.** CM claims establish which hypotheses to
-   investigate, but cannot by themselves support a category. Only system
-   evidence, specialist-cited policy findings, or contradictions should
-   inform your reasoning.
+5. **Allegations are not evidence.** CM claims establish which hypotheses to
+   investigate, but cannot by themselves move scores. Only system evidence,
+   specialist-cited policy findings, or contradictions should shift scores.
 
-4. **Repetition is not new evidence.** If the previous reasoning trace already
-   accounted for an allegation, restating it is not grounds for changed
-   assessments.
+6. **Repetition is not new evidence.** If the previous reasoning trace already
+   accounted for an allegation, restating it is not grounds for score changes.
 
    This applies equally to contradictions: a contradiction that was already
-   reflected in previous reasoning has been accounted for. Only **new**
-   contradictions (not seen in the previous reasoning trace) should shift
-   assessments further. Re-citing the same contradictions across turns must
-   not compound their effect.
+   reflected in previous scores has been priced in. Only **new** contradictions
+   (not seen in the previous reasoning trace) should shift scores further.
+   Re-citing the same contradictions across turns must not compound their
+   effect.
 
-5. **Contradictions are one signal among many.** Contradictions inform
-   investigation direction but do not dominate it. Specialist evidence,
+7. **Contradictions are one signal among many.** Contradictions inform
+   investigation direction but do not dominate it. Specialist likelihoods,
    evidence gaps, auth assessment, and the CM's narrative all carry weight.
    Even when contradictions are present, if specialist evidence or other
    signals point in a different direction, weigh them proportionally.
+   No single signal type should consume more than ~0.40 of the total
+   probability mass on its own.
+
+8. **Score UNABLE_TO_DETERMINE based on evidence sufficiency.** This category
+   absorbs probability mass when evidence is insufficient to distinguish
+   between the four real investigation categories. Assign high
+   UNABLE_TO_DETERMINE when:
+   - It is an early assessment turn and limited evidence has been gathered.
+   - Multiple categories remain plausible and no distinguishing evidence
+     differentiates them (e.g., specialist likelihoods are all moderate
+     and close to each other).
+   - Specialists report significant evidence gaps, particularly for items
+     that can only be collected offline after case opening (e.g., merchant
+     records, delivery proof, device forensics).
+   - The CM's narrative is consistent with multiple categories and critical
+     distinguishing evidence is unavailable.
+   - **High-impact evidence gaps exist.** If a specialist flags an evidence
+     gap that could *reverse* the current leading category once obtained,
+     lean heavily toward UNABLE_TO_DETERMINE. The current score is built on
+     an unstable foundation. Examples of high-impact gaps:
+     - Merchant delivery records missing when CM claims goods not received —
+       confirmed delivery would collapse a dispute score and shift toward
+       first-party fraud.
+     - Device forensics pending when CM claims unauthorized — a device match
+       would collapse third-party fraud.
+     - Scammer communication trail unavailable when CM describes coercion —
+       without it, scam vs. first-party fraud is indistinguishable.
+     Low-impact gaps (evidence that would add confidence but not change
+     direction) do not warrant shifting mass to UNABLE_TO_DETERMINE.
+
+   Decrease UNABLE_TO_DETERMINE as:
+   - The conversation progresses and specialist evidence gaps are filled.
+   - One or more categories become clearly dominant with supporting evidence.
+   - Distinguishing evidence emerges that separates categories.
+
+   UNABLE_TO_DETERMINE is NOT an investigation outcome. It signals "more
+   information needed" — as the call progresses, probability mass should
+   flow from UNABLE_TO_DETERMINE into the real categories as evidence
+   accumulates.
 
 ## First-Party Fraud Detection (Your Unique Role)
 
@@ -225,17 +243,22 @@ This requires TWO elements:
 
 If the CM has NOT made a complaint or actively acknowledges/accepts the
 transactions, FIRST_PARTY_FRAUD does not apply — there is no claim to
-contradict. Do NOT infer first-party fraud from the absence of a complaint.
+contradict. Route to UNABLE_TO_DETERMINE (insufficient basis for
+any category) or to the category that best fits the conversation context.
+Do NOT infer first-party fraud from the absence of a complaint.
 
-### Detection Signals (only when the CM has made an active claim)
+### Scoring Signals (only when the CM has made an active claim)
 
-- **All specialists find weak support — check WHY.** Look at the specialists'
-  evidence_gaps and contradicting_evidence to distinguish:
+- **All specialists report low likelihood — check WHY before routing.**
+  Low likelihoods across all three specialists can mean two very different
+  things. Look at the specialists' evidence_gaps and contradicting_evidence
+  to distinguish:
   - If specialists cite **contradicting evidence** (evidence that actively
-    doesn't fit their category), this points toward FIRST_PARTY_FRAUD —
-    something happened, and no external party explains it.
+    doesn't fit their category), the remaining mass flows to
+    FIRST_PARTY_FRAUD — something happened, and no external party explains it.
   - If specialists cite **evidence gaps** (insufficient data, key items only
-    available offline), this points toward uncertainty, not first-party fraud.
+    available offline), the remaining mass flows to UNABLE_TO_DETERMINE —
+    there is simply not enough information yet to distinguish categories.
 
 - **Contradicting evidence without external manipulator**: If specialists
   flag contradicting evidence (e.g., CM claims unauthorized but chip+PIN
@@ -244,7 +267,7 @@ contradict. Do NOT infer first-party fraud from the absence of a complaint.
 
 - **Auth assessment shows CM's own credentials**: If the auth assessment
   confirms the CM's device/credentials were used for the disputed
-  transactions, note this as a first-party fraud indicator.
+  transactions, increase first-party fraud.
 
 - **Inconsistencies across specialist findings**: If the dispute specialist
   finds the CM did receive goods, the fraud specialist finds the CM's
@@ -257,20 +280,20 @@ contradict. Do NOT infer first-party fraud from the absence of a complaint.
 
 ### Distinguish from UNABLE_TO_DETERMINE
 
-| Condition | Points toward |
+| Condition | Route to |
 |---|---|
 | CM made a claim + evidence contradicts it | FIRST_PARTY_FRAUD |
 | CM made a claim + evidence is missing/insufficient | UNABLE_TO_DETERMINE |
 | CM has not made a clear claim | UNABLE_TO_DETERMINE |
-| Specialists unsupported because of gaps, not contradictions | UNABLE_TO_DETERMINE |
+| Specialists low because of gaps, not contradictions | UNABLE_TO_DETERMINE |
 
 ## Output Format
 
 Provide your assessment as structured output with:
-- reasoning: dict with exactly 4 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD,
-  SCAM, DISPUTE), each a brief explanation (1-3 sentences) grounded in
-  specialist findings and evidence. UNABLE_TO_DETERMINE has no reasoning key
-  — its score is derived from entropy, not LLM output.
+- scores: dict with exactly 5 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD,
+  SCAM, DISPUTE, UNABLE_TO_DETERMINE), each a float between 0.0 and 1.0
+- reasoning: dict with the same 5 keys, each a brief explanation (1-3
+  sentences) grounded in specialist findings and evidence
 - contradictions: list of detected contradictions between allegations and
   evidence (consolidate from specialist findings + your own analysis)
 - assessment_summary: 2-4 sentence overall assessment
@@ -281,10 +304,10 @@ Provide your assessment as structured output with:
 # Agent instance
 # ---------------------------------------------------------------------------
 
-hypothesis_reasoning_agent = Agent(
-    name="hypothesis_reasoning",
-    instructions=HYPOTHESIS_REASONING_INSTRUCTIONS,
-    output_type=AgentOutputSchema(HypothesisReasoning, strict_json_schema=False),
+hypothesis_agent = Agent(
+    name="hypothesis",
+    instructions=HYPOTHESIS_INSTRUCTIONS,
+    output_type=AgentOutputSchema(HypothesisAssessment, strict_json_schema=False),
 )
 
 
@@ -373,24 +396,19 @@ async def run_arbitrator(
     auth_summary: str,
     current_scores: dict[str, float],
     model_provider: ModelProvider,
-    openai_client: AsyncOpenAI,
-    model: str = "gpt-4.1",
     previous_reasoning: HypothesisAssessment | None = None,
     specialist_deltas: dict[str, SpecialistNoteUpdate] | None = None,
 ) -> HypothesisAssessment:
-    """Run the arbitrator to produce hypothesis scores and reasoning.
+    """Run the arbitrator to score investigation categories.
 
-    Makes two parallel calls:
-    1. Logprob scorer (raw OpenAI API) — forced-choice classification to get
-       a grounded probability distribution over the 4 real categories, with
-       UNABLE_TO_DETERMINE derived from entropy.
-    2. Reasoning agent (Agents SDK) — qualitative analysis producing
-       per-category reasoning, contradictions, and assessment summary.
+    Takes pre-computed specialist assessments (run externally by the
+    orchestrator) and synthesizes them into the final 5-category probability
+    distribution with per-category reasoning.
 
-    On subsequent turns, the reasoning agent outputs a ReasoningNoteUpdate
-    (incremental delta) which is merged into the previous HypothesisReasoning.
-    Specialist deltas are included in both the reasoning and logit prompts
-    so both scorers can see what changed this turn.
+    On subsequent turns, the arbitrator outputs a ReasoningNoteUpdate
+    (incremental delta) which is merged into the previous HypothesisAssessment.
+    Specialist deltas are included in the user message so the arbitrator can
+    see what changed this turn.
 
     Args:
         specialist_assessments: Specialist outputs keyed by category
@@ -398,25 +416,23 @@ async def run_arbitrator(
         allegations_summary: Formatted allegations with types and entities.
         auth_summary: Auth assessment text (impersonation risk, risk factors).
         current_scores: Previous hypothesis scores (5-key dict).
-        model_provider: LLM model provider for the reasoning agent.
-        openai_client: AsyncOpenAI client for the logprob scorer.
-        model: OpenAI model identifier for the logprob scorer.
+        model_provider: LLM model provider for inference.
         previous_reasoning: Full HypothesisAssessment from the last successful
-            run. Provides the reasoning trace for incremental analysis.
+            run. Provides the reasoning trace for Bayesian updating.
         specialist_deltas: Raw SpecialistNoteUpdate objects from this turn,
             keyed by category. Empty dict or None on the first turn.
 
     Returns:
-        HypothesisAssessment with logprob-derived scores and LLM-generated
-        reasoning.
+        HypothesisAssessment with updated scores, reasoning, and
+        contradictions.
 
     Raises:
-        RuntimeError: If the reasoning agent SDK call fails.
+        RuntimeError: If the arbitrator agent SDK call fails.
     """
     if specialist_deltas is None:
         specialist_deltas = {}
 
-    # 1. Format reasoning agent user message
+    # 1. Format arbitrator user message
     scores_text = ", ".join(f"{k}: {v:.2f}" for k, v in current_scores.items())
 
     prev_reasoning_text = "First assessment — no prior reasoning."
@@ -443,14 +459,15 @@ async def run_arbitrator(
         f"## Previous Reasoning Trace\n{prev_reasoning_text}"
     )
 
-    # 2. Run logprob scorer and reasoning agent in parallel
-    async def _run_reasoning() -> HypothesisReasoning:
-        output_type = ReasoningNoteUpdate if is_update else HypothesisReasoning
-        agent = Agent(
-            name="hypothesis_reasoning",
-            instructions=HYPOTHESIS_REASONING_INSTRUCTIONS,
-            output_type=AgentOutputSchema(output_type, strict_json_schema=False),
-        )
+    # 2. Run arbitrator — dual output type for diff/patch memory
+    output_type = ReasoningNoteUpdate if is_update else HypothesisAssessment
+    agent = Agent(
+        name="hypothesis",
+        instructions=HYPOTHESIS_INSTRUCTIONS,
+        output_type=AgentOutputSchema(output_type, strict_json_schema=False),
+    )
+
+    try:
         result = await run_with_retry(
             agent,
             input=user_msg,
@@ -460,60 +477,5 @@ async def run_arbitrator(
         if is_update:
             return merge_reasoning_notes(previous_reasoning, output)
         return output
-
-    async def _run_logit() -> dict[str, float]:
-        return await compute_logprob_scores(
-            client=openai_client,
-            model=model,
-            specialist_assessments=specialist_assessments,
-            allegations_summary=allegations_summary,
-            auth_summary=auth_summary,
-            specialist_deltas=specialist_deltas,
-        )
-
-    # Run both in parallel but don't let one failure discard the other's result.
-    logit_result, reasoning_result = await asyncio.gather(
-        _run_logit(),
-        _run_reasoning(),
-        return_exceptions=True,
-    )
-
-    # 3. Handle logit scorer failure — fall back to uniform scores
-    if isinstance(logit_result, BaseException):
-        logger.error("Logit scorer failed in gather: %s", logit_result)
-        logit_scores = {
-            "THIRD_PARTY_FRAUD": 0.20,
-            "FIRST_PARTY_FRAUD": 0.20,
-            "SCAM": 0.20,
-            "DISPUTE": 0.20,
-            "UNABLE_TO_DETERMINE": 0.20,
-        }
-    else:
-        logit_scores = logit_result
-
-    # 4. Handle reasoning failure — use logit scores with empty reasoning
-    if isinstance(reasoning_result, BaseException):
-        logger.error("Reasoning agent failed in gather: %s", reasoning_result)
-        empty_reasoning = {cat: "" for cat in _REASONING_CATEGORIES}
-        if previous_reasoning is not None:
-            # Preserve previous reasoning on failure
-            return HypothesisAssessment(
-                scores=logit_scores,
-                reasoning=previous_reasoning.reasoning,
-                contradictions=previous_reasoning.contradictions,
-                assessment_summary=previous_reasoning.assessment_summary,
-            )
-        return HypothesisAssessment(
-            scores=logit_scores,
-            reasoning=empty_reasoning,
-            contradictions=[],
-            assessment_summary="Reasoning agent failed; scores are from logprob classification only.",
-        )
-
-    # 5. Combine into final assessment
-    return HypothesisAssessment(
-        scores=logit_scores,
-        reasoning=reasoning_result.reasoning,
-        contradictions=reasoning_result.contradictions,
-        assessment_summary=reasoning_result.assessment_summary,
-    )
+    except Exception as exc:
+        raise RuntimeError(f"Hypothesis agent failed: {exc}") from exc

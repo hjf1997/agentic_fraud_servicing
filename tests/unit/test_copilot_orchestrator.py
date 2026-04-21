@@ -172,14 +172,9 @@ def _mock_case_advisory(questions=None):
 
 
 def _make_orchestrator() -> CopilotOrchestrator:
-    """Create a CopilotOrchestrator with mock gateway and provider.
-
-    The model_provider mock uses OpenAIModelProvider as spec so that
-    getattr(provider, "client") check in _run_arbitrator_safe finds a client.
-    """
+    """Create a CopilotOrchestrator with mock gateway and provider."""
     gateway = MagicMock()
     model_provider = MagicMock()
-    model_provider.client = MagicMock()  # Simulate OpenAI-compatible .client
     return CopilotOrchestrator(gateway=gateway, model_provider=model_provider, assess_interval=1)
 
 

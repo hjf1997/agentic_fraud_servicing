@@ -56,7 +56,10 @@ def _resolve_token_ids() -> list[int]:
     try:
         import tiktoken
 
-        enc = tiktoken.encoding_for_model("gpt-4o")
+        # o200k_base is shared by gpt-4o, gpt-4.1, and gpt-4o-mini.
+        # Using the encoding name directly avoids depending on tiktoken's
+        # model-to-encoding mapping being up-to-date for newer models.
+        enc = tiktoken.get_encoding("o200k_base")
         ids: list[int] = []
         for letter in _TOKEN_TO_CATEGORY:
             for variant in [letter, f" {letter}"]:
