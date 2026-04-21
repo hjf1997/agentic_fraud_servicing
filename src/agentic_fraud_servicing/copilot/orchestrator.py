@@ -26,6 +26,7 @@ from agentic_fraud_servicing.copilot.case_advisor import (
 from agentic_fraud_servicing.copilot.hypothesis_agent import HypothesisAssessment, run_arbitrator
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     SpecialistAssessment,
+    SpecialistNoteUpdate,
     run_specialists,
 )
 from agentic_fraud_servicing.copilot.langfuse_tracing import (
@@ -96,6 +97,7 @@ class CopilotOrchestrator:
         self._retrieval_result: RetrievalResult | None = None
         self._last_hypothesis: HypothesisAssessment | None = None
         self._last_specialist_assessments: dict[str, SpecialistAssessment] | None = None
+        self._last_specialist_deltas: dict[str, SpecialistNoteUpdate] = {}
         self._probing_questions: list[ProbingQuestion] = []
         self._turn_count: int = 0
         self._cm_turn_count: int = 0
@@ -701,19 +703,21 @@ class CopilotOrchestrator:
                 turns since the last assessment are included.
 
         On failure, returns None and the previous specialist outputs are
-        reused by the orchestrator.
+        reused by the orchestrator. Stores specialist deltas for the
+        arbitrator to consume.
         """
         t0 = time.perf_counter()
         try:
-            result = await run_specialists(
+            assessments, deltas = await run_specialists(
                 allegations_summary=self._format_allegations_for_hypothesis(),
                 evidence_summary=self._format_evidence_for_hypothesis(),
                 conversation_summary=conversation_summary,
                 model_provider=self.model_provider,
                 previous_assessments=self._last_specialist_assessments,
             )
+            self._last_specialist_deltas = deltas
             self._log_agent_trace("specialists", "run", (time.perf_counter() - t0) * 1000)
-            return result
+            return assessments
         except Exception as exc:
             self._log_agent_trace(
                 "specialists", "run", (time.perf_counter() - t0) * 1000, status="error"
@@ -753,6 +757,7 @@ class CopilotOrchestrator:
                 model_provider=self.model_provider,
                 openai_client=self.model_provider.client,
                 previous_reasoning=self._last_hypothesis,
+                specialist_deltas=self._last_specialist_deltas,
             )
             # Attach specialist outputs for next-turn incremental reasoning
             result.specialist_assessments = specialist_assessments
@@ -807,6 +812,25 @@ class CopilotOrchestrator:
             else:
                 risk_flags.append(self._format_error("Case advisor", exc))
             return None
+
+    def get_final_notes(self) -> dict:
+        """Return specialist and hypothesis notes for final-turn persistence.
+
+        Serializes the last specialist assessments and hypothesis reasoning
+        into a dict suitable for inclusion in the copilot_final trace output.
+        """
+        notes: dict = {}
+        if self._last_specialist_assessments:
+            notes["specialist_notes"] = {
+                k: v.model_dump() for k, v in self._last_specialist_assessments.items()
+            }
+        if self._last_hypothesis:
+            notes["hypothesis_reasoning"] = {
+                "reasoning": self._last_hypothesis.reasoning,
+                "contradictions": self._last_hypothesis.contradictions,
+                "assessment_summary": self._last_hypothesis.assessment_summary,
+            }
+        return notes
 
     # Pending questions not asked by the CCP within this many assessment
     # cycles are marked "skipped" — the copilot is advisory, not enforceable.

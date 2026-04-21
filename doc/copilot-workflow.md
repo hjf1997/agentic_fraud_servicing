@@ -161,27 +161,31 @@ For assessment turns the pipeline is:
 
 Each specialist focuses on one category: **Dispute**, **Scam**, or **Third-Party Fraud**. They run in parallel via `asyncio.gather` and produce independent evidence analyses including eligibility, supporting/contradicting evidence, evidence gaps, and policy citations. They do NOT produce likelihood scores — scoring is handled by the Arbitrator's logprob-based scorer. Their outputs are consumed by both the Arbitrator (for scoring and reasoning) and the Case Advisor (for question generation).
 
+**Incremental note updates**: On the first assessment turn, each specialist outputs a full `SpecialistAssessment`. On subsequent turns, it outputs a `SpecialistNoteUpdate` containing only what changed — narrative fields (reasoning, policy_citations, eligibility) are regenerated in full, while evidence lists (supporting_evidence, contradicting_evidence, evidence_gaps) are updated via explicit add/remove operations. The host merges deltas deterministically via `merge_specialist_notes()`. This prevents evidence flickering — items from previous turns persist unless explicitly removed, rather than being regenerated from scratch each turn.
+
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
 | **INPUT** | `allegations_summary` | `str` | All accumulated allegations formatted with types, descriptions, confidence, and entities |
 | **INPUT** | `evidence_summary` | `str` | Structured JSON of transactions, auth events, customer profile from retrieval |
 | **INPUT** | `conversation_summary` | `str` | Last 5 turns + total turn count |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for inference |
-| **INPUT** | `previous_assessments` | `dict[str, SpecialistAssessment] \| None` | Previous turn's specialist outputs for continuity |
+| **INPUT** | `previous_assessments` | `dict[str, SpecialistAssessment] \| None` | Previous turn's specialist outputs (shown as "Working Notes" to the LLM) |
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
-| **OUTPUT** | `assessments` | `dict[str, SpecialistAssessment]` | Keyed by category: `DISPUTE`, `SCAM`, `THIRD_PARTY_FRAUD` |
+| **OUTPUT** | `assessments` | `dict[str, SpecialistAssessment]` | Keyed by category: `DISPUTE`, `SCAM`, `THIRD_PARTY_FRAUD` (merged state) |
+| **OUTPUT** | `deltas` | `dict[str, SpecialistNoteUpdate]` | Raw deltas from this turn (empty on first turn or failure) |
 | | `.category` | `str` | The investigation category |
-| | `.reasoning` | `str` | Explanation of the assessment |
-| | `.supporting_evidence` | `list[str]` | Evidence supporting this category |
-| | `.contradicting_evidence` | `list[str]` | Evidence contradicting this category |
-| | `.policy_citations` | `list[str]` | Specific policy text cited |
-| | `.evidence_gaps` | `list[str]` | Information still needed for this category |
-| | `.eligibility` | `str` | `"eligible"` \| `"blocked"` — whether the case can proceed under this category |
+| | `.reasoning` | `str` | Explanation of the assessment (regenerated) |
+| | `.supporting_evidence` | `list[str]` | Evidence supporting this category (merged) |
+| | `.contradicting_evidence` | `list[str]` | Evidence contradicting this category (merged) |
+| | `.policy_citations` | `list[str]` | Specific policy text cited (regenerated) |
+| | `.evidence_gaps` | `list[str]` | Information still needed for this category (merged) |
+| | `.eligibility` | `str` | `"eligible"` \| `"blocked"` — whether the case can proceed under this category (regenerated) |
 
 **Side effects**:
-- Cached in `orchestrator._last_specialist_assessments` for next-turn continuity
+- Merged assessments cached in `orchestrator._last_specialist_assessments` for next-turn continuity
+- Raw deltas cached in `orchestrator._last_specialist_deltas` for the Arbitrator
 
 ---
 
@@ -220,23 +224,28 @@ The arbitrator makes two parallel calls via `asyncio.gather`:
 
 1. **Logit scorer** (raw OpenAI API) — forced-choice A/B/C/D classification with `max_tokens=1, logprobs=True, top_logprobs=10`. The logprob distribution over answer tokens becomes the 4-category score. `UNABLE_TO_DETERMINE` is derived from the Shannon entropy of the 4-category distribution (higher entropy → higher UTD). This produces more consistent and grounded scores than asking the LLM to generate float values.
 
-2. **Reasoning agent** (Agents SDK) — qualitative analysis producing per-category reasoning, contradiction detection, and first-party fraud identification. Does NOT produce scores.
+2. **Reasoning agent** (Agents SDK) — qualitative analysis producing per-category reasoning (4 keys — no UTD, which is entropy-derived), contradiction detection, and first-party fraud identification. Does NOT produce scores.
+
+Both calls receive merged specialist state AND specialist deltas ("Changes this turn" sections) so they can see what shifted since the last assessment.
+
+**Incremental reasoning**: On the first turn, the reasoning agent outputs a full `HypothesisReasoning`. On subsequent turns, it outputs a `ReasoningNoteUpdate` — reasoning and assessment_summary are regenerated, but contradictions are incrementally updated via add/remove. The host merges via `merge_reasoning_notes()`.
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
-| **INPUT** | `specialist_assessments` | `dict[str, SpecialistAssessment]` | Evidence analyses from the specialist panel |
+| **INPUT** | `specialist_assessments` | `dict[str, SpecialistAssessment]` | Merged evidence analyses from the specialist panel |
 | **INPUT** | `allegations_summary` | `str` | All accumulated allegations formatted with types, descriptions, confidence, and entities |
 | **INPUT** | `auth_summary` | `str` | Formatted auth assessment (impersonation risk, risk factors, step-up method, summary) |
 | **INPUT** | `current_scores` | `dict[str, float]` | Previous turn's hypothesis scores: `{THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM, DISPUTE, UNABLE_TO_DETERMINE}` |
 | **INPUT** | `model_provider` | `ModelProvider` | LLM provider for the reasoning agent |
 | **INPUT** | `openai_client` | `AsyncOpenAI` | Raw OpenAI client for the logprob scorer |
 | **INPUT** | `previous_reasoning` | `HypothesisAssessment \| None` | Previous turn's full assessment for reasoning continuity |
+| **INPUT** | `specialist_deltas` | `dict[str, SpecialistNoteUpdate] \| None` | Raw specialist deltas from this turn (empty on first turn) |
 
 | Direction | Field | Type | Description |
 |-----------|-------|------|-------------|
 | **OUTPUT** | `scores` | `dict[str, float]` | `{THIRD_PARTY_FRAUD: 0.XX, FIRST_PARTY_FRAUD: 0.XX, SCAM: 0.XX, DISPUTE: 0.XX, UNABLE_TO_DETERMINE: 0.XX}` (sums to 1.0). From logprob scorer. |
-| **OUTPUT** | `reasoning` | `dict[str, str]` | Per-category explanation (1-3 sentences each). From reasoning agent. |
-| **OUTPUT** | `contradictions` | `list[str]` | Detected contradictions between allegations and evidence. From reasoning agent. |
+| **OUTPUT** | `reasoning` | `dict[str, str]` | Per-category explanation for 4 real categories (1-3 sentences each). UTD has no reasoning — its score is entropy-derived. From reasoning agent (merged). |
+| **OUTPUT** | `contradictions` | `list[str]` | Detected contradictions between allegations and evidence. From reasoning agent (incrementally updated). |
 | **OUTPUT** | `assessment_summary` | `str` | 2-4 sentence overall assessment. From reasoning agent. |
 
 **Side effects**:
@@ -309,19 +318,29 @@ All agent results are assembled into a single `CopilotSuggestion`:
 ```
 Triage --> accumulated_allegations --+
                                      |
-Retrieval --> transactions ----------+-> Specialists --+--> Arbitrator ──┐
-           |  auth_events -----------+   (Dispute,     |   ├─ Logit scorer (logprobs) → scores
-           +- customer_profile ------+    Scam,    +---+   └─ Reasoning agent → reasoning
-                  |                       Fraud)   |          │
-                  |                          |     |          +--> hypothesis_scores
-                  +-> Auth Agent             |     |
-                       |                     |     +--> Case Advisor
-                       +--> impersonation_risk         (validated question list
-                       +--> risk_flags          +--     + NEW questions + stopping)
-                       +--> Arbitrator          |
-                            (auth_summary)      +-- Question Validator
-                                                (pending questions + new turns
-                                                 --> answered/invalidated/pending)
+Retrieval --> transactions ----------+-> Specialists ──────────────────────┐
+           |  auth_events -----------+   (Dispute,                         |
+           +- customer_profile ------+    Scam,    returns:                |
+                  |                       Fraud)   (assessments, deltas)   |
+                  |                          |          │                  |
+                  +-> Auth Agent             |     ┌────┘                  |
+                       |                     |     │                      |
+                       +--> impersonation_risk     +--> Arbitrator ──┐    |
+                       +--> risk_flags             |    (merged state |    |
+                       +--> Arbitrator             |     + deltas)    |    |
+                            (auth_summary)         |    ├─ Logit scorer (logprobs) → scores
+                                              +----+    └─ Reasoning agent → reasoning
+                                              |              (incremental contradictions)
+                                              |               │
+                                              |               +--> hypothesis_scores
+                                              |
+                                              +--> Case Advisor
+                                              |    (validated question list
+                                              |     + NEW questions + stopping)
+                                              |
+                                              +-- Question Validator
+                                                  (pending questions + new turns
+                                                   --> answered/invalidated/pending)
 ```
 
 ---
@@ -331,6 +350,7 @@ Retrieval --> transactions ----------+-> Specialists --+--> Arbitrator ──┐
 - **Hub-and-spoke**: The orchestrator explicitly controls which agents run and when. No free handoffs.
 - **7 agents in 3 phases**: Triage, Auth, Retrieval (Phase 1) → 3 category Specialists + Question Validator (Phase 2a) → Arbitrator + Case Advisor (Phase 2b).
 - **Specialist panel as shared resource**: Three category specialists (Dispute, Scam, Third-Party Fraud) run once in Phase 2a as evidence analysts — they classify evidence as supporting/contradicting/gap but do not produce scores. Their outputs feed both the Arbitrator (for logprob scoring and reasoning) and the Case Advisor (for question generation), eliminating redundant policy evaluation.
+- **Structured diff/patch memory**: Specialists and the reasoning agent use incremental note updates to prevent evidence flickering across turns. On the first turn, agents output full assessments. On subsequent turns, they output deltas — narrative fields are regenerated, evidence lists are updated via explicit add/remove operations. The host merges deltas deterministically. Evidence items persist unless explicitly removed, ensuring stable evidence accumulation across the investigation.
 - **Logprob-based scoring**: Hypothesis scores come from logprob distributions over forced-choice classification tokens (A/B/C/D), reflecting the model's actual internal confidence rather than fabricated float values. This produces more consistent scores across runs. `UNABLE_TO_DETERMINE` is derived from Shannon entropy — not a class the model picks.
 - **Specialist eligibility**: Each specialist outputs `eligible` or `blocked` plus `evidence_gaps` and `policy_citations`. The Case Advisor maps these directly to `CaseTypeAssessment` objects — no separate eligibility evaluation needed.
 - **Conditional auth**: Auth agent is skipped after turn 3 if impersonation risk drops below 0.4, saving an LLM call.

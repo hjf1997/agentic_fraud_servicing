@@ -111,10 +111,10 @@ def _mock_hypothesis_result(scores=None):
 
 
 def _mock_specialist_outputs():
-    """Create mock SpecialistAssessment outputs for the specialist panel."""
+    """Create mock (assessments, deltas) tuple for the specialist panel."""
     from agentic_fraud_servicing.copilot.hypothesis_specialists import SpecialistAssessment
 
-    return {
+    assessments = {
         "DISPUTE": SpecialistAssessment(
             category="DISPUTE",
             reasoning="No merchant issue identified.",
@@ -135,6 +135,7 @@ def _mock_specialist_outputs():
             policy_citations=["Per fraud_case_checklist.md: 'Identity must be verified'"],
         ),
     }
+    return assessments, {}
 
 
 def _mock_case_advisory(questions=None):

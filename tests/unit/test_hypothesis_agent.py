@@ -8,11 +8,17 @@ from agentic_fraud_servicing.copilot.hypothesis_agent import (
     HYPOTHESIS_REASONING_INSTRUCTIONS,
     HypothesisAssessment,
     HypothesisReasoning,
+    ReasoningNoteUpdate,
     hypothesis_reasoning_agent,
+    merge_reasoning_notes,
     run_arbitrator,
 )
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     SpecialistAssessment,
+    SpecialistNoteUpdate,
+    _add_deduped,
+    _remove_by_substring,
+    merge_specialist_notes,
     run_specialists,
 )
 
@@ -101,7 +107,6 @@ class TestHypothesisAssessment:
                 "FIRST_PARTY_FRAUD": "High — chip+PIN contradicts claim",
                 "SCAM": "Moderate — some urgency in language",
                 "DISPUTE": "Low — no merchant issue",
-                "UNABLE_TO_DETERMINE": "Some evidence gaps remain",
             },
             contradictions=[
                 "CM claims unauthorized but chip+PIN auth from enrolled device",
@@ -125,15 +130,14 @@ class TestHypothesisAssessment:
         }
         assert set(assessment.scores.keys()) == expected_keys
 
-    def test_reasoning_dict_has_five_keys(self):
-        """Default reasoning dict contains exactly the 5 investigation categories."""
+    def test_reasoning_dict_has_four_keys(self):
+        """Default reasoning dict contains the 4 real categories (no UTD)."""
         assessment = HypothesisAssessment()
         expected_keys = {
             "THIRD_PARTY_FRAUD",
             "FIRST_PARTY_FRAUD",
             "SCAM",
             "DISPUTE",
-            "UNABLE_TO_DETERMINE",
         }
         assert set(assessment.reasoning.keys()) == expected_keys
 
@@ -158,7 +162,6 @@ class TestHypothesisAssessment:
                 "FIRST_PARTY_FRAUD": "High",
                 "SCAM": "Low",
                 "DISPUTE": "Low",
-                "UNABLE_TO_DETERMINE": "Low",
             },
             contradictions=["chip+PIN from enrolled device"],
             assessment_summary="Likely first-party fraud.",
@@ -232,7 +235,7 @@ class TestRunSpecialists:
         return MagicMock()
 
     async def test_returns_three_assessments(self, mock_provider):
-        """run_specialists returns dict with 3 category keys."""
+        """run_specialists returns tuple with 3 category keys."""
         mock_result = MagicMock()
         mock_result.final_output = SpecialistAssessment(category="placeholder", reasoning="Test.")
 
@@ -241,13 +244,15 @@ class TestRunSpecialists:
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            results = await run_specialists(
+            assessments, deltas = await run_specialists(
                 "allegations", "evidence", "conversation", mock_provider
             )
 
-        assert set(results.keys()) == {"DISPUTE", "SCAM", "THIRD_PARTY_FRAUD"}
-        for assessment in results.values():
+        assert set(assessments.keys()) == {"DISPUTE", "SCAM", "THIRD_PARTY_FRAUD"}
+        for assessment in assessments.values():
             assert isinstance(assessment, SpecialistAssessment)
+        # First turn: no deltas
+        assert deltas == {}
 
     async def test_handles_specialist_failure(self, mock_provider):
         """Failing specialist returns default assessment with eligibility 'eligible'."""
@@ -267,12 +272,12 @@ class TestRunSpecialists:
             new_callable=AsyncMock,
             side_effect=_side_effect,
         ):
-            results = await run_specialists(
+            assessments, deltas = await run_specialists(
                 "allegations", "evidence", "conversation", mock_provider
             )
 
         # One failed (default: reasoning contains error), two succeeded
-        reasonings = [a.reasoning for a in results.values()]
+        reasonings = [a.reasoning for a in assessments.values()]
         assert any("unavailable" in r.lower() for r in reasonings)
         assert sum(1 for r in reasonings if r == "Fine.") == 2
 
@@ -283,7 +288,8 @@ class TestRunSpecialists:
         async def _capture(*args, **kwargs):
             captured_inputs.append(kwargs.get("input", args[1] if len(args) > 1 else ""))
             mock_result = MagicMock()
-            mock_result.final_output = SpecialistAssessment(category="test", reasoning="Ok.")
+            # When previous exists, output type is SpecialistNoteUpdate
+            mock_result.final_output = SpecialistNoteUpdate(category="test", reasoning="Ok.")
             return mock_result
 
         prev = {
@@ -303,9 +309,9 @@ class TestRunSpecialists:
                 previous_assessments=prev,
             )
 
-        # The dispute specialist should see its previous assessment
-        dispute_input = captured_inputs[0]  # DISPUTE is first in _SPECIALISTS
-        assert "Your Previous Assessment" in dispute_input
+        # The dispute specialist should see its working notes
+        dispute_input = captured_inputs[0]  # DISPUTE is first in _SPECIALIST_INSTRUCTIONS
+        assert "Your Working Notes" in dispute_input
         assert "eligible" in dispute_input
 
 
@@ -340,7 +346,6 @@ class TestRunArbitrator:
                 "FIRST_PARTY_FRAUD": "High — chip+PIN contradiction",
                 "SCAM": "Moderate — some urgency",
                 "DISPUTE": "Low — no merchant issue",
-                "UNABLE_TO_DETERMINE": "Some evidence gaps remain",
             },
             contradictions=["CM claims unauthorized but chip+PIN auth"],
             assessment_summary="First-party fraud indicators present.",
@@ -374,7 +379,6 @@ class TestRunArbitrator:
                 "FIRST_PARTY_FRAUD": "High — chip+PIN contradiction",
                 "SCAM": "Moderate — some urgency",
                 "DISPUTE": "Low — no merchant issue",
-                "UNABLE_TO_DETERMINE": "Some evidence gaps remain",
             },
             contradictions=["CM claims unauthorized but chip+PIN auth"],
             assessment_summary="First-party fraud indicators present.",
@@ -502,3 +506,181 @@ class TestRunArbitrator:
                     model_provider=mock_provider,
                     openai_client=mock_openai_client,
                 )
+
+
+# ---------------------------------------------------------------------------
+# Merge helper tests
+# ---------------------------------------------------------------------------
+
+
+class TestRemoveBySubstring:
+    """Tests for _remove_by_substring."""
+
+    def test_basic_removal(self):
+        items = ["chip+PIN auth from enrolled device", "unusual IP address", "card-not-present"]
+        removed = _remove_by_substring(items, ["chip+PIN"])
+        assert removed == ["unusual IP address", "card-not-present"]
+
+    def test_case_insensitive(self):
+        items = ["Chip+PIN auth"]
+        removed = _remove_by_substring(items, ["chip+pin"])
+        assert removed == []
+
+    def test_no_match_is_noop(self):
+        items = ["item A", "item B"]
+        removed = _remove_by_substring(items, ["nonexistent"])
+        assert removed == ["item A", "item B"]
+
+    def test_empty_removals(self):
+        items = ["item A"]
+        removed = _remove_by_substring(items, [])
+        assert removed == ["item A"]
+
+    def test_multiple_removals(self):
+        items = ["alpha", "beta", "gamma"]
+        removed = _remove_by_substring(items, ["alph", "gamm"])
+        assert removed == ["beta"]
+
+
+class TestAddDeduped:
+    """Tests for _add_deduped."""
+
+    def test_adds_new_items(self):
+        result = _add_deduped(["item A"], ["item B"])
+        assert result == ["item A", "item B"]
+
+    def test_skips_existing_exact(self):
+        result = _add_deduped(["item A"], ["item A"])
+        assert result == ["item A"]
+
+    def test_skips_substring_match(self):
+        result = _add_deduped(["chip+PIN auth from enrolled device"], ["chip+PIN auth"])
+        assert result == ["chip+PIN auth from enrolled device"]
+
+    def test_skips_reverse_substring(self):
+        result = _add_deduped(["chip+PIN"], ["chip+PIN auth from enrolled device"])
+        assert result == ["chip+PIN"]
+
+    def test_case_insensitive(self):
+        result = _add_deduped(["Chip+PIN"], ["chip+pin"])
+        assert result == ["Chip+PIN"]
+
+
+class TestMergeSpecialistNotes:
+    """Tests for merge_specialist_notes."""
+
+    def test_add_and_remove_evidence(self):
+        previous = SpecialistAssessment(
+            category="DISPUTE",
+            reasoning="Old reasoning.",
+            supporting_evidence=["delivery confirmed", "merchant responded"],
+            contradicting_evidence=["CM has receipt"],
+            evidence_gaps=["refund policy [offline]"],
+        )
+        update = SpecialistNoteUpdate(
+            category="DISPUTE",
+            reasoning="New reasoning after more evidence.",
+            policy_citations=["dispute_policy.md section 3"],
+            eligibility="eligible",
+            add_supporting_evidence=["merchant refund denied"],
+            remove_supporting_evidence=["merchant responded"],
+            remove_evidence_gaps=["refund policy"],
+        )
+        merged = merge_specialist_notes(previous, update)
+
+        assert merged.reasoning == "New reasoning after more evidence."
+        assert "delivery confirmed" in merged.supporting_evidence
+        assert "merchant refund denied" in merged.supporting_evidence
+        assert "merchant responded" not in merged.supporting_evidence
+        assert merged.contradicting_evidence == ["CM has receipt"]
+        assert merged.evidence_gaps == []
+        assert merged.policy_citations == ["dispute_policy.md section 3"]
+
+    def test_regenerated_fields_replaced(self):
+        previous = SpecialistAssessment(
+            category="SCAM",
+            reasoning="Old.",
+            policy_citations=["old_citation"],
+            eligibility="eligible",
+        )
+        update = SpecialistNoteUpdate(
+            category="SCAM",
+            reasoning="New.",
+            policy_citations=["new_citation"],
+            eligibility="blocked",
+        )
+        merged = merge_specialist_notes(previous, update)
+        assert merged.reasoning == "New."
+        assert merged.policy_citations == ["new_citation"]
+        assert merged.eligibility == "blocked"
+
+    def test_empty_update_preserves_evidence(self):
+        previous = SpecialistAssessment(
+            category="THIRD_PARTY_FRAUD",
+            reasoning="Some reasoning.",
+            supporting_evidence=["unfamiliar device"],
+            contradicting_evidence=["chip+PIN from enrolled device"],
+            evidence_gaps=["IP logs [offline]"],
+        )
+        update = SpecialistNoteUpdate(
+            category="THIRD_PARTY_FRAUD",
+            reasoning="Updated reasoning.",
+        )
+        merged = merge_specialist_notes(previous, update)
+        assert merged.supporting_evidence == ["unfamiliar device"]
+        assert merged.contradicting_evidence == ["chip+PIN from enrolled device"]
+        assert merged.evidence_gaps == ["IP logs [offline]"]
+
+
+class TestMergeReasoningNotes:
+    """Tests for merge_reasoning_notes."""
+
+    def test_contradictions_persist(self):
+        previous = HypothesisReasoning(
+            reasoning={
+                "THIRD_PARTY_FRAUD": "Low",
+                "FIRST_PARTY_FRAUD": "High",
+                "SCAM": "Low",
+                "DISPUTE": "Low",
+            },
+            contradictions=["CM claims unauthorized but chip+PIN auth"],
+            assessment_summary="Old summary.",
+        )
+        update = ReasoningNoteUpdate(
+            reasoning={
+                "THIRD_PARTY_FRAUD": "Very low",
+                "FIRST_PARTY_FRAUD": "Very high",
+                "SCAM": "Low",
+                "DISPUTE": "Low",
+            },
+            assessment_summary="New summary.",
+        )
+        merged = merge_reasoning_notes(previous, update)
+        assert merged.contradictions == ["CM claims unauthorized but chip+PIN auth"]
+        assert merged.reasoning["THIRD_PARTY_FRAUD"] == "Very low"
+        assert merged.assessment_summary == "New summary."
+
+    def test_add_and_remove_contradictions(self):
+        previous = HypothesisReasoning(
+            contradictions=["contradiction A", "contradiction B"],
+        )
+        update = ReasoningNoteUpdate(
+            add_contradictions=["contradiction C"],
+            remove_contradictions=["contradiction A"],
+        )
+        merged = merge_reasoning_notes(previous, update)
+        assert "contradiction A" not in merged.contradictions
+        assert "contradiction B" in merged.contradictions
+        assert "contradiction C" in merged.contradictions
+
+    def test_removal_then_addition(self):
+        """Removals are applied before additions."""
+        previous = HypothesisReasoning(
+            contradictions=["old item"],
+        )
+        update = ReasoningNoteUpdate(
+            remove_contradictions=["old item"],
+            add_contradictions=["replacement item"],
+        )
+        merged = merge_reasoning_notes(previous, update)
+        assert merged.contradictions == ["replacement item"]

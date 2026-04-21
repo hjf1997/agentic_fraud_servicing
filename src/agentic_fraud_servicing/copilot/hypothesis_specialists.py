@@ -55,6 +55,103 @@ class SpecialistAssessment(BaseModel):
     eligibility: Literal["eligible", "blocked"] = "eligible"
 
 
+class SpecialistNoteUpdate(BaseModel):
+    """Incremental update to a specialist's working notes.
+
+    On subsequent turns, the specialist outputs only what changed.
+    The host merges this into the previous SpecialistAssessment
+    deterministically via merge_specialist_notes().
+
+    Regenerated fields (reasoning, policy_citations, eligibility) are
+    provided in full each turn. Evidence lists are updated via explicit
+    add/remove operations — items only disappear when explicitly removed.
+    """
+
+    category: str
+
+    # Regenerated each turn (full replacement)
+    reasoning: str = ""
+    policy_citations: list[str] = Field(default_factory=list)
+    eligibility: Literal["eligible", "blocked"] = "eligible"
+
+    # Incremental updates to evidence lists
+    add_supporting_evidence: list[str] = Field(default_factory=list)
+    remove_supporting_evidence: list[str] = Field(default_factory=list)
+    add_contradicting_evidence: list[str] = Field(default_factory=list)
+    remove_contradicting_evidence: list[str] = Field(default_factory=list)
+    add_evidence_gaps: list[str] = Field(default_factory=list)
+    remove_evidence_gaps: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Merge helpers
+# ---------------------------------------------------------------------------
+
+
+def _remove_by_substring(items: list[str], removals: list[str]) -> list[str]:
+    """Remove items containing any of the removal substrings (case-insensitive).
+
+    An item is removed if any removal phrase appears as a substring within it.
+    Unmatched removal phrases are silently ignored.
+    """
+    if not removals:
+        return list(items)
+    result = []
+    for item in items:
+        item_lower = item.lower()
+        if not any(r.lower() in item_lower for r in removals):
+            result.append(item)
+    return result
+
+
+def _add_deduped(existing: list[str], additions: list[str]) -> list[str]:
+    """Add items not already present (substring dedup, case-insensitive).
+
+    An addition is skipped if any existing item contains it or it contains
+    any existing item.
+    """
+    result = list(existing)
+    for add in additions:
+        add_lower = add.lower()
+        already = any(add_lower in ex.lower() or ex.lower() in add_lower for ex in result)
+        if not already:
+            result.append(add)
+    return result
+
+
+def merge_specialist_notes(
+    previous: SpecialistAssessment,
+    update: SpecialistNoteUpdate,
+) -> SpecialistAssessment:
+    """Merge an incremental update into a previous specialist assessment.
+
+    Regenerated fields (reasoning, policy_citations, eligibility) are replaced
+    wholesale. Evidence lists are patched: removals applied first, then additions.
+    """
+    supporting = _remove_by_substring(
+        previous.supporting_evidence, update.remove_supporting_evidence
+    )
+    supporting = _add_deduped(supporting, update.add_supporting_evidence)
+
+    contradicting = _remove_by_substring(
+        previous.contradicting_evidence, update.remove_contradicting_evidence
+    )
+    contradicting = _add_deduped(contradicting, update.add_contradicting_evidence)
+
+    gaps = _remove_by_substring(previous.evidence_gaps, update.remove_evidence_gaps)
+    gaps = _add_deduped(gaps, update.add_evidence_gaps)
+
+    return SpecialistAssessment(
+        category=previous.category,
+        reasoning=update.reasoning,
+        supporting_evidence=supporting,
+        contradicting_evidence=contradicting,
+        policy_citations=update.policy_citations,
+        evidence_gaps=gaps,
+        eligibility=update.eligibility,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Policy loading
 # ---------------------------------------------------------------------------
@@ -156,6 +253,45 @@ credentials.
 - Investigation question: "Did the cardmember actually authorize the transaction?"
 """
 
+_WORKING_NOTES_MODE = """\
+## Working Notes Update Mode
+
+Your output format depends on whether you have existing working notes.
+
+**First assessment (no "Your Working Notes" section in input):**
+Output a full SpecialistAssessment with all fields populated from scratch.
+
+**Subsequent assessments (working notes shown in input):**
+Output a SpecialistNoteUpdate with only what changed. The host will merge
+your update into the previous state — you do NOT need to repeat unchanged
+evidence items.
+
+### Fields you regenerate in full each turn:
+- `reasoning` — rewrite based on current evidence and what changed
+- `policy_citations` — provide the full list of relevant citations
+- `eligibility` — reassess based on current state
+
+### Fields you update incrementally (add/remove only):
+- `add_supporting_evidence` — genuinely NEW supporting items not already in
+  your working notes. Do NOT re-add items already listed.
+- `remove_supporting_evidence` — items to remove (use a substring that
+  uniquely identifies the item). Remove items that are wrong, superseded,
+  or no longer supported by evidence.
+- `add_contradicting_evidence` / `remove_contradicting_evidence` — same rules
+- `add_evidence_gaps` / `remove_evidence_gaps` — same rules. Remove gaps
+  that have been filled by newly retrieved evidence.
+
+### Rules:
+1. **Items persist unless explicitly removed.** If an evidence item from your
+   working notes is still valid, do nothing — it stays automatically.
+2. **Do not re-add existing items.** Check your working notes before adding.
+   If an item is already there (even worded slightly differently), skip it.
+3. **If nothing changed in a list, leave both add and remove empty.**
+4. **Removal uses substring matching.** You only need enough of the item text
+   to uniquely identify it (e.g., "chip+PIN" to remove an item about
+   chip+PIN authentication).
+"""
+
 _EVIDENCE_AVAILABILITY = """\
 ## Evidence Availability — Live Call vs. Offline Investigation
 
@@ -239,7 +375,7 @@ solely on evaluating how well "merchant dispute" explains the evidence.
    which gaps are obtainable only offline (e.g., "merchant delivery records
    [offline]", "refund policy documentation [offline]").
 
-If you have a previous assessment, explain what changed since then.
+{_WORKING_NOTES_MODE}
 
 Respond with structured output only.
 """
@@ -322,7 +458,7 @@ apply. Focus solely on evaluating how well "scam" explains the evidence.
    which gaps are obtainable only offline (e.g., "communication trail with
    alleged scammer [offline]", "payment platform transaction records [offline]").
 
-If you have a previous assessment, explain what changed since then.
+{_WORKING_NOTES_MODE}
 
 Respond with structured output only.
 """
@@ -384,7 +520,7 @@ solely on evaluating how well "third-party fraud" explains the evidence.
    which gaps are obtainable only offline (e.g., "detailed device fingerprint
    analysis [offline]", "merchant-side authorization records [offline]").
 
-If you have a previous assessment, explain what changed since then.
+{_WORKING_NOTES_MODE}
 
 Respond with structured output only.
 """
@@ -412,10 +548,10 @@ fraud_specialist = Agent(
     output_type=AgentOutputSchema(SpecialistAssessment, strict_json_schema=False),
 )
 
-_SPECIALISTS = {
-    "DISPUTE": dispute_specialist,
-    "SCAM": scam_specialist,
-    "THIRD_PARTY_FRAUD": fraud_specialist,
+_SPECIALIST_INSTRUCTIONS = {
+    "DISPUTE": DISPUTE_SPECIALIST_INSTRUCTIONS,
+    "SCAM": SCAM_SPECIALIST_INSTRUCTIONS,
+    "THIRD_PARTY_FRAUD": FRAUD_SPECIALIST_INSTRUCTIONS,
 }
 
 
@@ -432,9 +568,9 @@ def _format_specialist_input(
 ) -> str:
     """Build the user message for a specialist agent.
 
-    All specialists receive the same shared context. If a previous assessment
-    exists for this specialist, it is appended so the specialist can reason
-    incrementally.
+    All specialists receive the same shared context. When previous working
+    notes exist, they are shown with full evidence lists so the LLM can
+    reason about what to add or remove.
     """
     parts = [
         f"## Accumulated Allegations\n{allegations_summary}",
@@ -443,12 +579,20 @@ def _format_specialist_input(
     ]
 
     if previous is not None:
+        supporting = "\n".join(f"  - {e}" for e in previous.supporting_evidence) or "  (none)"
+        contradicting = (
+            "\n".join(f"  - {e}" for e in previous.contradicting_evidence) or "  (none)"
+        )
+        gaps = "\n".join(f"  - {e}" for e in previous.evidence_gaps) or "  (none)"
+        citations = "\n".join(f"  - {c}" for c in previous.policy_citations) or "  (none)"
         parts.append(
-            f"## Your Previous Assessment\n"
+            f"## Your Working Notes (current state — output updates only)\n"
             f"Eligibility: {previous.eligibility}\n"
-            f"Reasoning: {previous.reasoning}\n"
-            f"Supporting evidence: {', '.join(previous.supporting_evidence) or 'none'}\n"
-            f"Contradicting evidence: {', '.join(previous.contradicting_evidence) or 'none'}"
+            f"Reasoning: {previous.reasoning}\n\n"
+            f"Supporting evidence:\n{supporting}\n\n"
+            f"Contradicting evidence:\n{contradicting}\n\n"
+            f"Evidence gaps:\n{gaps}\n\n"
+            f"Policy citations:\n{citations}"
         )
 
     return "\n\n".join(parts)
@@ -464,23 +608,49 @@ def _default_assessment(category: str, error_msg: str) -> SpecialistAssessment:
 
 async def _run_single_specialist(
     category: str,
-    agent: Agent,
+    instructions: str,
     user_msg: str,
     model_provider: ModelProvider,
-) -> SpecialistAssessment:
-    """Run a single specialist with error handling."""
+    previous: SpecialistAssessment | None = None,
+) -> tuple[SpecialistAssessment, SpecialistNoteUpdate | None]:
+    """Run a single specialist with error handling.
+
+    On the first turn (no previous), the agent outputs a full
+    SpecialistAssessment. On subsequent turns, it outputs a
+    SpecialistNoteUpdate which is merged into the previous state.
+
+    Returns:
+        Tuple of (merged assessment, raw delta). Delta is None on the
+        first turn or when the specialist fails.
+    """
+    is_update = previous is not None
+    output_type = SpecialistNoteUpdate if is_update else SpecialistAssessment
+
+    agent = Agent(
+        name=f"{category.lower()}_specialist",
+        instructions=instructions,
+        output_type=AgentOutputSchema(output_type, strict_json_schema=False),
+    )
+
     try:
         result = await run_with_retry(
             agent,
             input=user_msg,
             run_config=RunConfig(model_provider=model_provider),
         )
-        assessment = result.final_output
-        # Ensure the category field is set correctly
-        assessment.category = category
-        return assessment
+        output = result.final_output
+
+        if is_update:
+            output.category = category
+            merged = merge_specialist_notes(previous, output)
+            return merged, output
+        else:
+            output.category = category
+            return output, None
     except Exception as exc:
-        return _default_assessment(category, str(exc))
+        if previous is not None:
+            return previous, None
+        return _default_assessment(category, str(exc)), None
 
 
 async def run_specialists(
@@ -489,7 +659,7 @@ async def run_specialists(
     conversation_summary: str,
     model_provider: ModelProvider,
     previous_assessments: dict[str, SpecialistAssessment] | None = None,
-) -> dict[str, SpecialistAssessment]:
+) -> tuple[dict[str, SpecialistAssessment], dict[str, SpecialistNoteUpdate]]:
     """Run all three category specialists in parallel.
 
     Args:
@@ -501,21 +671,31 @@ async def run_specialists(
             passed to each specialist for incremental reasoning.
 
     Returns:
-        Dict keyed by category name with SpecialistAssessment values.
+        Tuple of (merged assessments, raw deltas). Deltas dict is empty on
+        the first turn or for specialists that failed.
     """
     if previous_assessments is None:
         previous_assessments = {}
 
-    # Build per-specialist user messages (shared context + own previous output)
     tasks = []
     categories = []
-    for category, agent in _SPECIALISTS.items():
+    for category, instructions in _SPECIALIST_INSTRUCTIONS.items():
         prev = previous_assessments.get(category)
         user_msg = _format_specialist_input(
             allegations_summary, evidence_summary, conversation_summary, prev
         )
-        tasks.append(_run_single_specialist(category, agent, user_msg, model_provider))
+        tasks.append(
+            _run_single_specialist(category, instructions, user_msg, model_provider, prev)
+        )
         categories.append(category)
 
     results = await asyncio.gather(*tasks)
-    return dict(zip(categories, results))
+
+    assessments = {}
+    deltas = {}
+    for category, (assessment, delta) in zip(categories, results):
+        assessments[category] = assessment
+        if delta is not None:
+            deltas[category] = delta
+
+    return assessments, deltas

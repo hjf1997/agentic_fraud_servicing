@@ -21,11 +21,15 @@ from agentic_fraud_servicing.copilot.context import (
 from agentic_fraud_servicing.copilot.hypothesis_agent import (
     HypothesisAssessment,
     HypothesisReasoning,
+    ReasoningNoteUpdate,
     hypothesis_reasoning_agent,
+    merge_reasoning_notes,
     run_arbitrator,
 )
 from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     SpecialistAssessment,
+    SpecialistNoteUpdate,
+    merge_specialist_notes,
     run_specialists,
 )
 from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator
@@ -61,10 +65,14 @@ __all__ = [
     # hypothesis_agent
     "HypothesisAssessment",
     "HypothesisReasoning",
+    "ReasoningNoteUpdate",
     "hypothesis_reasoning_agent",
+    "merge_reasoning_notes",
     "run_arbitrator",
     # hypothesis_specialists
     "SpecialistAssessment",
+    "SpecialistNoteUpdate",
+    "merge_specialist_notes",
     "run_specialists",
     # case_advisor
     "CaseTypeAssessment",

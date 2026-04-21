@@ -525,6 +525,7 @@ async def run_forked_simulation(
                 "allegations_extracted": len(copilot.accumulated_allegations),
                 "fork_after": fork_after,
                 "forked_turns": forked_turns,
+                **copilot.get_final_notes(),
             }
         ),
     )

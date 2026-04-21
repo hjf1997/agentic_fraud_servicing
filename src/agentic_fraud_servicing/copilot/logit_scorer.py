@@ -22,6 +22,7 @@ from openai import AsyncOpenAI
 if TYPE_CHECKING:
     from agentic_fraud_servicing.copilot.hypothesis_specialists import (
         SpecialistAssessment,
+        SpecialistNoteUpdate,
     )
 
 logger = logging.getLogger(__name__)
@@ -127,21 +128,61 @@ def _format_specialist_evidence(
     return "\n\n".join(parts)
 
 
+def _format_delta_changes(
+    specialist_deltas: dict[str, SpecialistNoteUpdate],
+) -> str:
+    """Format specialist deltas into a brief changes summary for the logit prompt."""
+    _LABELS = {
+        "DISPUTE": "Dispute",
+        "SCAM": "Scam",
+        "THIRD_PARTY_FRAUD": "Fraud",
+    }
+    lines: list[str] = []
+    for category in ("DISPUTE", "SCAM", "THIRD_PARTY_FRAUD"):
+        delta = specialist_deltas.get(category)
+        if delta is None:
+            continue
+        changes: list[str] = []
+        for item in delta.add_supporting_evidence:
+            changes.append(f"+supporting: {item}")
+        for item in delta.remove_supporting_evidence:
+            changes.append(f"-supporting: {item}")
+        for item in delta.add_contradicting_evidence:
+            changes.append(f"+contradicting: {item}")
+        for item in delta.remove_contradicting_evidence:
+            changes.append(f"-contradicting: {item}")
+        for item in delta.add_evidence_gaps:
+            changes.append(f"+gap: {item}")
+        for item in delta.remove_evidence_gaps:
+            changes.append(f"-gap: {item}")
+        if changes:
+            lines.append(f"{_LABELS[category]}: " + "; ".join(changes))
+    return "\n".join(lines)
+
+
 def build_logit_prompt(
     specialist_assessments: dict[str, SpecialistAssessment],
     allegations_summary: str,
     auth_summary: str,
+    specialist_deltas: dict[str, SpecialistNoteUpdate] | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Build the system and user messages for the logit classification call.
 
     Returns:
         (system_message, user_message) as dicts with 'role' and 'content' keys.
     """
+    changes_section = ""
+    if specialist_deltas:
+        changes_text = _format_delta_changes(specialist_deltas)
+        if changes_text:
+            changes_section = f"\n\n## Changes This Turn\n{changes_text}"
+
     user_content = (
         f"## Specialist Evidence Analysis\n\n"
         f"{_format_specialist_evidence(specialist_assessments)}\n\n"
         f"## Authentication Assessment\n{auth_summary}\n\n"
-        f"## Accumulated Allegations\n{allegations_summary}\n\n"
+        f"## Accumulated Allegations\n{allegations_summary}"
+        f"{changes_section}\n\n"
         f"Answer with a single letter: A, B, C, or D."
     )
     return (
@@ -236,6 +277,7 @@ async def compute_logprob_scores(
     specialist_assessments: dict[str, SpecialistAssessment],
     allegations_summary: str,
     auth_summary: str,
+    specialist_deltas: dict[str, SpecialistNoteUpdate] | None = None,
 ) -> dict[str, float]:
     """Compute hypothesis scores via logprob-based forced-choice classification.
 
@@ -249,13 +291,16 @@ async def compute_logprob_scores(
         specialist_assessments: Evidence analysis from 3 category specialists.
         allegations_summary: Formatted accumulated allegations.
         auth_summary: Formatted auth assessment.
+        specialist_deltas: Raw specialist deltas from this turn. Included
+            as a "Changes This Turn" section so the classifier can weigh
+            new evidence more heavily.
 
     Returns:
         Dict with 5 keys (THIRD_PARTY_FRAUD, FIRST_PARTY_FRAUD, SCAM,
         DISPUTE, UNABLE_TO_DETERMINE) summing to 1.0.
     """
     system_msg, user_msg = build_logit_prompt(
-        specialist_assessments, allegations_summary, auth_summary
+        specialist_assessments, allegations_summary, auth_summary, specialist_deltas
     )
 
     start_time = time.monotonic()

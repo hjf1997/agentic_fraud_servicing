@@ -770,6 +770,7 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
                 "impersonation_risk": copilot.impersonation_risk,
                 "evidence_collected": copilot.evidence_collected,
                 "allegations_extracted": len(copilot.accumulated_allegations),
+                **copilot.get_final_notes(),
             }
         ),
     )
