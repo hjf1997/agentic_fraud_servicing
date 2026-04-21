@@ -477,8 +477,10 @@ class TestRunArbitrator:
 
         assert not hasattr(mod, "run_specialists")
 
-    async def test_wraps_exceptions(self, mock_provider, mock_openai_client, default_scores):
-        """run_arbitrator wraps exceptions in RuntimeError."""
+    async def test_graceful_on_both_failures(
+        self, mock_provider, mock_openai_client, default_scores
+    ):
+        """run_arbitrator returns uniform scores with empty reasoning when both fail."""
         mock_specialist_outputs = {
             "DISPUTE": SpecialistAssessment(category="DISPUTE"),
             "SCAM": SpecialistAssessment(category="SCAM"),
@@ -497,15 +499,58 @@ class TestRunArbitrator:
                 side_effect=ValueError("API failed"),
             ),
         ):
-            with pytest.raises(RuntimeError, match="Hypothesis arbitrator failed"):
-                await run_arbitrator(
-                    specialist_assessments=mock_specialist_outputs,
-                    allegations_summary="claims",
-                    auth_summary="auth",
-                    current_scores=default_scores,
-                    model_provider=mock_provider,
-                    openai_client=mock_openai_client,
-                )
+            result = await run_arbitrator(
+                specialist_assessments=mock_specialist_outputs,
+                allegations_summary="claims",
+                auth_summary="auth",
+                current_scores=default_scores,
+                model_provider=mock_provider,
+                openai_client=mock_openai_client,
+            )
+            # Logit scorer failure → uniform scores
+            assert all(v == pytest.approx(0.20) for v in result.scores.values())
+            # Reasoning failure → empty reasoning with fallback summary
+            assert "failed" in result.assessment_summary.lower()
+
+    async def test_reasoning_failure_preserves_logit_scores(
+        self, mock_provider, mock_openai_client, default_scores
+    ):
+        """Reasoning agent failure still returns logit scores."""
+        mock_specialist_outputs = {
+            "DISPUTE": SpecialistAssessment(category="DISPUTE"),
+            "SCAM": SpecialistAssessment(category="SCAM"),
+            "THIRD_PARTY_FRAUD": SpecialistAssessment(category="THIRD_PARTY_FRAUD"),
+        }
+        expected_scores = {
+            "THIRD_PARTY_FRAUD": 0.80,
+            "FIRST_PARTY_FRAUD": 0.05,
+            "SCAM": 0.05,
+            "DISPUTE": 0.05,
+            "UNABLE_TO_DETERMINE": 0.05,
+        }
+
+        with (
+            patch(
+                "agentic_fraud_servicing.copilot.hypothesis_agent.run_with_retry",
+                new_callable=AsyncMock,
+                side_effect=ValueError("LLM call failed"),
+            ),
+            patch(
+                "agentic_fraud_servicing.copilot.hypothesis_agent.compute_logprob_scores",
+                new_callable=AsyncMock,
+                return_value=expected_scores,
+            ),
+        ):
+            result = await run_arbitrator(
+                specialist_assessments=mock_specialist_outputs,
+                allegations_summary="claims",
+                auth_summary="auth",
+                current_scores=default_scores,
+                model_provider=mock_provider,
+                openai_client=mock_openai_client,
+            )
+            # Logit scores preserved despite reasoning failure
+            assert result.scores == expected_scores
 
 
 # ---------------------------------------------------------------------------

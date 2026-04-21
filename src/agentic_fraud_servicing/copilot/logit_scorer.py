@@ -38,6 +38,38 @@ _TOKEN_TO_CATEGORY: dict[str, str] = {
     "D": "DISPUTE",
 }
 
+# Token IDs for A/B/C/D, used in logit_bias to ensure all 4 targets
+# appear in top_logprobs. Computed via tiktoken at import time; falls
+# back to known cl100k_base / o200k_base IDs if tiktoken is unavailable.
+_FALLBACK_TOKEN_IDS: dict[str, int] = {"A": 32, "B": 33, "C": 34, "D": 35}
+
+
+def _resolve_token_ids() -> dict[str, int]:
+    """Resolve token IDs for target letters using tiktoken if available."""
+    try:
+        import tiktoken
+
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        ids = {}
+        for letter in _TOKEN_TO_CATEGORY:
+            encoded = enc.encode(letter)
+            if len(encoded) == 1:
+                ids[letter] = encoded[0]
+            else:
+                logger.warning("Token %r encodes to multiple IDs: %s", letter, encoded)
+                return _FALLBACK_TOKEN_IDS
+        return ids
+    except Exception:
+        return _FALLBACK_TOKEN_IDS
+
+
+_TARGET_TOKEN_IDS: dict[str, int] = _resolve_token_ids()
+
+# Logit bias added to target tokens. Large enough to guarantee they appear
+# in top_logprobs, but gets subtracted from observed logprobs to recover
+# the original (unbiased) distribution.
+_LOGIT_BIAS_BOOST: float = 10.0
+
 _ALL_CATEGORIES = [
     "THIRD_PARTY_FRAUD",
     "FIRST_PARTY_FRAUD",
@@ -196,58 +228,56 @@ def build_logit_prompt(
 # ---------------------------------------------------------------------------
 
 
-def extract_category_probs(top_logprobs: list[Any]) -> dict[str, float]:
+def extract_category_probs(
+    top_logprobs: list[Any],
+    logit_bias_applied: float = 0.0,
+) -> dict[str, float]:
     """Extract 4-category probabilities from the top_logprobs list.
 
-    Normalizes token strings (strip whitespace, uppercase) before matching.
-    Tokens not found in top_logprobs get a floor probability.
+    When logit_bias was applied to boost target tokens, subtracts the bias
+    from observed logprobs to recover the model's original (unbiased)
+    probability distribution.
 
     Args:
         top_logprobs: List of logprob objects from the OpenAI response,
             each with .token and .logprob attributes.
+        logit_bias_applied: The logit bias that was added to target tokens
+            in the API call. Subtracted from observed logprobs to recover
+            original probabilities.
 
     Returns:
         Dict with 4 category keys mapped to normalized probabilities
         summing to 1.0.
     """
-    # Build lookup: normalized token -> raw probability
-    token_probs: dict[str, float] = {}
+    # Build lookup: normalized token -> observed logprob
+    token_logprobs: dict[str, float] = {}
     for entry in top_logprobs:
         normalized = entry.token.strip().upper()
-        token_probs[normalized] = math.exp(entry.logprob)
+        token_logprobs[normalized] = entry.logprob
 
-    # Log raw tokens for diagnostics — helps identify tokenization issues
-    # where target letters A/B/C/D might appear in unexpected forms.
+    # Log diagnostics for missing target tokens
     target_tokens = set(_TOKEN_TO_CATEGORY.keys())
-    found = target_tokens & set(token_probs.keys())
+    found = target_tokens & set(token_logprobs.keys())
     missing = target_tokens - found
     if missing:
         raw_tokens = [(e.token, f"{e.logprob:.3f}") for e in top_logprobs]
-        # When the model is highly confident (top token logprob > -0.1,
-        # i.e. >90% probability), missing tokens are expected — they're
-        # just too unlikely to appear in top_logprobs. Only warn when the
-        # model is uncertain and tokens are unexpectedly absent.
-        top_logprob = max(e.logprob for e in top_logprobs) if top_logprobs else -float("inf")
-        if top_logprob > -0.1:
-            logger.debug(
-                "Logit scorer: confident (top logprob=%.3f), tokens %s below top_logprobs cutoff. "
-                "Raw tokens: %s",
-                top_logprob,
-                missing,
-                raw_tokens,
-            )
-        else:
-            logger.warning(
-                "Logit scorer: target tokens %s missing from top_logprobs. "
-                "Raw tokens: %s",
-                missing,
-                raw_tokens,
-            )
+        logger.warning(
+            "Logit scorer: target tokens %s missing from top_logprobs despite "
+            "logit_bias=%.0f. Raw tokens: %s",
+            missing,
+            logit_bias_applied,
+            raw_tokens,
+        )
 
-    # Extract probabilities for our 4 target tokens
+    # Extract probabilities, subtracting logit_bias from target tokens
+    # to recover the model's original (unbiased) distribution.
     raw: dict[str, float] = {}
     for token, category in _TOKEN_TO_CATEGORY.items():
-        raw[category] = token_probs.get(token, _FLOOR_PROB)
+        if token in token_logprobs:
+            original_logprob = token_logprobs[token] - logit_bias_applied
+            raw[category] = math.exp(original_logprob)
+        else:
+            raw[category] = _FLOOR_PROB
 
     # Normalize to sum to 1.0
     total = sum(raw.values())
@@ -333,6 +363,11 @@ async def compute_logprob_scores(
 
     start_time = time.monotonic()
     try:
+        # logit_bias ensures all 4 target tokens (A/B/C/D) appear in
+        # top_logprobs even when the model is very confident about one.
+        # Without it, Azure OpenAI returns ~5 tokens and non-targets
+        # ("Answer", "The", "**") displace the real alternatives.
+        logit_bias = {str(tid): int(_LOGIT_BIAS_BOOST) for tid in _TARGET_TOKEN_IDS.values()}
         response = await client.chat.completions.create(
             model=model,
             messages=[system_msg, user_msg],
@@ -340,6 +375,7 @@ async def compute_logprob_scores(
             logprobs=True,
             top_logprobs=10,
             temperature=0.0,
+            logit_bias=logit_bias,
         )
 
         duration_ms = (time.monotonic() - start_time) * 1000
@@ -352,7 +388,7 @@ async def compute_logprob_scores(
             logger.warning("Logit scorer: no logprobs in response, using uniform")
             return dict(_UNIFORM_SCORES)
 
-        category_probs = extract_category_probs(top_lps)
+        category_probs = extract_category_probs(top_lps, logit_bias_applied=_LOGIT_BIAS_BOOST)
         utd = derive_unable_to_determine(category_probs)
         scores = build_final_scores(category_probs, utd)
 
@@ -453,6 +489,7 @@ def _trace_logit_call(
                 "logprobs": True,
                 "top_logprobs": 10,
                 "temperature": 0.0,
+                "logit_bias_boost": _LOGIT_BIAS_BOOST,
             },
             level="DEFAULT",
             status_message=f"top={max(scores, key=scores.get)}, entropy={entropy:.3f}",

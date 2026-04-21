@@ -9,6 +9,7 @@ import pytest
 from agentic_fraud_servicing.copilot.hypothesis_specialists import SpecialistAssessment
 from agentic_fraud_servicing.copilot.logit_scorer import (
     _FLOOR_PROB,
+    _LOGIT_BIAS_BOOST,
     _UNIFORM_SCORES,
     UTD_MAX_MASS,
     build_final_scores,
@@ -92,6 +93,38 @@ class TestExtractCategoryProbs:
         probs = extract_category_probs(top_logprobs)
         assert "E" not in probs
         assert len(probs) == 4
+
+    def test_logit_bias_subtraction_recovers_original_probs(self):
+        """Subtracting logit_bias from observed logprobs recovers original distribution."""
+        # Original (unbiased) probabilities: A=0.5, B=0.3, C=0.1, D=0.1
+        bias = 10.0
+        # Observed logprobs = original logprob + bias (for target tokens)
+        top_logprobs = [
+            self._make_logprob("A", math.log(0.5) + bias),
+            self._make_logprob("B", math.log(0.3) + bias),
+            self._make_logprob("C", math.log(0.1) + bias),
+            self._make_logprob("D", math.log(0.1) + bias),
+        ]
+        probs = extract_category_probs(top_logprobs, logit_bias_applied=bias)
+        assert probs["THIRD_PARTY_FRAUD"] == pytest.approx(0.5, abs=1e-4)
+        assert probs["FIRST_PARTY_FRAUD"] == pytest.approx(0.3, abs=1e-4)
+        assert probs["SCAM"] == pytest.approx(0.1, abs=1e-4)
+        assert probs["DISPUTE"] == pytest.approx(0.1, abs=1e-4)
+
+    def test_logit_bias_with_confident_model(self):
+        """With bias, even a confident model shows all 4 tokens with correct relative probs."""
+        bias = 10.0
+        # Original: A=0.95, B=0.03, C=0.01, D=0.01
+        top_logprobs = [
+            self._make_logprob("A", math.log(0.95) + bias),
+            self._make_logprob("B", math.log(0.03) + bias),
+            self._make_logprob("C", math.log(0.01) + bias),
+            self._make_logprob("D", math.log(0.01) + bias),
+        ]
+        probs = extract_category_probs(top_logprobs, logit_bias_applied=bias)
+        assert probs["THIRD_PARTY_FRAUD"] == pytest.approx(0.95, abs=1e-4)
+        assert probs["THIRD_PARTY_FRAUD"] > probs["FIRST_PARTY_FRAUD"]
+        assert abs(sum(probs.values()) - 1.0) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -269,9 +302,18 @@ class TestComputeLogprobScores:
         }
 
     def _make_response(self, token_probs: dict[str, float]):
-        """Create a mock OpenAI response with logprobs."""
+        """Create a mock OpenAI response with logprobs.
+
+        Simulates biased logprobs: adds _LOGIT_BIAS_BOOST to target tokens
+        (A/B/C/D) to match what the real API returns when logit_bias is set.
+        """
+        target_tokens = {"A", "B", "C", "D"}
         top_logprobs = [
-            SimpleNamespace(token=tok, logprob=math.log(prob)) for tok, prob in token_probs.items()
+            SimpleNamespace(
+                token=tok,
+                logprob=math.log(prob) + (_LOGIT_BIAS_BOOST if tok in target_tokens else 0),
+            )
+            for tok, prob in token_probs.items()
         ]
         content_item = SimpleNamespace(top_logprobs=top_logprobs)
         logprobs = SimpleNamespace(content=[content_item])

@@ -471,15 +471,46 @@ async def run_arbitrator(
             specialist_deltas=specialist_deltas,
         )
 
-    try:
-        logit_scores, reasoning_result = await asyncio.gather(
-            _run_logit(),
-            _run_reasoning(),
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Hypothesis arbitrator failed: {exc}") from exc
+    # Run both in parallel but don't let one failure discard the other's result.
+    logit_result, reasoning_result = await asyncio.gather(
+        _run_logit(),
+        _run_reasoning(),
+        return_exceptions=True,
+    )
 
-    # 3. Combine into final assessment
+    # 3. Handle logit scorer failure — fall back to uniform scores
+    if isinstance(logit_result, BaseException):
+        logger.error("Logit scorer failed in gather: %s", logit_result)
+        logit_scores = {
+            "THIRD_PARTY_FRAUD": 0.20,
+            "FIRST_PARTY_FRAUD": 0.20,
+            "SCAM": 0.20,
+            "DISPUTE": 0.20,
+            "UNABLE_TO_DETERMINE": 0.20,
+        }
+    else:
+        logit_scores = logit_result
+
+    # 4. Handle reasoning failure — use logit scores with empty reasoning
+    if isinstance(reasoning_result, BaseException):
+        logger.error("Reasoning agent failed in gather: %s", reasoning_result)
+        empty_reasoning = {cat: "" for cat in _REASONING_CATEGORIES}
+        if previous_reasoning is not None:
+            # Preserve previous reasoning on failure
+            return HypothesisAssessment(
+                scores=logit_scores,
+                reasoning=previous_reasoning.reasoning,
+                contradictions=previous_reasoning.contradictions,
+                assessment_summary=previous_reasoning.assessment_summary,
+            )
+        return HypothesisAssessment(
+            scores=logit_scores,
+            reasoning=empty_reasoning,
+            contradictions=[],
+            assessment_summary="Reasoning agent failed; scores are from logprob classification only.",
+        )
+
+    # 5. Combine into final assessment
     return HypothesisAssessment(
         scores=logit_scores,
         reasoning=reasoning_result.reasoning,
