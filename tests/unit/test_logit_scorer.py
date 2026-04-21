@@ -67,17 +67,18 @@ class TestExtractCategoryProbs:
         probs = extract_category_probs(top_logprobs)
         assert probs["THIRD_PARTY_FRAUD"] == pytest.approx(0.7, abs=1e-4)
 
-    def test_missing_tokens_get_floor_probability(self):
-        """Tokens not in top_logprobs receive floor probability."""
+    def test_missing_tokens_get_smoothed_floor(self):
+        """Missing tokens get MIN_CATEGORY_PROB via smoothing."""
         top_logprobs = [
             self._make_logprob("A", math.log(0.9)),
             self._make_logprob("B", math.log(0.1)),
-            # C and D missing
+            # C and D missing — get _FLOOR_PROB then clamped to MIN_CATEGORY_PROB
         ]
         probs = extract_category_probs(top_logprobs)
-        assert probs["SCAM"] == pytest.approx(
-            _FLOOR_PROB / (0.9 + 0.1 + 2 * _FLOOR_PROB), abs=1e-8
-        )
+        # Missing tokens are smoothed to at least MIN_CATEGORY_PROB (0.01)
+        assert probs["SCAM"] >= 0.009  # at least ~1% after renormalization
+        assert probs["DISPUTE"] >= 0.009
+        assert probs["THIRD_PARTY_FRAUD"] > probs["SCAM"]
         assert abs(sum(probs.values()) - 1.0) < 1e-6
 
     def test_irrelevant_tokens_ignored(self):

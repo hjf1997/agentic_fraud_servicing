@@ -38,32 +38,38 @@ _TOKEN_TO_CATEGORY: dict[str, str] = {
     "D": "DISPUTE",
 }
 
-# Token IDs for A/B/C/D, used in logit_bias to ensure all 4 targets
-# appear in top_logprobs. Computed via tiktoken at import time; falls
-# back to known cl100k_base / o200k_base IDs if tiktoken is unavailable.
-_FALLBACK_TOKEN_IDS: dict[str, int] = {"A": 32, "B": 33, "C": 34, "D": 35}
+# Token IDs for target letters, used in logit_bias to ensure all 4 appear
+# in top_logprobs. Includes both bare ("A") and space-prefixed (" A")
+# variants since chat completions may tokenize either way. Computed via
+# tiktoken at import time; falls back to known cl100k_base IDs.
+_FALLBACK_TOKEN_IDS: list[int] = [
+    32, 33, 34, 35,  # A, B, C, D (bare)
+    355, 418, 363, 415,  # " A", " B", " C", " D" (space-prefixed)
+]
 
 
-def _resolve_token_ids() -> dict[str, int]:
-    """Resolve token IDs for target letters using tiktoken if available."""
+def _resolve_token_ids() -> list[int]:
+    """Resolve token IDs for target letters using tiktoken if available.
+
+    Returns IDs for both bare and space-prefixed variants of A/B/C/D.
+    """
     try:
         import tiktoken
 
         enc = tiktoken.encoding_for_model("gpt-4o")
-        ids = {}
+        ids: list[int] = []
         for letter in _TOKEN_TO_CATEGORY:
-            encoded = enc.encode(letter)
-            if len(encoded) == 1:
-                ids[letter] = encoded[0]
-            else:
-                logger.warning("Token %r encodes to multiple IDs: %s", letter, encoded)
-                return _FALLBACK_TOKEN_IDS
+            for variant in [letter, f" {letter}"]:
+                encoded = enc.encode(variant)
+                # " A" encodes to [token_for_space_A] as a single token
+                # in cl100k_base / o200k_base.
+                ids.append(encoded[-1])
         return ids
     except Exception:
-        return _FALLBACK_TOKEN_IDS
+        return list(_FALLBACK_TOKEN_IDS)
 
 
-_TARGET_TOKEN_IDS: dict[str, int] = _resolve_token_ids()
+_TARGET_TOKEN_IDS: list[int] = _resolve_token_ids()
 
 # Logit bias added to target tokens. Large enough to guarantee they appear
 # in top_logprobs, but gets subtracted from observed logprobs to recover
@@ -94,6 +100,12 @@ UTD_MAX_MASS: float = 0.5
 
 # Floor probability for tokens missing from top_logprobs (very unlikely).
 _FLOOR_PROB: float = 1e-6
+
+# Minimum probability per category after normalization (Laplace-style
+# smoothing). Prevents any category from being zeroed out when target
+# tokens are missing from top_logprobs, which happens when Azure OpenAI
+# silently ignores logit_bias or the model is extremely confident.
+MIN_CATEGORY_PROB: float = 0.01
 
 # ---------------------------------------------------------------------------
 # Prompt construction
@@ -269,12 +281,19 @@ def extract_category_probs(
             raw_tokens,
         )
 
+    # Only subtract bias if it actually took effect. If all 4 targets
+    # appear in top_logprobs, the bias worked. If some are missing, Azure
+    # silently ignored logit_bias and subtracting it would artificially
+    # deflate the found tokens' probabilities.
+    bias_effective = not missing
+    effective_bias = logit_bias_applied if bias_effective else 0.0
+
     # Extract probabilities, subtracting logit_bias from target tokens
     # to recover the model's original (unbiased) distribution.
     raw: dict[str, float] = {}
     for token, category in _TOKEN_TO_CATEGORY.items():
         if token in token_logprobs:
-            original_logprob = token_logprobs[token] - logit_bias_applied
+            original_logprob = token_logprobs[token] - effective_bias
             raw[category] = math.exp(original_logprob)
         else:
             raw[category] = _FLOOR_PROB
@@ -283,7 +302,19 @@ def extract_category_probs(
     total = sum(raw.values())
     if total <= 0:
         return {cat: 0.25 for cat in _TOKEN_TO_CATEGORY.values()}
-    return {cat: prob / total for cat, prob in raw.items()}
+    probs = {cat: prob / total for cat, prob in raw.items()}
+
+    # Apply Laplace-style smoothing: clamp each category to at least
+    # MIN_CATEGORY_PROB, then renormalize. This prevents extreme 0/1
+    # distributions when Azure OpenAI silently ignores logit_bias and
+    # target tokens are missing from top_logprobs.
+    needs_smoothing = any(p < MIN_CATEGORY_PROB for p in probs.values())
+    if needs_smoothing:
+        smoothed = {cat: max(p, MIN_CATEGORY_PROB) for cat, p in probs.items()}
+        smooth_total = sum(smoothed.values())
+        probs = {cat: p / smooth_total for cat, p in smoothed.items()}
+
+    return probs
 
 
 def compute_entropy(probs: dict[str, float]) -> float:
@@ -367,7 +398,8 @@ async def compute_logprob_scores(
         # top_logprobs even when the model is very confident about one.
         # Without it, Azure OpenAI returns ~5 tokens and non-targets
         # ("Answer", "The", "**") displace the real alternatives.
-        logit_bias = {str(tid): int(_LOGIT_BIAS_BOOST) for tid in _TARGET_TOKEN_IDS.values()}
+        # Includes both bare and space-prefixed variants.
+        logit_bias = {str(tid): int(_LOGIT_BIAS_BOOST) for tid in _TARGET_TOKEN_IDS}
         response = await client.chat.completions.create(
             model=model,
             messages=[system_msg, user_msg],
