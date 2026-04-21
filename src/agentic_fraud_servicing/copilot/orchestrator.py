@@ -305,32 +305,50 @@ class CopilotOrchestrator:
                 f"auth:{len(self._retrieval_result.auth_events)}",
             ]
 
-        # 5. Run specialists + question validator in parallel.
+        # 5. Phase 2a: Run specialists + question validator in parallel.
         # The validator only needs transcript turns and hypothesis scores (no
         # specialist data), so it can run alongside specialists without adding
         # latency to the critical path.
-        _lf_p2 = None
+        _lf_p2a = None
         if lf is not None:
             try:
-                _lf_p2 = lf.start_as_current_observation(
+                _lf_p2a = lf.start_as_current_observation(
                     as_type="chain",
-                    name="phase2_specialists_arbitrator_advisor",
+                    name="phase2a_specialists",
                 )
-                _lf_p2.__enter__()
+                _lf_p2a.__enter__()
             except Exception:
-                _lf_p2 = None
+                _lf_p2a = None
 
         specialist_assessments, _ = await asyncio.gather(
             self._run_specialists_safe(risk_flags, conversation_summary),
             self._run_question_validator_safe(conversation_window, risk_flags),
         )
+
+        if _lf_p2a is not None:
+            try:
+                _lf_p2a.__exit__(None, None, None)
+            except Exception:
+                pass
+
         if specialist_assessments is not None:
             self._last_specialist_assessments = specialist_assessments
         specs = specialist_assessments or {}
 
-        # 6-7. Run arbitrator + case advisor in parallel.
+        # 6-7. Phase 2b: Run arbitrator + case advisor in parallel.
         # Both consume specialist outputs. On turns > 3, case advisor runs
         # alongside the arbitrator for question planning.
+        _lf_p2b = None
+        if lf is not None:
+            try:
+                _lf_p2b = lf.start_as_current_observation(
+                    as_type="chain",
+                    name="phase2b_arbitrator_advisor",
+                )
+                _lf_p2b.__enter__()
+            except Exception:
+                _lf_p2b = None
+
         case_advisory = None
         if self._turn_count > 3:
             hypothesis_result, case_advisory = await asyncio.gather(
@@ -342,9 +360,9 @@ class CopilotOrchestrator:
                 specs, auth_result=auth_result, risk_flags=risk_flags
             )
 
-        if _lf_p2 is not None:
+        if _lf_p2b is not None:
             try:
-                _lf_p2.__exit__(None, None, None)
+                _lf_p2b.__exit__(None, None, None)
             except Exception:
                 pass
         if hypothesis_result is not None:

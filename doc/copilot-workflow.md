@@ -408,14 +408,15 @@ Trace: "copilot_turn" (session_id=case_id)
 │  ├─ auto: triage → LLM generation + tool calls
 │  ├─ auto: auth → LLM generation
 │  └─ auto: retrieval → LLM generation + tool calls
-├─ Span: "phase2_specialists_arbitrator_advisor"
+├─ Span: "phase2a_specialists"
 │  ├─ auto: dispute_specialist → LLM generation
 │  ├─ auto: scam_specialist → LLM generation
 │  ├─ auto: fraud_specialist → LLM generation
-│  ├─ auto: question_validator → LLM generation (skipped if no pending questions)
+│  └─ auto: question_validator → LLM generation (skipped if no pending questions)
+├─ Span: "phase2b_arbitrator_advisor"
 │  ├─ manual: logit_scorer → OpenAI completion (max_tokens=1, logprobs=True)
 │  ├─ auto: hypothesis_reasoning → LLM generation
-│  └─ auto: case_advisor → LLM generation
+│  └─ auto: case_advisor → LLM generation (turns > 3 only)
 ```
 
 ### Self-hosted Deployment

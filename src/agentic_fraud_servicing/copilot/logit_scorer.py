@@ -362,6 +362,27 @@ async def compute_logprob_scores(
 # ---------------------------------------------------------------------------
 
 
+def _get_current_observation():
+    """Return the current LangFuse observation (span/trace) if available.
+
+    When the orchestrator wraps the pipeline in start_as_current_observation +
+    propagate_attributes, this returns the active span so the logit scorer's
+    generation appears nested under the copilot_turn trace — not orphaned at
+    the top level.
+    """
+    try:
+        from langfuse import get_client
+
+        client = get_client()
+        if client is None:
+            return None
+        # get_current_observation returns the span set by
+        # start_as_current_observation in the orchestrator
+        return client.get_current_observation()
+    except Exception:
+        return None
+
+
 def _trace_logit_call(
     model: str,
     system_msg: str,
@@ -372,7 +393,12 @@ def _trace_logit_call(
     entropy: float,
     duration_ms: float,
 ) -> None:
-    """Record the logit scoring call as a LangFuse generation span."""
+    """Record the logit scoring call as a LangFuse generation span.
+
+    Creates the generation as a child of the current observation (typically
+    the phase2 span) so it appears nested within the copilot_turn trace.
+    Falls back to a top-level generation if no current observation exists.
+    """
     try:
         from agentic_fraud_servicing.copilot.langfuse_tracing import get_langfuse
 
@@ -380,7 +406,10 @@ def _trace_logit_call(
         if lf is None:
             return
 
-        lf.generation(
+        # Nest under current observation if available, otherwise top-level
+        parent = _get_current_observation() or lf
+
+        parent.generation(
             name="logit_scorer",
             model=model,
             input=[
@@ -407,14 +436,15 @@ def _trace_logit_call(
 def _trace_logit_error(error_msg: str, duration_ms: float) -> None:
     """Record a failed logit scoring call in LangFuse."""
     try:
-        from agentic_fraud_servicing.copilot.langfuse_tracing import (
-            get_langfuse,
-        )
+        from agentic_fraud_servicing.copilot.langfuse_tracing import get_langfuse
 
         lf = get_langfuse()
         if lf is None:
             return
-        lf.generation(
+
+        parent = _get_current_observation() or lf
+
+        parent.generation(
             name="logit_scorer",
             level="ERROR",
             status_message=f"Failed ({duration_ms:.0f}ms): {error_msg[:500]}",
