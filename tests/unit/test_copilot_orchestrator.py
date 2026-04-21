@@ -175,12 +175,11 @@ def _make_orchestrator() -> CopilotOrchestrator:
     """Create a CopilotOrchestrator with mock gateway and provider.
 
     The model_provider mock uses OpenAIModelProvider as spec so that
-    isinstance checks in _run_arbitrator_safe pass correctly.
+    getattr(provider, "client") check in _run_arbitrator_safe finds a client.
     """
-    from agentic_fraud_servicing.providers.openai_provider import OpenAIModelProvider
-
     gateway = MagicMock()
-    model_provider = MagicMock(spec=OpenAIModelProvider)
+    model_provider = MagicMock()
+    model_provider.client = MagicMock()  # Simulate OpenAI-compatible .client
     return CopilotOrchestrator(gateway=gateway, model_provider=model_provider, assess_interval=1)
 
 

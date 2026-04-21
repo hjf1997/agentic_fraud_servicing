@@ -742,20 +742,23 @@ class CopilotOrchestrator:
         """
         t0 = time.perf_counter()
         try:
-            # Extract OpenAI client for logprob-based scoring
-            from agentic_fraud_servicing.providers.openai_provider import (
-                OpenAIModelProvider,
-            )
-
-            if not isinstance(self.model_provider, OpenAIModelProvider):
-                raise RuntimeError("Logprob scoring requires OpenAI provider")
+            # Extract OpenAI-compatible client for logprob-based scoring.
+            # Both OpenAIModelProvider (.client -> AsyncOpenAI) and
+            # ConnectChainModelProvider (.client -> AsyncAzureOpenAI)
+            # expose a .client property compatible with the logprob scorer.
+            openai_client = getattr(self.model_provider, "client", None)
+            if openai_client is None:
+                raise RuntimeError(
+                    "Logprob scoring requires a provider with an OpenAI-compatible client "
+                    f"(got {type(self.model_provider).__name__})"
+                )
             result = await run_arbitrator(
                 specialist_assessments=specialist_assessments,
                 allegations_summary=self._format_allegations_for_hypothesis(),
                 auth_summary=self._format_auth_for_hypothesis(auth_result),
                 current_scores=dict(self.hypothesis_scores),
                 model_provider=self.model_provider,
-                openai_client=self.model_provider.client,
+                openai_client=openai_client,
                 previous_reasoning=self._last_hypothesis,
                 specialist_deltas=self._last_specialist_deltas,
             )

@@ -97,6 +97,15 @@ class ConnectChainModelProvider(ModelProvider):
         self._default_model = deployment or "gpt-4o"
         self._use_responses_api = settings.azure_openai_use_responses_api
 
+    @property
+    def client(self) -> AsyncAzureOpenAI:
+        """Return the underlying AsyncAzureOpenAI client for direct API calls.
+
+        Used by the logprob-based hypothesis scorer which bypasses the
+        Agents SDK to make raw completions calls with logprobs enabled.
+        """
+        return self._client
+
     def _get_cached_token(self) -> str:
         """Return a cached EAS token, refreshing via ConnectChain when expired.
 
