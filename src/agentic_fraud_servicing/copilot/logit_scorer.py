@@ -223,12 +223,26 @@ def extract_category_probs(top_logprobs: list[Any]) -> dict[str, float]:
     missing = target_tokens - found
     if missing:
         raw_tokens = [(e.token, f"{e.logprob:.3f}") for e in top_logprobs]
-        logger.warning(
-            "Logit scorer: target tokens %s missing from top_logprobs. "
-            "Raw tokens: %s",
-            missing,
-            raw_tokens,
-        )
+        # When the model is highly confident (top token logprob > -0.1,
+        # i.e. >90% probability), missing tokens are expected — they're
+        # just too unlikely to appear in top_logprobs. Only warn when the
+        # model is uncertain and tokens are unexpectedly absent.
+        top_logprob = max(e.logprob for e in top_logprobs) if top_logprobs else -float("inf")
+        if top_logprob > -0.1:
+            logger.debug(
+                "Logit scorer: confident (top logprob=%.3f), tokens %s below top_logprobs cutoff. "
+                "Raw tokens: %s",
+                top_logprob,
+                missing,
+                raw_tokens,
+            )
+        else:
+            logger.warning(
+                "Logit scorer: target tokens %s missing from top_logprobs. "
+                "Raw tokens: %s",
+                missing,
+                raw_tokens,
+            )
 
     # Extract probabilities for our 4 target tokens
     raw: dict[str, float] = {}
