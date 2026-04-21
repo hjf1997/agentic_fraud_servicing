@@ -106,6 +106,11 @@ class ConnectChainModelProvider(ModelProvider):
         """
         return self._client
 
+    @property
+    def default_model(self) -> str:
+        """Return the Azure deployment name for direct API calls."""
+        return self._default_model
+
     def _get_cached_token(self) -> str:
         """Return a cached EAS token, refreshing via ConnectChain when expired.
 

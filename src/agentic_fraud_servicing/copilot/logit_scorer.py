@@ -216,6 +216,20 @@ def extract_category_probs(top_logprobs: list[Any]) -> dict[str, float]:
         normalized = entry.token.strip().upper()
         token_probs[normalized] = math.exp(entry.logprob)
 
+    # Log raw tokens for diagnostics — helps identify tokenization issues
+    # where target letters A/B/C/D might appear in unexpected forms.
+    target_tokens = set(_TOKEN_TO_CATEGORY.keys())
+    found = target_tokens & set(token_probs.keys())
+    missing = target_tokens - found
+    if missing:
+        raw_tokens = [(e.token, f"{e.logprob:.3f}") for e in top_logprobs]
+        logger.warning(
+            "Logit scorer: target tokens %s missing from top_logprobs. "
+            "Raw tokens: %s",
+            missing,
+            raw_tokens,
+        )
+
     # Extract probabilities for our 4 target tokens
     raw: dict[str, float] = {}
     for token, category in _TOKEN_TO_CATEGORY.items():

@@ -47,6 +47,11 @@ class OpenAIModelProvider(ModelProvider):
         """
         return self._client
 
+    @property
+    def default_model(self) -> str:
+        """Return the default model identifier for direct API calls."""
+        return DEFAULT_MODEL
+
     def get_model(self, model_name: str | None) -> Model:
         """Return an OpenAIChatCompletionsModel for the given model name.
 

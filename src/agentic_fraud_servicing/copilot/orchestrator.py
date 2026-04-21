@@ -770,6 +770,10 @@ class CopilotOrchestrator:
                     "Logprob scoring requires a provider with an OpenAI-compatible client "
                     f"(got {type(self.model_provider).__name__})"
                 )
+            # Use the provider's deployment/model name for the logit scorer.
+            # Hardcoding "gpt-4.1" fails when the Azure deployment has a
+            # different name (ConnectChain extracts it from config).
+            logit_model = getattr(self.model_provider, "default_model", "gpt-4.1")
             result = await run_arbitrator(
                 specialist_assessments=specialist_assessments,
                 allegations_summary=self._format_allegations_for_hypothesis(),
@@ -777,6 +781,7 @@ class CopilotOrchestrator:
                 current_scores=dict(self.hypothesis_scores),
                 model_provider=self.model_provider,
                 openai_client=openai_client,
+                model=logit_model,
                 previous_reasoning=self._last_hypothesis,
                 specialist_deltas=self._last_specialist_deltas,
             )
