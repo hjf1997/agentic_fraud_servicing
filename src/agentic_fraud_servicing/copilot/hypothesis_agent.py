@@ -436,19 +436,20 @@ async def run_arbitrator(
     scores_text = ", ".join(f"{k}: {v:.2f}" for k, v in current_scores.items())
 
     prev_reasoning_text = "First assessment — no prior reasoning."
+    prev_contradictions_text = "None detected."
     is_update = previous_reasoning is not None
     if is_update:
         reasoning_lines = [f"- {k}: {v}" for k, v in previous_reasoning.reasoning.items() if v]
         parts = []
         if reasoning_lines:
             parts.append("Per-category reasoning:\n" + "\n".join(reasoning_lines))
-        if previous_reasoning.contradictions:
-            numbered = [f"  {i}. {c}" for i, c in enumerate(previous_reasoning.contradictions, 1)]
-            parts.append("Contradictions:\n" + "\n".join(numbered))
         if previous_reasoning.assessment_summary:
             parts.append(f"Summary: {previous_reasoning.assessment_summary}")
         if parts:
             prev_reasoning_text = "\n".join(parts)
+        if previous_reasoning.contradictions:
+            numbered = [f"{i}. {c}" for i, c in enumerate(previous_reasoning.contradictions, 1)]
+            prev_contradictions_text = "\n".join(numbered)
 
     user_msg = (
         f"## Specialist Assessments\n\n"
@@ -456,7 +457,8 @@ async def run_arbitrator(
         f"## Auth Assessment\n{auth_summary}\n\n"
         f"## Accumulated Allegations\n{allegations_summary}\n\n"
         f"## Current Hypothesis Scores\n{scores_text}\n\n"
-        f"## Previous Reasoning Trace\n{prev_reasoning_text}"
+        f"## Previous Reasoning Trace\n{prev_reasoning_text}\n\n"
+        f"## Previously Detected Contradictions\n{prev_contradictions_text}"
     )
 
     # 2. Run arbitrator — dual output type for diff/patch memory

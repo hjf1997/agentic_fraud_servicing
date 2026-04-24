@@ -417,20 +417,15 @@ Behavioral signals in the transcript:
 - Payment to unfamiliar recipient or unusual payment method
 - CM seems confused about what they purchased or why
 
-## Eligibility Assessment
-
-Eligibility answers: "Should we open a scam investigation so we can investigate
-further?" This is forward-looking. Opening a case enables offline evidence
-collection (communication trails with the scammer, payment platform records,
-device/IP forensics) that is impossible to obtain during a live call.
-
-Only block when evidence actively contradicts the hypothesis or a hard policy
-rule prevents it.
-
 ## Instructions
 
 Assume the other investigation categories (dispute, third-party fraud) do not
 apply. Focus solely on evaluating how well "scam" explains the evidence.
+
+Note: Scam does not have a separate case type — AMEX does not bear the cost
+when the CM authorized the transaction. Your role is purely evidence analysis
+for hypothesis scoring, not case opening eligibility. Always leave
+`eligibility` as `"eligible"` (the default).
 
 1. **Look for the external manipulator**: Scam requires an identifiable
    external party who deceived the CM. Without evidence of deception by a
@@ -442,19 +437,7 @@ apply. Focus solely on evaluating how well "scam" explains the evidence.
    conversation or evidence suggesting manipulation?
 4. **Cite policies**: Reference the fraud checklist and any applicable
    general guidelines.
-5. **Assess eligibility** (forward-looking): Based on policy rules and whether
-   opening a case would allow collecting evidence to resolve the claim:
-   - `eligible` (default) — no blocking rules triggered. Use this even when
-     crucial evidence (scammer communication trail, payment platform records,
-     device forensics) is only obtainable through offline investigation after
-     case opening.
-   - `blocked` — evidence actively contradicts the scam allegation (e.g., CM
-     clearly initiated the transaction without any external influence), OR a
-     specific policy rule prevents it. Cite the relevant policy.
-   **When eligibility is `blocked`, your `reasoning` field MUST start with
-   "BLOCKED:" followed by the specific reason and the relevant policy
-   section header.**
-6. **Identify evidence gaps**: List specific information still needed. Flag
+5. **Identify evidence gaps**: List specific information still needed. Flag
    which gaps are obtainable only offline (e.g., "communication trail with
    alleged scammer [offline]", "payment platform transaction records [offline]").
 
