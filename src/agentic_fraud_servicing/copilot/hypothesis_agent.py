@@ -21,6 +21,7 @@ from agentic_fraud_servicing.copilot.hypothesis_specialists import (
     _add_deduped,
     _remove_by_substring,
 )
+from agentic_fraud_servicing.models.enums import InvestigationCategory
 from agentic_fraud_servicing.providers.retry import run_with_retry
 
 logger = logging.getLogger(__name__)
@@ -29,13 +30,7 @@ logger = logging.getLogger(__name__)
 # Output models
 # ---------------------------------------------------------------------------
 
-_ALL_CATEGORIES = [
-    "THIRD_PARTY_FRAUD",
-    "FIRST_PARTY_FRAUD",
-    "SCAM",
-    "DISPUTE",
-    "UNABLE_TO_DETERMINE",
-]
+_ALL_CATEGORIES = [c.value for c in InvestigationCategory]
 
 
 def _coerce_reasoning_values(v: dict) -> dict[str, str]:
@@ -298,17 +293,6 @@ Provide your assessment as structured output with:
   evidence (consolidate from specialist findings + your own analysis)
 - assessment_summary: 2-4 sentence overall assessment
 """
-
-
-# ---------------------------------------------------------------------------
-# Agent instance
-# ---------------------------------------------------------------------------
-
-hypothesis_agent = Agent(
-    name="hypothesis",
-    instructions=HYPOTHESIS_INSTRUCTIONS,
-    output_type=AgentOutputSchema(HypothesisAssessment, strict_json_schema=False),
-)
 
 
 # ---------------------------------------------------------------------------

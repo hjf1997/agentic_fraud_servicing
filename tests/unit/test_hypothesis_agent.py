@@ -8,7 +8,6 @@ from agentic_fraud_servicing.copilot.hypothesis_agent import (
     HYPOTHESIS_INSTRUCTIONS,
     HypothesisAssessment,
     ReasoningNoteUpdate,
-    hypothesis_agent,
     merge_reasoning_notes,
     run_arbitrator,
 )
@@ -197,16 +196,8 @@ class TestHypothesisAssessment:
 # ---------------------------------------------------------------------------
 
 
-class TestHypothesisAgent:
-    """Tests for the hypothesis_agent Agent instance."""
-
-    def test_agent_name(self):
-        """Agent has the correct name."""
-        assert hypothesis_agent.name == "hypothesis"
-
-    def test_agent_output_type(self):
-        """Agent has HypothesisAssessment as output_type."""
-        assert hypothesis_agent.output_type.output_type is HypothesisAssessment
+class TestHypothesisInstructions:
+    """Tests for the HYPOTHESIS_INSTRUCTIONS prompt."""
 
     def test_instructions_contain_scoring_concepts(self):
         """Instructions reference scoring-specific concepts."""
