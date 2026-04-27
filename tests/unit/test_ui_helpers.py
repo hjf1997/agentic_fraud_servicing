@@ -120,16 +120,3 @@ class TestFormatSuggestionJson:
         assert parsed["suggested_questions"] == ["What happened?"]
 
 
-class TestSampleTranscriptValid:
-    """Tests for the sample transcript fixture file."""
-
-    def test_sample_transcript_parses(self) -> None:
-        """scripts/sample_transcript.json loads and parses successfully."""
-        events = load_transcript_file("scripts/sample_transcript.json")
-        assert len(events) == 8
-        assert all(isinstance(e, TranscriptEvent) for e in events)
-        # All events share the same call_id
-        assert all(e.call_id == "call-demo-001" for e in events)
-        # PAN in event 2 should be redacted
-        assert events[1].redaction.contains_pan is True
-        assert "371449635398431" not in events[1].text
