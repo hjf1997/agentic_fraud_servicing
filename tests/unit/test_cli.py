@@ -11,17 +11,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agentic_fraud_servicing.investigator.case_writer import CasePack
 from agentic_fraud_servicing.models.case import Case, CopilotSuggestion
 from agentic_fraud_servicing.models.enums import AllegationType, CaseStatus
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 from agentic_fraud_servicing.ui.cli import (
-    _format_case_pack_text,
     _format_report_text,
     _format_suggestion_text,
     build_parser,
     cmd_evaluate,
-    cmd_investigate,
     cmd_simulate,
     cmd_view_case,
 )
@@ -41,17 +38,6 @@ def _make_suggestion() -> CopilotSuggestion:
         safety_guidance="Never ask for full PAN or CVV.",
         hypothesis_scores={"FRAUD": 0.7, "DISPUTE": 0.2, "SCAM": 0.1},
         impersonation_risk=0.15,
-    )
-
-
-def _make_case_pack() -> CasePack:
-    """Create a minimal CasePack for testing."""
-    return CasePack(
-        case_summary="Fraud case with contradictions.",
-        timeline=[{"timestamp": "2024-01-01", "description": "Card used at merchant"}],
-        evidence_list=[{"node_id": "n1", "node_type": "TRANSACTION"}],
-        decision_recommendation={"category": "fraud", "confidence": 0.85},
-        investigation_notes=["Merchant conflict detected"],
     )
 
 
@@ -93,13 +79,6 @@ class TestBuildParser:
         assert args.db_dir == "/tmp/db"
         assert args.output == "text"
 
-    def test_investigate_args(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["investigate", "-c", "case-123", "-o", "json"])
-        assert args.command == "investigate"
-        assert args.case_id == "case-123"
-        assert args.output == "json"
-
     def test_view_case_args(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["view-case", "-c", "case-456", "-d", "/data/x"])
@@ -114,7 +93,7 @@ class TestBuildParser:
 
     def test_default_output_json(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["investigate", "-c", "case-1"])
+        args = parser.parse_args(["simulate", "-t", "f.json", "-o", "json"])
         assert args.output == "json"
 
 
@@ -133,19 +112,6 @@ class TestFormatSuggestionText:
         assert "Suggested Questions:" in text
         assert "Risk Flags:" in text
         assert "Safety:" in text
-
-
-class TestFormatCasePackText:
-    """Test text formatting for CasePack."""
-
-    def test_contains_key_sections(self) -> None:
-        text = _format_case_pack_text(_make_case_pack())
-        assert "Case Pack" in text
-        assert "Summary:" in text
-        assert "Timeline:" in text
-        assert "Evidence Items:" in text
-        assert "Decision:" in text
-        assert "Notes:" in text
 
 
 # -- Subcommand handler tests --
@@ -235,61 +201,6 @@ class TestCmdSimulate:
 
         out = capsys.readouterr().out
         assert "Copilot Suggestion" in out
-
-
-class TestCmdInvestigate:
-    """Test the investigate subcommand handler."""
-
-    @pytest.mark.asyncio
-    async def test_investigate_json_output(self, tmp_path, capsys) -> None:
-        """Investigate prints CasePack as JSON."""
-        case_pack = _make_case_pack()
-        mock_orch = MagicMock()
-        mock_orch.investigate = AsyncMock(return_value=case_pack)
-
-        args = argparse.Namespace(
-            case_id="case-001",
-            db_dir=str(tmp_path / "db"),
-            output="json",
-        )
-
-        with (
-            patch("agentic_fraud_servicing.ui.cli.create_gateway"),
-            patch("agentic_fraud_servicing.ui.cli.create_provider"),
-            patch(
-                "agentic_fraud_servicing.ui.cli.InvestigatorOrchestrator",
-                return_value=mock_orch,
-            ),
-        ):
-            await cmd_investigate(args)
-
-        out = capsys.readouterr().out
-        parsed = json.loads(out)
-        assert parsed["case_summary"] == "Fraud case with contradictions."
-
-    @pytest.mark.asyncio
-    async def test_investigate_case_not_found(self, tmp_path) -> None:
-        """Investigate exits with code 1 if the case is not found."""
-        mock_orch = MagicMock()
-        mock_orch.investigate = AsyncMock(side_effect=RuntimeError("Case not found: case-999"))
-
-        args = argparse.Namespace(
-            case_id="case-999",
-            db_dir=str(tmp_path / "db"),
-            output="json",
-        )
-
-        with (
-            patch("agentic_fraud_servicing.ui.cli.create_gateway"),
-            patch("agentic_fraud_servicing.ui.cli.create_provider"),
-            patch(
-                "agentic_fraud_servicing.ui.cli.InvestigatorOrchestrator",
-                return_value=mock_orch,
-            ),
-            pytest.raises(SystemExit) as exc_info,
-        ):
-            await cmd_investigate(args)
-        assert exc_info.value.code == 1
 
 
 class TestCmdViewCase:

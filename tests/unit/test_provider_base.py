@@ -80,53 +80,34 @@ class TestReExports:
 class TestGetModelProvider:
     """Tests for the get_model_provider factory function."""
 
-    def _make_settings(self, provider: str = "bedrock") -> Settings:
+    def _make_settings(self, provider: str = "connectchain") -> Settings:
         """Create a Settings instance with the given provider, bypassing env vars."""
         env = {
             "LLM_PROVIDER": provider,
-            "AWS_PROFILE": "default",
-            "AWS_REGION": "us-east-1",
-            "AWS_BEDROCK_MODEL_ID": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-            "OPENAI_API_KEY": "sk-test-key",
+            "CONNECTCHAIN_MODEL_INDEX": "0",
         }
         with patch.dict("os.environ", env, clear=False):
             return Settings()
 
-    def test_returns_openai_provider_for_openai(self) -> None:
-        """Factory returns OpenAIModelProvider when llm_provider is 'openai'."""
+    def test_returns_connectchain_provider(self) -> None:
+        """Factory returns ConnectChainModelProvider when llm_provider is 'connectchain'."""
         mock_provider = MagicMock(spec=ModelProvider)
         mock_cls = MagicMock(return_value=mock_provider)
         with patch.dict(
             "sys.modules",
             {
-                "agentic_fraud_servicing.providers.openai_provider": MagicMock(
-                    OpenAIModelProvider=mock_cls
+                "agentic_fraud_servicing.providers.connectchain_provider": MagicMock(
+                    ConnectChainModelProvider=mock_cls
                 )
             },
         ):
-            settings = self._make_settings("openai")
-            result = get_model_provider(settings)
-            assert result is mock_provider
-
-    def test_returns_bedrock_provider_for_bedrock(self) -> None:
-        """Factory returns BedrockModelProvider when llm_provider is 'bedrock'."""
-        mock_provider = MagicMock(spec=ModelProvider)
-        mock_cls = MagicMock(return_value=mock_provider)
-        with patch.dict(
-            "sys.modules",
-            {
-                "agentic_fraud_servicing.providers.bedrock_provider": MagicMock(
-                    BedrockModelProvider=mock_cls
-                )
-            },
-        ):
-            settings = self._make_settings("bedrock")
+            settings = self._make_settings("connectchain")
             result = get_model_provider(settings)
             assert result is mock_provider
 
     def test_raises_value_error_for_unknown_provider(self) -> None:
         """Factory raises ValueError for unrecognised provider names."""
-        settings = self._make_settings("bedrock")
+        settings = self._make_settings("connectchain")
         settings.llm_provider = "unknown_provider"
         with pytest.raises(ValueError, match="Unknown LLM provider"):
             get_model_provider(settings)

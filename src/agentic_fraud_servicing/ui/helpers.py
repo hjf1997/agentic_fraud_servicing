@@ -10,7 +10,6 @@ from agentic_fraud_servicing.config import get_settings
 from agentic_fraud_servicing.copilot.langfuse_tracing import init_langfuse
 from agentic_fraud_servicing.gateway.tool_gateway import ToolGateway
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_json
-from agentic_fraud_servicing.investigator.case_writer import CasePack
 from agentic_fraud_servicing.models.case import CopilotSuggestion
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 from agentic_fraud_servicing.providers.base import ModelProvider, get_model_provider
@@ -88,15 +87,3 @@ def format_suggestion_json(suggestion: CopilotSuggestion) -> str:
         JSON string with 2-space indentation.
     """
     return suggestion.model_dump_json(indent=2)
-
-
-def format_case_pack_json(case_pack: CasePack) -> str:
-    """Format a CasePack as indented JSON.
-
-    Args:
-        case_pack: The investigation case pack to format.
-
-    Returns:
-        JSON string with 2-space indentation.
-    """
-    return case_pack.model_dump_json(indent=2)

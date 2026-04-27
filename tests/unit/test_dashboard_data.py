@@ -23,7 +23,6 @@ from agentic_fraud_servicing.ui.dashboard_data import (
     discover_scenarios,
     load_audit_trail,
     load_case,
-    load_case_pack,
     load_copilot_final_state,
     load_copilot_suggestions,
     load_evidence,
@@ -147,27 +146,6 @@ def _seed_traces(db_dir: str) -> None:
         ),
         duration_ms=0.0,
         timestamp=datetime(2026, 3, 9, 12, 2, 0, tzinfo=timezone.utc),
-        status="success",
-    )
-
-    # Investigator case pack
-    store.log_invocation(
-        trace_id="tr-case-pack",
-        case_id=CASE_ID,
-        agent_id="investigator",
-        action="case_pack",
-        input_data="{}",
-        output_data=json.dumps(
-            {
-                "case_summary": "Test case summary",
-                "timeline": [{"timestamp": "2026-03-02", "description": "Purchase"}],
-                "evidence_list": [],
-                "decision_recommendation": {"category": "FIRST_PARTY_FRAUD", "confidence": 0.8},
-                "investigation_notes": ["Note 1"],
-            }
-        ),
-        duration_ms=0.0,
-        timestamp=datetime(2026, 3, 9, 12, 3, 0, tzinfo=timezone.utc),
         status="success",
     )
 
@@ -341,28 +319,6 @@ class TestLoadEvidence:
 
 
 # ---------------------------------------------------------------------------
-# Tests: load_case_pack
-# ---------------------------------------------------------------------------
-
-
-class TestLoadCasePack:
-    def test_loads_case_pack(self, seeded_dir):
-        """Loads investigator CasePack from trace store."""
-        pack = load_case_pack(seeded_dir, CASE_ID)
-        assert pack is not None
-        assert pack["case_summary"] == "Test case summary"
-        assert pack["decision_recommendation"]["category"] == "FIRST_PARTY_FRAUD"
-
-    def test_returns_none_for_missing_db(self, tmp_path):
-        """Returns None when traces.db doesn't exist."""
-        assert load_case_pack(str(tmp_path), CASE_ID) is None
-
-    def test_returns_none_for_wrong_case(self, seeded_dir):
-        """Returns None for a case_id with no case_pack trace."""
-        assert load_case_pack(seeded_dir, "nonexistent-case") is None
-
-
-# ---------------------------------------------------------------------------
 # Tests: load_audit_trail
 # ---------------------------------------------------------------------------
 
@@ -371,8 +327,8 @@ class TestLoadAuditTrail:
     def test_loads_all_traces(self, seeded_dir):
         """Loads all trace records for the case."""
         trail = load_audit_trail(seeded_dir, CASE_ID)
-        # 3 transcript + 3 copilot_suggestion + 1 copilot_final + 1 case_pack = 8
-        assert len(trail) == 8
+        # 3 transcript + 3 copilot_suggestion + 1 copilot_final = 7
+        assert len(trail) == 7
 
     def test_ordered_by_timestamp(self, seeded_dir):
         """Traces are ordered by timestamp ascending."""

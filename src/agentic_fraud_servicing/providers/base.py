@@ -57,34 +57,17 @@ class ProviderError(RuntimeError):
 
 
 def get_model_provider(settings: Settings) -> ModelProvider:
-    """Create and return the appropriate ModelProvider based on config.
-
-    Uses lazy imports to avoid pulling in boto3 or openai at module level.
-    The provider modules are only imported when actually needed.
+    """Create and return the ConnectChain ModelProvider.
 
     Args:
-        settings: Application settings containing llm_provider and credentials.
+        settings: Application settings containing connectchain credentials.
 
     Returns:
-        A ModelProvider instance for the configured LLM backend.
+        A ConnectChainModelProvider instance.
 
     Raises:
-        ValueError: If settings.llm_provider is not a recognised provider name.
+        ValueError: If settings.llm_provider is not 'connectchain'.
     """
-    if settings.llm_provider == "openai":
-        from agentic_fraud_servicing.providers.openai_provider import (
-            OpenAIModelProvider,
-        )
-
-        return OpenAIModelProvider(settings)
-
-    if settings.llm_provider == "bedrock":
-        from agentic_fraud_servicing.providers.bedrock_provider import (
-            BedrockModelProvider,
-        )
-
-        return BedrockModelProvider(settings)
-
     if settings.llm_provider == "connectchain":
         from agentic_fraud_servicing.providers.connectchain_provider import (
             ConnectChainModelProvider,

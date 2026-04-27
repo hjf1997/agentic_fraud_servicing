@@ -21,7 +21,7 @@ Usage:
         --cm-instructions "..." \
         --scenario scam_techvault
 
-Requires valid AWS credentials in .env (LLM_PROVIDER=bedrock).
+Requires ConnectChain configuration in .env (LLM_PROVIDER=connectchain).
 """
 
 import argparse
@@ -33,7 +33,6 @@ import re
 import sys
 import time
 import uuid
-from copy import copy
 from datetime import datetime, timezone
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -55,7 +54,6 @@ from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event 
 from agentic_fraud_servicing.models.case import AuditEntry, Case  # noqa: E402
 from agentic_fraud_servicing.models.enums import CaseStatus  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
-from agentic_fraud_servicing.providers.bedrock_provider import BedrockModelProvider  # noqa: E402
 from agentic_fraud_servicing.ui.helpers import create_gateway  # noqa: E402
 from scripts.simulation_data import (  # noqa: E402
     create_fork_cm_agent,
@@ -77,10 +75,6 @@ DIM = "\033[2m"
 RESET = "\033[0m"
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
-
-# Haiku model for CM/CCP simulators
-_HAIKU_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-
 
 class TeeWriter(io.TextIOBase):
     """Duplicates writes to both the terminal and a plain-text log file."""
@@ -289,13 +283,7 @@ async def run_forked_simulation(
 
     model_provider = get_model_provider(settings)
 
-    if settings.llm_provider == "bedrock":
-        haiku_settings = copy(settings)
-        haiku_settings.aws_bedrock_model_id = _HAIKU_MODEL_ID
-        simulator_provider = BedrockModelProvider(haiku_settings)
-        print(f"  {DIM}Simulator model (CM/CCP): {_HAIKU_MODEL_ID}{RESET}")
-    else:
-        simulator_provider = model_provider
+    simulator_provider = model_provider
 
     # -- Setup gateway and optional evidence seeding --
     if not sim_name:

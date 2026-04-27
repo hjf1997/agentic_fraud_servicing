@@ -433,14 +433,14 @@ class TestSaveReport:
 
 
 class TestLiveEvaluation:
-    """Live evaluation test requiring real Bedrock credentials."""
+    """Live evaluation test requiring real LLM credentials."""
 
     @pytest.mark.live
     async def test_evaluation_pipeline_live(self, gateway_factory, tmp_path):
         """End-to-end evaluation pipeline test with real LLM provider.
 
-        Requires AWS Bedrock credentials configured in .env
-        (LLM_PROVIDER=bedrock, AWS_PROFILE, AWS_REGION, AWS_BEDROCK_MODEL_ID).
+        Requires ConnectChain credentials configured in .env
+        (LLM_PROVIDER=connectchain, CONNECTCHAIN_MODEL_INDEX).
         Skipped by default — run with: pytest -m live
         """
         from agentic_fraud_servicing.copilot.orchestrator import CopilotOrchestrator

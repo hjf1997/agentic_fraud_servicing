@@ -20,7 +20,6 @@ from agentic_fraud_servicing.ui.dashboard_data import (
     discover_scenarios,
     load_audit_trail,
     load_case,
-    load_case_pack,
     load_copilot_final_state,
     load_copilot_suggestions,
     load_evidence,
@@ -1037,133 +1036,6 @@ def _evidence_node_summary(node: dict) -> str:
     return "\n".join(parts) if parts else json.dumps(node, default=str)
 
 
-def _build_investigation_html(case_pack: dict | None) -> str:
-    """Build HTML for the Investigation Results section."""
-    if not case_pack:
-        return '<div class="card"><p>Investigation not yet completed.</p></div>'
-
-    # Case summary narrative
-    summary = case_pack.get("case_summary", "")
-    summary_paragraphs = "".join(f"<p>{p.strip()}</p>" for p in summary.split("\n\n") if p.strip())
-
-    # Decision recommendation card
-    rec = case_pack.get("decision_recommendation", {})
-    category = rec.get("category", "UNKNOWN")
-    confidence = rec.get("confidence", 0.0)
-    confidence_pct = int(confidence * 100)
-
-    # Confidence bar color
-    bar_color = AMEX_BLUE if confidence >= 0.7 else "#F57C00" if confidence >= 0.4 else "#D32F2F"
-
-    # Top factors
-    factors_html = ""
-    for f in rec.get("top_factors", []):
-        weight = f.get("weight", 0)
-        weight_pct = int(weight * 100)
-        factors_html += (
-            f'<li style="margin-bottom:8px;">'
-            f'<span style="font-weight:600;">{f.get("factor", "")}</span>'
-            f'<br/><span style="font-size:0.85em; color:#666;">'
-            f"Evidence: {f.get('evidence_ref', 'N/A')} · "
-            f'Weight: <span style="background:{AMEX_BLUE}; color:#fff; '
-            f'padding:1px 6px; border-radius:8px; font-size:0.85em;">'
-            f"{weight_pct}%</span></span></li>"
-        )
-
-    # Uncertainties
-    uncert_html = "".join(f"<li>{u}</li>" for u in rec.get("uncertainties", []))
-
-    # Suggested actions
-    actions_html = "".join(f"<li>{a}</li>" for a in rec.get("suggested_actions", []))
-
-    # Required approvals
-    approvals = rec.get("required_approvals", [])
-    approvals_html = "".join(
-        f'<span class="badge badge-investigating" style="margin-right:6px;">'
-        f"{a.replace('_', ' ').title()}</span>"
-        for a in approvals
-    )
-
-    # Timeline
-    timeline = case_pack.get("timeline", [])
-    timeline_rows = ""
-    for entry in timeline:
-        source = entry.get("source", "")
-        src_class = "fact-row" if source == "FACT" else "allegation-row"
-        timeline_rows += (
-            f'<tr class="{src_class}">'
-            f'<td style="padding:6px 10px; white-space:nowrap;">'
-            f"{entry.get('timestamp', 'N/A')[:19]}</td>"
-            f'<td style="padding:6px 10px;">{entry.get("event_type", "N/A")}</td>'
-            f'<td style="padding:6px 10px;">{entry.get("description", "")}</td>'
-            f'<td style="padding:6px 10px;">{source}</td></tr>'
-        )
-
-    timeline_html = ""
-    if timeline_rows:
-        timeline_html = f"""
-        <h4 style="color:{AMEX_NAVY}; margin-top:20px;">
-          Investigation Timeline ({len(timeline)} events)</h4>
-        <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
-          <thead>
-            <tr style="background:{AMEX_BLUE}; color:#fff;">
-              <th style="padding:6px 10px; text-align:left;">Timestamp</th>
-              <th style="padding:6px 10px; text-align:left;">Event Type</th>
-              <th style="padding:6px 10px; text-align:left;">Description</th>
-              <th style="padding:6px 10px; text-align:left;">Source</th>
-            </tr>
-          </thead>
-          <tbody>{timeline_rows}</tbody>
-        </table>"""
-
-    # Investigation notes
-    notes = case_pack.get("investigation_notes", [])
-    notes_html = ""
-    if notes:
-        notes_items = "".join(f"<li style='margin-bottom:6px;'>{n}</li>" for n in notes)
-        notes_html = f"""
-        <h4 style="color:{AMEX_NAVY}; margin-top:20px;">Investigation Notes</h4>
-        <ul style="padding-left:20px;">{notes_items}</ul>"""
-
-    return f"""<div class="card">
-      <h4 style="color:{AMEX_NAVY}; margin-top:0;">Case Summary</h4>
-      <div style="line-height:1.7; color:#333;">{summary_paragraphs}</div>
-
-      <div style="margin-top:20px; padding:20px; background:{AMEX_BG};
-                  border-radius:8px; border-left:4px solid {AMEX_BLUE};">
-        <h4 style="color:{AMEX_NAVY}; margin-top:0;">Decision Recommendation</h4>
-        <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px;">
-          <div>{_category_badge(category)}</div>
-          <div style="flex:1;">
-            <div style="font-size:0.85em; color:#666; margin-bottom:4px;">
-              Confidence: {confidence_pct}%</div>
-            <div style="background:#E0E4EA; border-radius:6px; height:16px;
-                        overflow:hidden; display:grid;
-                        grid-template-columns:{confidence_pct}fr {100 - confidence_pct}fr;">
-              <div style="background:{bar_color}; border-radius:6px;"></div>
-              <div></div>
-            </div>
-          </div>
-        </div>
-
-        <h5 style="color:{AMEX_NAVY}; margin:12px 0 6px;">Top Factors</h5>
-        <ol style="padding-left:20px;">{factors_html}</ol>
-
-        <h5 style="color:{AMEX_NAVY}; margin:12px 0 6px;">Uncertainties</h5>
-        <ul style="padding-left:20px; color:#856404;">{uncert_html}</ul>
-
-        <h5 style="color:{AMEX_NAVY}; margin:12px 0 6px;">Suggested Actions</h5>
-        <ol style="padding-left:20px;">{actions_html}</ol>
-
-        <h5 style="color:{AMEX_NAVY}; margin:12px 0 6px;">Required Approvals</h5>
-        <div>{approvals_html if approvals_html else "None"}</div>
-      </div>
-
-      {timeline_html}
-      {notes_html}
-    </div>"""
-
-
 def _build_audit_trail_html(traces: list[dict]) -> str:
     """Build HTML for the Audit Trail section."""
     if not traces:
@@ -1212,11 +1084,11 @@ def _build_audit_trail_html(traces: list[dict]) -> str:
 def _load_scenario(scenario_name: str) -> tuple:
     """Load all data for a scenario and return component updates.
 
-    Returns a tuple of 10 items matching the output components.
+    Returns a tuple of 9 items matching the output components.
     """
     if not scenario_name:
         empty = '<div class="card"><p>Select a scenario and click Load.</p></div>'
-        return empty, empty, None, None, empty, empty, empty, empty, empty, empty
+        return empty, empty, None, None, empty, empty, empty, empty, empty
 
     db_dir = os.path.join(BASE_DIR, scenario_name)
 
@@ -1229,7 +1101,6 @@ def _load_scenario(scenario_name: str) -> tuple:
     suggestions = load_copilot_suggestions(db_dir, case_id) if case_id else []
     final_state = load_copilot_final_state(db_dir, case_id) if case_id else None
     nodes, edges = load_evidence(db_dir, case_id) if case_id else ([], [])
-    case_pack = load_case_pack(db_dir, case_id) if case_id else None
     traces = load_audit_trail(db_dir, case_id) if case_id else []
 
     # Build HTML / charts
@@ -1243,7 +1114,6 @@ def _load_scenario(scenario_name: str) -> tuple:
         _build_copilot_turns_html(suggestions),
         _build_evidence_graph_interactive(nodes, edges),
         _build_evidence_html(nodes, edges),
-        _build_investigation_html(case_pack),
         _build_audit_trail_html(traces),
     )
 
@@ -1316,11 +1186,7 @@ def create_dashboard_app() -> gr.Blocks:
         with gr.Accordion("Evidence Tables (Detail View)", open=False):
             evidence_html = gr.HTML()
 
-        # Section 5: Investigation Results
-        gr.HTML('<div class="section-header" style="color:white;">Investigation Results</div>')
-        investigation_html = gr.HTML()
-
-        # Section 6: Audit Trail (collapsible)
+        # Section 5: Audit Trail (collapsible)
         with gr.Accordion("Audit Trail", open=False):
             audit_trail_html = gr.HTML()
 
@@ -1338,7 +1204,6 @@ def create_dashboard_app() -> gr.Blocks:
                 copilot_turns_html,
                 evidence_graph_html,
                 evidence_html,
-                investigation_html,
                 audit_trail_html,
             ],
         )

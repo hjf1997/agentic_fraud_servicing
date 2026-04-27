@@ -8,7 +8,6 @@ import pytest
 from agentic_fraud_servicing.ui.gradio_app import (
     create_app,
     process_transcript,
-    run_investigation,
 )
 
 
@@ -89,46 +88,3 @@ class TestProcessTranscript:
         event = call_args[0][0]
         assert "371449635398431" not in event.text
         assert "[PAN_REDACTED]" in event.text
-
-
-class TestRunInvestigation:
-    """Tests for the run_investigation callback."""
-
-    async def test_returns_case_pack_dict(self):
-        """Successful investigation returns a CasePack dict."""
-        case_pack = MagicMock()
-        case_pack.model_dump.return_value = {
-            "case_summary": "test summary",
-            "timeline": [],
-        }
-
-        orchestrator = AsyncMock()
-        orchestrator.investigate.return_value = case_pack
-
-        with (
-            patch("agentic_fraud_servicing.ui.gradio_app.create_gateway"),
-            patch("agentic_fraud_servicing.ui.gradio_app.create_provider"),
-            patch("agentic_fraud_servicing.ui.gradio_app.InvestigatorOrchestrator") as mock_cls,
-        ):
-            mock_cls.return_value = orchestrator
-            result = await run_investigation("case-123", "data/test")
-
-        assert isinstance(result, dict)
-        assert result["case_summary"] == "test summary"
-
-    async def test_error_returns_error_dict(self):
-        """RuntimeError from orchestrator returns an error dict."""
-        orchestrator = AsyncMock()
-        orchestrator.investigate.side_effect = RuntimeError("case not found")
-
-        with (
-            patch("agentic_fraud_servicing.ui.gradio_app.create_gateway"),
-            patch("agentic_fraud_servicing.ui.gradio_app.create_provider"),
-            patch("agentic_fraud_servicing.ui.gradio_app.InvestigatorOrchestrator") as mock_cls,
-        ):
-            mock_cls.return_value = orchestrator
-            result = await run_investigation("nonexistent", "data/test")
-
-        assert isinstance(result, dict)
-        assert "error" in result
-        assert "case not found" in result["error"]

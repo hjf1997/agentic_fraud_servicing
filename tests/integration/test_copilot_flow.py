@@ -501,14 +501,14 @@ class TestPipelineOptimizations:
 
 
 class TestLiveTest:
-    """Live integration test requiring real Bedrock credentials."""
+    """Live integration test requiring real LLM credentials."""
 
     @pytest.mark.live
     async def test_copilot_flow_live(self, gateway_factory, tmp_path):
         """End-to-end copilot test with real LLM provider.
 
-        Requires AWS Bedrock credentials configured in .env
-        (LLM_PROVIDER=bedrock, AWS_PROFILE, AWS_REGION, AWS_BEDROCK_MODEL_ID).
+        Requires ConnectChain credentials configured in .env
+        (LLM_PROVIDER=connectchain, CONNECTCHAIN_MODEL_INDEX).
         Skipped by default — run with: pytest -m live
 
         Loads the sample transcript, creates a real provider, and processes

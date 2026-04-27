@@ -1,16 +1,16 @@
-"""Full end-to-end simulation runner with live Bedrock LLM.
+"""Full end-to-end simulation runner with live LLM.
 
 Supports multiple simulation scenarios via the --scenario flag. Each scenario
 provides its own evidence data, cardmember agent, and system events. The runner
 handles the shared simulation loop: CCP/CM conversation, copilot processing,
-investigator analysis, and verification.
+and verification.
 
 Usage:
     python scripts/run_simulation.py --scenario scam_techvault
     python scripts/run_simulation.py --scenario doordash_fraud
     python scripts/run_simulation.py --list
 
-Requires valid AWS credentials in .env (LLM_PROVIDER=bedrock).
+Requires ConnectChain configuration in .env (LLM_PROVIDER=connectchain).
 """
 
 import argparse
@@ -31,7 +31,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 # Suppress "OPENAI_API_KEY is not set, skipping trace export" noise from the
-# Agents SDK when using Bedrock provider instead of OpenAI.
+# Agents SDK when not using direct OpenAI.
 os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 
 # Auto-discover and register all scenario_*.py modules
@@ -51,9 +51,6 @@ from agentic_fraud_servicing.gateway.tools.write_tools import (  # noqa: E402
 )
 from agentic_fraud_servicing.ingestion.redaction import redact_all  # noqa: E402
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_event  # noqa: E402
-from agentic_fraud_servicing.investigator.orchestrator import (
-    InvestigatorOrchestrator,  # noqa: E402
-)
 from agentic_fraud_servicing.models.case import CopilotSuggestion  # noqa: E402
 from agentic_fraud_servicing.models.enums import (  # noqa: E402
     AllegationDetailType,
@@ -63,7 +60,6 @@ from agentic_fraud_servicing.models.enums import (  # noqa: E402
 )
 from agentic_fraud_servicing.models.evidence import AllegationStatement, EvidenceEdge  # noqa: E402
 from agentic_fraud_servicing.providers.base import get_model_provider  # noqa: E402
-from agentic_fraud_servicing.providers.bedrock_provider import BedrockModelProvider  # noqa: E402
 from agentic_fraud_servicing.ui.helpers import create_gateway, load_transcript_file  # noqa: E402
 from scripts.simulation_data import (  # noqa: E402
     DisputeAction,
@@ -88,8 +84,6 @@ RESET = "\033[0m"
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
-# Haiku model for CM/CCP simulators (cheaper and faster than Sonnet)
-_HAIKU_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 class TeeWriter(io.TextIOBase):
@@ -494,7 +488,7 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
     wall_start = time.perf_counter()
 
     # -- Banner --
-    mode_label = "Transcript Replay" if transcript_path else "Live Bedrock LLM"
+    mode_label = "Transcript Replay" if transcript_path else "Live LLM"
     print(f"\n{BOLD}{CYAN}{'=' * 60}{RESET}")
     print(f"{BOLD}{CYAN}  AMEX Fraud Servicing — Full E2E Simulation{RESET}")
     print(f"{BOLD}{CYAN}  ({mode_label}){RESET}")
@@ -507,37 +501,21 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
         settings = get_settings()
     except Exception as exc:
         print(f"\n{RED}Error loading settings: {exc}{RESET}")
-        print(f"{RED}Ensure .env is configured with LLM_PROVIDER, AWS_PROFILE, etc.{RESET}")
+        print(f"{RED}Ensure .env is configured with LLM_PROVIDER, CONNECTCHAIN_MODEL_INDEX, etc.{RESET}")
         sys.exit(1)
-
-    if settings.llm_provider != "bedrock":
-        print(
-            f"\n{YELLOW}Warning: LLM_PROVIDER is '{settings.llm_provider}', "
-            f"not 'bedrock'. Proceeding anyway.{RESET}"
-        )
 
     try:
         model_provider = get_model_provider(settings)
     except Exception as exc:
         print(f"\n{RED}Error creating model provider: {exc}{RESET}")
-        print(f"{RED}Check AWS credentials and Bedrock model configuration.{RESET}")
+        print(f"{RED}Check ConnectChain configuration.{RESET}")
         sys.exit(1)
 
     # Create simulator provider and CM agent only for generate mode (no transcript)
     simulator_provider = None
     scenario_cm_agent = None
     if not transcript_path:
-        # Faster/cheaper Haiku provider for CM/CCP dialogue simulators.
-        # Specialist agents (triage, hypothesis, etc.) still use the main provider.
-        if settings.llm_provider == "bedrock":
-            from copy import copy
-
-            haiku_settings = copy(settings)
-            haiku_settings.aws_bedrock_model_id = _HAIKU_MODEL_ID
-            simulator_provider = BedrockModelProvider(haiku_settings)
-            print(f"  {DIM}Simulator model (CM/CCP): {_HAIKU_MODEL_ID}{RESET}")
-        else:
-            simulator_provider = model_provider
+        simulator_provider = model_provider
         scenario_cm_agent = Agent(name="cm_simulator", instructions=scenario.cm_system_prompt)
 
     db_dir = f"data/simulation/{scenario.name}"
@@ -776,59 +754,9 @@ async def run_scenario(scenario: Scenario, transcript_path: str | None = None) -
     )
 
     # ===================================================================
-    # Phase 3: Investigator — Post-Call Analysis
+    # Phase 3: Post-Simulation Verification
     # ===================================================================
-    _print_header("Phase 3: Investigator — Post-Call Analysis via Bedrock")
-
-    investigator = InvestigatorOrchestrator(gateway, model_provider)
-    try:
-        case_pack = await investigator.investigate(scenario.case_id)
-    except Exception as exc:
-        print(f"\n{RED}Investigation failed: {exc}{RESET}")
-        print(f"{DIM}Continuing to verification phase...{RESET}")
-        case_pack = None
-
-    if case_pack is not None:
-        print(f"\n{BOLD}Case Summary:{RESET}")
-        print(f"  {case_pack.case_summary}")
-
-        print(f"\n{BOLD}Timeline ({len(case_pack.timeline)} events):{RESET}")
-        for entry in case_pack.timeline[:10]:
-            ts = entry.get("timestamp", "?")
-            desc = entry.get("description", "?")
-            src = entry.get("source", "?")
-            print(f"  [{ts}] {desc} ({src})")
-
-        print(f"\n{BOLD}Evidence List ({len(case_pack.evidence_list)} items):{RESET}")
-        for item in case_pack.evidence_list[:10]:
-            ntype = item.get("node_type", "?")
-            stype = item.get("source_type", "?")
-            summary = item.get("summary", "?")
-            print(f"  [{stype}] {ntype}: {summary[:80]}")
-
-        print(f"\n{BOLD}Decision Recommendation:{RESET}")
-        rec = case_pack.decision_recommendation
-        print(f"  {json.dumps(rec, indent=2, default=str)}")
-
-        if case_pack.investigation_notes:
-            print(f"\n{BOLD}Investigation Notes:{RESET}")
-            for note in case_pack.investigation_notes[:5]:
-                print(f"  - {note}")
-
-        # Persist CasePack for dashboard
-        _persist_trace(
-            gateway,
-            scenario.case_id,
-            "investigator",
-            "case_pack",
-            "{}",
-            case_pack.model_dump_json(),
-        )
-
-    # ===================================================================
-    # Phase 4: Post-Simulation Verification
-    # ===================================================================
-    _print_header("Phase 4: Post-Simulation Verification")
+    _print_header("Phase 3: Post-Simulation Verification")
 
     final_case = gateway.case_store.get_case(scenario.case_id)
     if final_case:

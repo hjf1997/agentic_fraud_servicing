@@ -1,10 +1,8 @@
 """CLI interface for the agentic fraud servicing system.
 
-Provides four subcommands:
+Provides three subcommands:
   simulate   — Simulate a call by feeding a transcript file through the
                copilot pipeline and printing CopilotSuggestion output.
-  investigate — Run the post-call investigator on an existing case and
-                print the resulting CasePack.
   view-case  — Look up and display a case from the local database.
   evaluate   — Load simulation results from DB, run the 8-dimension
                evaluation, and output the EvaluationReport.
@@ -26,11 +24,9 @@ from agentic_fraud_servicing.evaluation.report import (
     save_run,
 )
 from agentic_fraud_servicing.ingestion.transcript import parse_transcript_json
-from agentic_fraud_servicing.investigator.orchestrator import InvestigatorOrchestrator
 from agentic_fraud_servicing.ui.helpers import (
     create_gateway,
     create_provider,
-    format_case_pack_json,
     format_suggestion_json,
     load_transcript_file,
 )
@@ -77,33 +73,6 @@ def _format_suggestion_text(suggestion) -> str:
     return "\n".join(lines)
 
 
-def _format_case_pack_text(case_pack) -> str:
-    """Format a CasePack as structured plain text."""
-    lines = [
-        "--- Investigation Case Pack ---",
-        f"Summary: {case_pack.case_summary}",
-    ]
-    if case_pack.timeline:
-        lines.append("Timeline:")
-        for entry in case_pack.timeline:
-            ts = entry.get("timestamp", "?")
-            desc = entry.get("description", "")
-            lines.append(f"  [{ts}] {desc}")
-    if case_pack.evidence_list:
-        lines.append(f"Evidence Items: {len(case_pack.evidence_list)}")
-    if case_pack.decision_recommendation:
-        rec = case_pack.decision_recommendation
-        lines.append(
-            f"Decision: category={rec.get('category', '?')}, "
-            f"confidence={rec.get('confidence', '?')}"
-        )
-    if case_pack.investigation_notes:
-        lines.append("Notes:")
-        for note in case_pack.investigation_notes:
-            lines.append(f"  - {note}")
-    return "\n".join(lines)
-
-
 # -- Subcommand handlers --
 
 
@@ -137,24 +106,6 @@ async def cmd_simulate(args: argparse.Namespace) -> None:
             else:
                 print(_format_suggestion_text(suggestion))
             print()
-
-
-async def cmd_investigate(args: argparse.Namespace) -> None:
-    """Run the post-call investigator on a case."""
-    gateway = create_gateway(args.db_dir)
-    provider = create_provider()
-    orchestrator = InvestigatorOrchestrator(gateway, provider)
-
-    try:
-        case_pack = await orchestrator.investigate(args.case_id)
-    except RuntimeError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    if args.output == "json":
-        print(format_case_pack_json(case_pack))
-    else:
-        print(_format_case_pack_text(case_pack))
 
 
 def cmd_view_case(args: argparse.Namespace) -> None:
@@ -376,14 +327,6 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output", choices=["json", "text"], default="json", help="Output format"
     )
 
-    # investigate
-    inv = subparsers.add_parser("investigate", help="Run post-call investigation on a case")
-    inv.add_argument("-c", "--case-id", required=True, help="Case ID to investigate")
-    inv.add_argument("-d", "--db-dir", default="data/cli", help="Directory for SQLite databases")
-    inv.add_argument(
-        "-o", "--output", choices=["json", "text"], default="json", help="Output format"
-    )
-
     # view-case
     vc = subparsers.add_parser("view-case", help="View case details from the database")
     vc.add_argument("-c", "--case-id", required=True, help="Case ID to view")
@@ -414,8 +357,6 @@ def main() -> None:
 
     if args.command == "simulate":
         asyncio.run(cmd_simulate(args))
-    elif args.command == "investigate":
-        asyncio.run(cmd_investigate(args))
     elif args.command == "view-case":
         cmd_view_case(args)
     elif args.command == "evaluate":

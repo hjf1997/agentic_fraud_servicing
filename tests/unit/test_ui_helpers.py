@@ -6,13 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agentic_fraud_servicing.investigator.case_writer import CasePack
 from agentic_fraud_servicing.models.case import CopilotSuggestion
 from agentic_fraud_servicing.models.transcript import TranscriptEvent
 from agentic_fraud_servicing.ui.helpers import (
     create_gateway,
     create_provider,
-    format_case_pack_json,
     format_suggestion_json,
     load_transcript_file,
 )
@@ -120,21 +118,6 @@ class TestFormatSuggestionJson:
         parsed = json.loads(result)
         assert parsed["call_id"] == "c1"
         assert parsed["suggested_questions"] == ["What happened?"]
-
-
-class TestFormatCasePackJson:
-    """Tests for format_case_pack_json."""
-
-    def test_formats_as_valid_json(self) -> None:
-        """CasePack is serialized to valid indented JSON."""
-        pack = CasePack(
-            case_summary="Test summary",
-            investigation_notes=["Note 1"],
-        )
-        result = format_case_pack_json(pack)
-        parsed = json.loads(result)
-        assert parsed["case_summary"] == "Test summary"
-        assert parsed["investigation_notes"] == ["Note 1"]
 
 
 class TestSampleTranscriptValid:

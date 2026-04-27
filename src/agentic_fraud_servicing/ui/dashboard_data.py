@@ -204,38 +204,6 @@ def load_evidence(db_dir: str, case_id: str) -> tuple[list[dict], list[dict]]:
     return nodes, edges
 
 
-def load_case_pack(db_dir: str, case_id: str) -> dict | None:
-    """Load the investigator CasePack from the trace store.
-
-    Filters for agent_id='investigator' and action='case_pack'.
-
-    Args:
-        db_dir: Directory containing traces.db.
-        case_id: The case to load the case pack for.
-
-    Returns:
-        CasePack dict or None if not found.
-    """
-    db_path = os.path.join(db_dir, "traces.db")
-    if not os.path.isfile(db_path):
-        return None
-
-    store = TraceStore(db_path)
-    try:
-        traces = store.get_traces_by_case(case_id)
-    finally:
-        store.close()
-
-    for trace in traces:
-        if trace.get("agent_id") == "investigator" and trace.get("action") == "case_pack":
-            try:
-                return json.loads(trace["output_data"])
-            except (json.JSONDecodeError, KeyError):
-                return None
-
-    return None
-
-
 def load_audit_trail(db_dir: str, case_id: str) -> list[dict]:
     """Load all trace records for a case (the full audit trail).
 

@@ -39,14 +39,12 @@ from agentic_fraud_servicing.ui.dashboard import (  # noqa: E402
     _build_copilot_turns_html,
     _build_evidence_graph_interactive,
     _build_evidence_html,
-    _build_investigation_html,
     _build_transcript_html,
 )
 from agentic_fraud_servicing.ui.dashboard_data import (  # noqa: E402
     discover_scenarios,
     load_audit_trail,
     load_case,
-    load_case_pack,
     load_copilot_final_state,
     load_copilot_suggestions,
     load_evidence,
@@ -316,7 +314,6 @@ def _build_full_report(scenario_name: str) -> str:
     suggestions = load_copilot_suggestions(db_dir, case_id) if case_id else []
     final_state = load_copilot_final_state(db_dir, case_id) if case_id else None
     nodes, edges = load_evidence(db_dir, case_id) if case_id else ([], [])
-    case_pack = load_case_pack(db_dir, case_id) if case_id else None
     traces = load_audit_trail(db_dir, case_id) if case_id else []
 
     # Build section HTML
@@ -329,7 +326,6 @@ def _build_full_report(scenario_name: str) -> str:
     copilot_turns = _build_copilot_turns_html(suggestions)
     evidence_graph = _render_evidence_graph_inline(nodes, edges)
     evidence_tables = _build_evidence_html(nodes, edges)
-    investigation = _build_investigation_html(case_pack)
     audit_trail = _build_audit_trail_html(traces)
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -446,11 +442,7 @@ def _build_full_report(scenario_name: str) -> str:
       {evidence_tables}
     </details>
 
-    <!-- Section 5: Investigation Results -->
-    <div class="section-header">Investigation Results</div>
-    {investigation}
-
-    <!-- Section 6: Audit Trail -->
+    <!-- Section 5: Audit Trail -->
     <details style="margin-bottom:16px;">
       <summary style="cursor:pointer; font-weight:600; color:{AMEX_BLUE};
                        padding:10px; background:{AMEX_WHITE}; border:1px solid #E0E4EA;

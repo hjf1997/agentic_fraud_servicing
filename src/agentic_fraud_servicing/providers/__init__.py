@@ -12,20 +12,16 @@ from agentic_fraud_servicing.providers.base import (
     ProviderError,
     get_model_provider,
 )
-from agentic_fraud_servicing.providers.bedrock_provider import (
-    BedrockModel,
-    BedrockModelProvider,
+from agentic_fraud_servicing.providers.connectchain_provider import (
+    ConnectChainModelProvider,
 )
-from agentic_fraud_servicing.providers.openai_provider import OpenAIModelProvider
 
 __all__ = [
-    "BedrockModel",
-    "BedrockModelProvider",
+    "ConnectChainModelProvider",
     "Model",
     "ModelProvider",
     "ModelResponse",
     "ModelSettings",
-    "OpenAIModelProvider",
     "ProviderError",
     "get_model_provider",
 ]

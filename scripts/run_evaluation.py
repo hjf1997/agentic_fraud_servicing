@@ -9,8 +9,8 @@ Usage:
     python scripts/run_evaluation.py --scenario scam_techvault --data-dir data/simulation/scam_techvault
     python scripts/run_evaluation.py --list
 
-Requires valid AWS credentials in .env (LLM_PROVIDER=bedrock) for LLM-powered
-evaluators.
+Requires ConnectChain configuration in .env (LLM_PROVIDER=connectchain) for
+LLM-powered evaluators.
 """
 
 import argparse
@@ -31,7 +31,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 # Suppress "OPENAI_API_KEY is not set, skipping trace export" noise from the
-# Agents SDK when using Bedrock provider instead of OpenAI.
+# Agents SDK when not using direct OpenAI.
 os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 
 # Configure logging so that:
@@ -307,14 +307,14 @@ async def run_evaluation(scenario_name: str, data_dir: str, transcript_path: str
         settings = get_settings()
     except Exception as exc:
         print(f"\n{RED}Error loading settings: {exc}{RESET}")
-        print(f"{RED}Ensure .env is configured with LLM_PROVIDER, AWS_PROFILE, etc.{RESET}")
+        print(f"{RED}Ensure .env is configured with LLM_PROVIDER, CONNECTCHAIN_MODEL_INDEX, etc.{RESET}")
         sys.exit(1)
 
     try:
         model_provider = get_model_provider(settings)
     except Exception as exc:
         print(f"\n{RED}Error creating model provider: {exc}{RESET}")
-        print(f"{RED}Check AWS credentials and Bedrock model configuration.{RESET}")
+        print(f"{RED}Check ConnectChain configuration.{RESET}")
         sys.exit(1)
 
     # ===================================================================
