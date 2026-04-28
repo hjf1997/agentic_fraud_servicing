@@ -8,7 +8,6 @@ import pytest
 
 from agentic_fraud_servicing.copilot.hypothesis_specialists import SpecialistAssessment
 from agentic_fraud_servicing.copilot.logit_scorer import (
-    _FLOOR_PROB,
     _LOGIT_BIAS_BOOST,
     _UNIFORM_SCORES,
     UTD_MAX_MASS,
