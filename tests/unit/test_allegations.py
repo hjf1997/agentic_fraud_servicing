@@ -15,39 +15,65 @@ from agentic_fraud_servicing.models.enums import AllegationDetailType
 class TestAllegationDetailType:
     """Tests for the AllegationDetailType enum."""
 
-    FRAUD_TYPES = [
+    TRANSACTION_TYPES = [
         "UNRECOGNIZED_TRANSACTION",
         "CARD_NOT_PRESENT_FRAUD",
-        "LOST_STOLEN_CARD",
-        "IDENTITY_VERIFICATION",
+        "DUPLICATE_CHARGE",
+        "INCORRECT_AMOUNT",
+        "RECURRING_AFTER_CANCEL",
+    ]
+
+    IDENTITY_ACCESS_TYPES = [
         "ACCOUNT_TAKEOVER",
-        "LOCATION_CLAIM",
+        "IDENTITY_VERIFICATION",
         "CARD_POSSESSION",
-        "MERCHANT_FRAUD",
+        "LOST_STOLEN_CARD",
+    ]
+
+    EVIDENCE_CONTEXT_TYPES = [
+        "LOCATION_CLAIM",
         "SPENDING_PATTERN",
     ]
 
-    DISPUTE_TYPES = [
+    MERCHANT_SERVICE_TYPES = [
         "GOODS_NOT_RECEIVED",
-        "DUPLICATE_CHARGE",
-        "RETURN_NOT_CREDITED",
-        "INCORRECT_AMOUNT",
         "GOODS_NOT_AS_DESCRIBED",
-        "RECURRING_AFTER_CANCEL",
         "SERVICES_NOT_RENDERED",
+        "RETURN_NOT_CREDITED",
         "DEFECTIVE_MERCHANDISE",
+        "MERCHANT_FRAUD",
     ]
 
-    def test_has_exactly_17_members(self):
-        assert len(AllegationDetailType) == 17
+    SOCIAL_ENGINEERING_TYPES = [
+        "UNSOLICITED_CONTACT",
+        "AUTHORITY_IMPERSONATION",
+        "PRESSURE_OR_THREAT",
+        "DIRECTED_PAYMENT",
+        "DECEPTIVE_OFFER",
+    ]
 
-    def test_has_9_fraud_types(self):
-        for name in self.FRAUD_TYPES:
-            assert hasattr(AllegationDetailType, name), f"Missing fraud type: {name}"
+    def test_has_exactly_22_members(self):
+        assert len(AllegationDetailType) == 22
 
-    def test_has_8_dispute_types(self):
-        for name in self.DISPUTE_TYPES:
-            assert hasattr(AllegationDetailType, name), f"Missing dispute type: {name}"
+    def test_has_transaction_types(self):
+        for name in self.TRANSACTION_TYPES:
+            assert hasattr(AllegationDetailType, name), f"Missing type: {name}"
+
+    def test_has_identity_access_types(self):
+        for name in self.IDENTITY_ACCESS_TYPES:
+            assert hasattr(AllegationDetailType, name), f"Missing type: {name}"
+
+    def test_has_evidence_context_types(self):
+        for name in self.EVIDENCE_CONTEXT_TYPES:
+            assert hasattr(AllegationDetailType, name), f"Missing type: {name}"
+
+    def test_has_merchant_service_types(self):
+        for name in self.MERCHANT_SERVICE_TYPES:
+            assert hasattr(AllegationDetailType, name), f"Missing type: {name}"
+
+    def test_has_social_engineering_types(self):
+        for name in self.SOCIAL_ENGINEERING_TYPES:
+            assert hasattr(AllegationDetailType, name), f"Missing type: {name}"
 
     def test_str_mixin(self):
         assert AllegationDetailType.UNRECOGNIZED_TRANSACTION == "UNRECOGNIZED_TRANSACTION"

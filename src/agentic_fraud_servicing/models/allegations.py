@@ -16,7 +16,7 @@ class AllegationExtraction(BaseModel):
     """A single allegation extracted from the conversation.
 
     Represents what the cardmember alleged — not conclusions about what
-    happened. Each allegation has a detail type from the 17-value
+    happened. Each allegation has a detail type from the 22-value
     AllegationDetailType taxonomy, a natural-language description,
     structured entities, and a confidence score.
     """

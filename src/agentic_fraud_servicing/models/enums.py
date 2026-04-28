@@ -237,29 +237,42 @@ class TransactionOutcome(str, Enum):
 
 
 class AllegationDetailType(str, Enum):
-    """Tier 1 allegation detail types for granular extraction.
+    """Allegation detail types for granular extraction.
 
-    9 fraud types + 8 dispute types covering 100% of fraud calls
-    and 95% of dispute calls.
+    22 types organized by what the CM describes (not by investigation
+    category). Types are grouped into 5 neutral categories: transaction
+    claims, identity & access claims, evidence & context claims,
+    merchant & service claims, and social engineering claims.
     """
 
-    # Fraud Tier 1 (9 types)
+    # Transaction Claims (what happened with the charge)
     UNRECOGNIZED_TRANSACTION = "UNRECOGNIZED_TRANSACTION"
     CARD_NOT_PRESENT_FRAUD = "CARD_NOT_PRESENT_FRAUD"
-    LOST_STOLEN_CARD = "LOST_STOLEN_CARD"
-    IDENTITY_VERIFICATION = "IDENTITY_VERIFICATION"
+    DUPLICATE_CHARGE = "DUPLICATE_CHARGE"
+    INCORRECT_AMOUNT = "INCORRECT_AMOUNT"
+    RECURRING_AFTER_CANCEL = "RECURRING_AFTER_CANCEL"
+
+    # Identity & Access Claims (who made/authorized it)
     ACCOUNT_TAKEOVER = "ACCOUNT_TAKEOVER"
-    LOCATION_CLAIM = "LOCATION_CLAIM"
+    IDENTITY_VERIFICATION = "IDENTITY_VERIFICATION"
     CARD_POSSESSION = "CARD_POSSESSION"
-    MERCHANT_FRAUD = "MERCHANT_FRAUD"
+    LOST_STOLEN_CARD = "LOST_STOLEN_CARD"
+
+    # Evidence & Context Claims (supporting facts the CM provides)
+    LOCATION_CLAIM = "LOCATION_CLAIM"
     SPENDING_PATTERN = "SPENDING_PATTERN"
 
-    # Dispute Tier 1 (8 types)
+    # Merchant & Service Claims (issues with the merchant)
     GOODS_NOT_RECEIVED = "GOODS_NOT_RECEIVED"
-    DUPLICATE_CHARGE = "DUPLICATE_CHARGE"
-    RETURN_NOT_CREDITED = "RETURN_NOT_CREDITED"
-    INCORRECT_AMOUNT = "INCORRECT_AMOUNT"
     GOODS_NOT_AS_DESCRIBED = "GOODS_NOT_AS_DESCRIBED"
-    RECURRING_AFTER_CANCEL = "RECURRING_AFTER_CANCEL"
     SERVICES_NOT_RENDERED = "SERVICES_NOT_RENDERED"
+    RETURN_NOT_CREDITED = "RETURN_NOT_CREDITED"
     DEFECTIVE_MERCHANDISE = "DEFECTIVE_MERCHANDISE"
+    MERCHANT_FRAUD = "MERCHANT_FRAUD"
+
+    # Social Engineering Claims (scam signals)
+    UNSOLICITED_CONTACT = "UNSOLICITED_CONTACT"
+    AUTHORITY_IMPERSONATION = "AUTHORITY_IMPERSONATION"
+    PRESSURE_OR_THREAT = "PRESSURE_OR_THREAT"
+    DIRECTED_PAYMENT = "DIRECTED_PAYMENT"
+    DECEPTIVE_OFFER = "DECEPTIVE_OFFER"
